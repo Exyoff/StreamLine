@@ -243,6 +243,29 @@ try {
   check(vsum.every(v => v > 0), `both halves are solid (${vsum.map(v => v.toFixed(1)).join(' + ')})`);
   await p.tap('#lastop .ib[aria-label=Done]');
   await p.tap('#btn-undo'); await p.waitForTimeout(150);
+  // direct modelling: select a face and drag it with the Move gizmo (Plasticity-style)
+  await p.locator('.ctxseg button', { hasText: 'Face' }).tap();
+  const zTop = await st(() => { const o = StreamLine.S.doc.objects[0]; return Math.max(...o.mesh.v.map(v => v[2] + o.loc[2])); });
+  c = await projW([-8, 0, zTop]); await tapV(c.x, c.y);
+  check(await st(() => StreamLine.S.ed.faces.length) === 1, 'top face selected for direct modelling');
+  await p.tap('[data-tool=move]');
+  const vF0 = await st(() => StreamLine.M.meshVolume(StreamLine.S.doc.objects[0].mesh));
+  const piv = await st(() => StreamLine.OPS.computePivot());
+  const sz = await p.evaluate(pv => StreamLine.view.worldPerPixel(pv) * 84, piv);
+  const zA = await projW([piv[0], piv[1], piv[2] + sz * 0.8]), zB = await projW([piv[0], piv[1], piv[2] + sz * 0.8 + 4]);
+  await drag([[zA.x, zA.y], [zB.x, zB.y]]);
+  const mv = await st(() => { const L = StreamLine.getLast(); return L && [L.def.label(L.params), L.params.z]; });
+  const vF1 = await st(() => StreamLine.M.meshVolume(StreamLine.S.doc.objects[0].mesh));
+  check(mv && mv[0] === 'Move' && mv[1] > 0 && vF1 > vF0, `dragging the face up stretches the body (dz=${mv && mv[1]}, +${(vF1 - vF0).toFixed(2)} mm³)`);
+  await p.tap('[data-tool=select]');
+  // thicken a plane
+  await p.locator('.ctxseg button', { hasText: 'Solid' }).tap();
+  await p.evaluate(() => StreamLine.runOp(StreamLine.OPS.addPrim, { type: 'plane', w: 10, d: 10, x: 80, y: 0, z: 0 }));
+  await p.locator('#actions .act', { hasText: 'Thicken' }).tap();
+  await p.tap('#lastop .field .val'); await keypad('3');
+  const vt = await st(() => StreamLine.M.meshVolume(StreamLine.S.doc.objects.at(-1).mesh));
+  check(Math.abs(vt - 300) < 1e-6, `Thicken turns a 10×10 plane into a 3 mm plate (${vt.toFixed(4)} mm³)`);
+  await p.tap('#btn-undo'); await p.tap('#btn-undo'); await p.tap('#btn-undo'); await p.waitForTimeout(150);
 
   // --- Model workspace + undo
   await p.tap('[data-ws=model]'); await p.waitForTimeout(400);

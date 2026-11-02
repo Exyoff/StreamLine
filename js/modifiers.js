@@ -154,3 +154,33 @@ export function rotateMesh(W, c, a, deg) {
     return M.add(c, r);
   });
 }
+
+
+// Thicken an open surface (e.g. a plane) into a solid of thickness t, offset against its normals.
+export function thicken(W, faces, t) {
+  if (!(t > 0)) return 'Thickness must be > 0';
+  const dir = new Set(); faces.forEach(f => f.forEach((a, k) => dir.add(a + '>' + f[(k + 1) % f.length])));
+  const boundary = [];
+  faces.forEach(f => f.forEach((a, k) => { const b = f[(k + 1) % f.length]; if (!dir.has(b + '>' + a)) boundary.push([a, b]); }));
+  if (!boundary.length) return 'This body is already closed — use Shell to hollow it';
+  const fPlanes = faces.map(f => { const n = M.faceNormal(f.map(i => W[i])); return { n, w: M.dot(n, W[f[0]]) }; });
+  const inc = W.map(() => []); faces.forEach((f, fi) => f.forEach(i => inc[i].push(fi)));
+  const n0 = W.length;
+  const back = W.map((p, i) => {
+    const planes = [];
+    for (const fi of inc[i]) { const pl = fPlanes[fi]; if (!planes.some(q => M.dot(q.n, pl.n) > 1 - 1e-9)) planes.push({ n: pl.n, w: pl.w - t }); }
+    if (!planes.length) return p.slice();
+    const k = planes.length, G = planes.map(a => planes.map(b => M.dot(a.n, b.n)));
+    for (let a = 0; a < k; a++) G[a][a] += 1e-12;
+    const y = solve(G, planes.map(q => q.w - M.dot(q.n, p)));
+    let x = p.slice(); planes.forEach((q, a) => { x = M.add(x, M.mul(q.n, y[a])); });
+    return x;
+  });
+  const V = [...W.map(p => p.slice()), ...back];
+  const F = [...faces.map(f => f.slice()), ...faces.map(f => f.map(i => i + n0).reverse())];
+  for (const [a, b] of boundary) F.push([b, a, a + n0, b + n0]);
+  const m = new PolyMesh(V, F);
+  M.recalcNormals(m);
+  const res = polysToMesh(toPolys(m.v, m.f));
+  return res.f.length ? res : 'Thicken failed';
+}

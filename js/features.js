@@ -335,7 +335,7 @@ export const mirrorOp = {
 export { faceRegion };
 
 // ---------- body pattern (polar) and slice ----------
-import { slice as sliceMesh, rotateMesh } from './modifiers.js';
+import { slice as sliceMesh, rotateMesh, thicken } from './modifiers.js';
 export const polarPattern = {
   label: () => 'Polar Pattern',
   defaults: () => ({ count: 6, angle: 360, axis: 'z', cx: 0, cy: 0, cz: 0 }),
@@ -385,5 +385,18 @@ export const sliceOp = {
     const q = newObject(o.name, new M.PolyMesh(pos.v.map(v => M.sub(v, anchor)), pos.f), anchor, p._id);
     q.color = o.color; S.doc.objects.push(q);
     S.ed.selected = new Set([o.id, q.id]); S.ed.active = q.id; S.ed.faces = [];
+  },
+};
+
+export const thickenOp = {
+  label: () => 'Thicken',
+  defaults: () => ({ t: defSize() / 10 }),
+  prepare(p) { p.obj ??= S.ed.faces[0]?.obj ?? selectedObjs()[0]?.id; if (p.obj == null) return 'Select a surface (e.g. an added Plane)'; },
+  touch: p => ({ ids: [p.obj], mesh: true }),
+  fields: () => [lenF('t', 'Thickness')],
+  apply(p) {
+    const o = objById(p.obj); if (!o) return 'Body missing';
+    const r = thicken(worldVerts(o), o.mesh.f, p.t); if (typeof r === 'string') return r;
+    const xf = xfFor(o); o.mesh = new M.PolyMesh(r.v.map(xf.toL), r.f);
   },
 };

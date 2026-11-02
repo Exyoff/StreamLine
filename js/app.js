@@ -520,6 +520,7 @@ function renderActions() {
       act(I.union, 'Boolean', e => openBoolMenu(e.currentTarget)),
       act(I.subdiv, 'Slice', () => runOp(F.sliceOp)),
       act(I.revolve, 'Pattern', () => runOp(F.polarPattern)),
+      act(I.plane, 'Thicken', () => runOp(F.thickenOp)),
       act(I.plus, 'Add', e => openAddMenu(e.currentTarget)),
       act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; toast('Duplicated — drag the gizmo or type an offset'); refresh(); } }),
       act(I.array, 'Array', () => runOp(OPS.arrayOp)),
@@ -547,7 +548,6 @@ function setPick(m) {
   if (m === 'mesh') { S.ed.faces = []; S.ed.edges = []; setMode('edit'); return; }
   if (S.ed.mode === 'edit') setMode('object');
   S.ed.pick = m; S.ed.faces = []; S.ed.edges = [];
-  if (m !== 'solid' && ['move', 'rotate', 'scale'].includes(S.ed.tool)) S.ed.tool = 'select';
   selectionChanged();
 }
 // Plasticity-style modifiers: if the needed selection is missing, switch to that selection mode
@@ -594,7 +594,7 @@ function renderHud() {
   }
   if (S.ed.workspace === 'model' && S.ed.mode === 'object' && S.ed.pick !== 'solid') {
     parts.push(`<b>${S.ed.pick === 'face' ? 'Face' : 'Edge'} select</b> · ${S.ed.pick === 'face' ? S.ed.faces.length + ' face' + (S.ed.faces.length === 1 ? '' : 's') : S.ed.edges.length + ' edge' + (S.ed.edges.length === 1 ? '' : 's')}`);
-    parts.push(S.ed.pick === 'face' ? 'Push/Pull · Shell · Mirror' : 'Fillet · Chamfer');
+    parts.push(S.ed.pick === 'face' ? 'Push/Pull · Shell · Mirror · Move/Rotate/Scale the face' : 'Fillet · Chamfer · Move the edge');
     $('#hud').innerHTML = parts.join('<br>');
     return;
   }

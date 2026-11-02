@@ -293,3 +293,12 @@ test('CAD: revolve about an arbitrary line, sketch arrays, slice, polar body arr
   const r = rotateMesh([[10, 0, 0]], [0, 0, 0], [0, 0, 1], 90);
   near(r[0][0], 0, 1e-12); near(r[0][1], 10, 1e-12);
 });
+
+test('3D: thicken a plane into a solid', async () => {
+  const { thicken } = await import('../js/modifiers.js');
+  const { makePlane } = await import('../js/mesh.js');
+  const pl = makePlane(10, 20);
+  const t = thicken(pl.v, pl.f, 2);
+  near(meshVolume(t), 400, 1e-9); assert.ok(watertight(t));
+  assert.match(thicken(makeBox(2, 2, 2).v, makeBox(2, 2, 2).f, 1), /already closed/);
+});

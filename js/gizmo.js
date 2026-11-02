@@ -36,7 +36,7 @@ function kind() {
   const last = getLast();
   if (last && last.handle) return 'handle';
   if (S.ed.workspace !== 'model') return null;
-  if (S.ed.mode === 'object' && S.ed.pick && S.ed.pick !== 'solid') return null;
+  if (S.ed.mode === 'object' && S.ed.pick && S.ed.pick !== 'solid' && !OPS.subSelection()) return null;
   if (['move', 'rotate', 'scale'].includes(S.ed.tool) && OPS.computePivot()) return S.ed.tool;
   return null;
 }

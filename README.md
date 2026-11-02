@@ -28,6 +28,9 @@ On iPhone, open the page in Safari, then Share → **Add to Home Screen**. It th
 - **Command line** (bottom of the viewport): type anywhere on a keyboard, or tap the field on a phone. **Enter** or **Space** runs the command, an empty Enter repeats the last one, and **Esc** cancels. The prompts use AutoCAD's wording and offer clickable options such as `[Close] [Undo]`.
 - **Commands and aliases:** `L` LINE, `REC` RECTANG, `C` CIRCLE, `A` ARC, `POL` POLYGON, `TR` TRIM, `EX` EXTEND, `O` OFFSET, `F` FILLET, `CHA` CHAMFER, `M` MOVE, `CO` COPY, `RO` ROTATE, `SC` SCALE, `MI` MIRROR, `E` ERASE, `X` EXPLODE, `DIM`, `GCHORIZONTAL`/`GCVERTICAL`/`GCPARALLEL`/`GCPERPENDICULAR`/`GCEQUAL`/`GCTANGENT`/`GCCONCENTRIC`/`GCFIX`, `U`/`REDO`, `Z` (zoom extents) and `DXFOUT`. The 3D commands are `EXT` EXTRUDE, `REV` REVOLVE, `UNI` UNION, `SU` SUBTRACT, `IN` INTERSECT, `FILLETEDGE`, `CHAMFEREDGE` and `PRESSPULL`.
 - **Coordinate entry:** absolute `x,y`, relative `@dx,dy`, polar `@length<angle`, or a bare number as a direct distance along the rubber band. Every value accepts units and arithmetic (`@3/8in<45`).
+- **Inquiry:** `DI`/DIST (distance, ΔX, ΔY and angle), `ID` (point coordinates), `LI`/LIST (entity properties), `AA`/AREA (by points, or Object for an exact circle or rectangle or a region with its holes removed), and `MEA`/MEASUREGEOM for distance, radius (`MR`), angle (`MA`) and area (`MAR`). Results are printed AutoCAD-style in a command history you can tap to expand, and the last measurement stays drawn.
+- **Dimensions:** `DLI` DIMLINEAR (horizontal or vertical), `DAL` DIMALIGNED, plus angular, radius and diameter dimensions. All of them drive the geometry.
+- **More drafting:** `XL` construction lines, and the `CONS` toggle. Construction geometry is drawn dashed and never forms a profile. `AR` ARRAYRECT and ARRAYPOLAR have editable rows, columns, spacing, count and angle.
 - **Status bar:** GRID, SNAP, ORTHO, POLAR and OSNAP, also on F7, F9, F8, F10 and F3.
 - **Visuals:** OSNAP markers with names (□ Endpoint, △ Midpoint, ○ Center, ✕ Intersection, ◇ Quadrant), polar tracking rays, a crosshair with pickbox, blue grips and dashed selection, all on the dark model-space background.
 
@@ -39,6 +42,11 @@ On iPhone, open the page in Safari, then Share → **Add to Home Screen**. It th
   - **Shell** (`H`): hollow the body, with the selected faces left open. The wall offsets are solved exactly from the face planes.
   - **Mirror** (`M`): across YZ, XZ, XY or a selected face, optionally fused with the original.
   - **Boolean:** union, subtract or intersect.
+  - **Slice** (`SL`): cut by a plane through the body, a world plane or a selected face. Both halves are kept.
+  - **Pattern** (`3A`): a polar pattern of bodies around X, Y or Z.
+  - **Thicken:** turn a surface, such as an added Plane, into a solid.
+- **Direct modelling:** in Face or Edge mode, the Move/Rotate/Scale gizmo drags the selected faces or edges, and the neighbouring faces stretch to follow.
+- **Revolve** can use any line in the sketch as its axis, including construction lines.
 
 ## Fillet, chamfer and constraints
 - **Sketch fillet and chamfer** (Draw → Fillet tool): tap a corner where two lines meet. Rectangles are split into lines automatically. A fillet arc comes with tangent constraints.
