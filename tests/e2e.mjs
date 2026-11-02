@@ -167,6 +167,25 @@ try {
   await run('ORTHO');
   check(await st(() => StreamLine.S.settings.ortho) === true && /on/.test(await p.locator('#statusbar [data-st=ortho]').getAttribute('class')), 'ORTHO toggled from the command line');
   await run('ORTHO');
+  // inquiry: DIST, AREA (points), ID, MEASUREGEOM angle, horizontal/vertical dimension
+  const logText = () => p.textContent('#cmdlog');
+  await run('DI'); await run('0,0'); await run('3,4');
+  check(/Distance = 5\.00 mm/.test(await logText()) && /ΔX = 3\.00/.test(await logText()), `DIST prints distance and deltas: "${await logText()}"`);
+  await run('AREA'); await run('0,0'); await run('10,0'); await run('10,5'); await run('0,5'); await run('');
+  check(/Area = 50\.00 mm²/.test(await logText()) && /Perimeter = 30\.00/.test(await logText()), `AREA by points: "${await logText()}"`);
+  await run('MA'); await run('0,0'); await run('10,0'); await run('10,10');
+  check(/Angle = 45\.00°/.test(await logText()), `MEASUREGEOM angle: "${await logText()}"`);
+  await run('ID'); await run('12.5,-3');
+  check(/X = 12\.50\s+Y = -3\.00/.test(await logText()), `ID point: "${await logText()}"`);
+  await p.tap('#cmdlog');
+  check((await p.locator('#cmdhistory div').count()) >= 4, 'command history panel lists the results');
+  await p.tap('#cmdlog');
+  await run('DLI');
+  const hl = (await ents()).find(e => e.id === ln[0].id);
+  c = await proj(hl.a); await tapV(c.x, c.y); c = await proj(hl.b); await tapV(c.x, c.y);
+  await keypad('25');
+  const dl = (await ents()).find(e => e.t === 'dim' && (e.kind === 'hor' || e.kind === 'ver'));
+  check(!!dl, `DIMLINEAR creates a ${dl && dl.kind} dimension`);
   await shot('4-acad');
 
   // --- Plasticity-style Model: face push/pull with a live handle, edge fillet, shell

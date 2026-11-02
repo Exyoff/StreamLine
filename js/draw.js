@@ -7,7 +7,7 @@ const ecos = d => { const k = Math.round(d / 90); return Math.abs(d / 90 - k) < 
 const esin = d => ecos(d - 90);
 import * as F from './features.js';
 import { runOp, updateOp, commit, cancelOp, getLast } from './ops.js';
-import { fmtLen, fmtAng } from './units.js';
+import { fmtLen, fmtAng, fmtArea } from './units.js';
 import { h, field, toast, openKeypad, $ } from './ui.js';
 import { xfFor } from './scene.js';
 import { editAndSolve, dof as sketchDof, constrainedEntities } from './constraints.js';
@@ -18,7 +18,7 @@ const D = Math.PI / 180;
 export const corner = { kind: 'fillet', size: null };
 let propsOpen = false; // compact entity card by default (AutoCAD-style quick properties)
 export const st = { start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null };
-export function resetTool() { Object.assign(st, { cmd: null, last: null, dimLine: null, start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null }); view.render(); emit('drawcard'); }
+export function resetTool() { result = null; Object.assign(st, { cmd: null, last: null, dimLine: null, start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null }); view.render(); emit('drawcard'); }
 const sk = () => SK.activeSketch();
 const tool = () => S.ed.tool;
 
@@ -239,7 +239,10 @@ export function tap(x, y) {
       if (!st.dimA) { st.dimA = r.ref; toast('Tap the second point'); view.render(); return; }
       if (st.dimA.e === r.ref.e && st.dimA.k === r.ref.k) return;
       const pa = SK.refPoint(s, st.dimA), pb = SK.refPoint(s, r.ref);
-      const d = add('Dimension', { t: 'dim', kind: 'lin', A: st.dimA, B: r.ref, value: SK.d2(pa, pb) });
+      const dx = pb[0] - pa[0], dy = pb[1] - pa[1], hv = Math.abs(dx) >= Math.abs(dy) ? 'hor' : 'ver';
+      const d = dimOpts.mode === 'linear'
+        ? add('Dimension', { t: 'dim', kind: hv, A: st.dimA, B: r.ref, value: hv === 'hor' ? dx : dy })
+        : add('Dimension', { t: 'dim', kind: 'lin', A: st.dimA, B: r.ref, value: SK.d2(pa, pb) });
       st.dimA = null;
       if (d) editDim(d);
       return;
@@ -427,6 +430,11 @@ function fillObj(s, r, color, opacity) {
   return new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 }));
 }
 function dimGeom(s, d) {
+  if (d.kind === 'hor' || d.kind === 'ver') {
+    const A = SK.refPoint(s, d.A), B = SK.refPoint(s, d.B); if (!A || !B) return null;
+    const K = d.kind === 'hor' ? [B[0], A[1]] : [A[0], B[1]];
+    return { pts: [A, K, B], mid: [(A[0] + K[0]) / 2, (A[1] + K[1]) / 2], text: fmtLen(Math.abs(d.kind === 'hor' ? B[0] - A[0] : B[1] - A[1])) };
+  }
   if (d.kind === 'ang') {
     const a = SK.entById(s, d.la), b = SK.entById(s, d.lb); if (!a || !b) return null;
     const ma = [(a.a[0] + a.b[0]) / 2, (a.a[1] + a.b[1]) / 2], mb = [(b.a[0] + b.b[0]) / 2, (b.a[1] + b.b[1]) / 2];
@@ -531,7 +539,14 @@ function drawPreview(s) {
     if (!st.arc || st.arc.r == null) { previewGroup.add(lineObj([W(c), W(p)], m)); view.label(W(p), `R ${fmtLen(SK.d2(c, p))}`, 'readout'); }
     else { let sw = ang(c, p) - st.arc.a0; sw = ((sw % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) || 2 * Math.PI; const pl = SK.entPolyline({ t: 'arc', c, r: st.arc.r, a0: st.arc.a0, a1: st.arc.a0 + sw }); previewGroup.add(lineObj(pl.pts.map(W), m)); view.label(W(p), fmtAng(sw / D), 'readout'); }
   }
+  if (result) drawResult(s, W);
   const c = st.cmd;
+  if (c && INQUIRY.has(c.tool) && p) {
+    const f = fromPt();
+    if (f) { previewGroup.add(lineObj([W(f), W(p)], m)); view.label(W(p), c.tool === 'angle' && c.stage === 'p2' ? fmtAng(SK.angleAt(c.base, c.p1, p)) : fmtLen(SK.d2(f, p)), 'readout'); }
+    if (c.tool === 'angle' && c.stage === 'p2') previewGroup.add(lineObj([W(c.base), W(c.p1)], m));
+    if (c.tool === 'area' && c.pts.length > 1) previewGroup.add(lineObj([...c.pts, p].map(W), matL(C.prev, true, 0.6), true));
+  }
   if (c && c.stage === 'second' && p && c.base && ['move', 'copy', 'rotate', 'scale', 'mirror'].includes(c.tool)) {
     const b = c.base, ids = selIds();
     const ghost = { ents: JSON.parse(JSON.stringify(s.ents.filter(e => ids.includes(e.id)))), cons: [], nextEnt: 1e6 };
@@ -596,24 +611,29 @@ function marker(w, color) {
 // =====================================================================
 // AutoCAD-style commands: edit-command state machines, prompts, typed input
 // =====================================================================
-export const EDIT_TOOLS = new Set(['move', 'copy', 'rotate', 'scale', 'mirror', 'offset', 'erase', 'explode', 'polygon']);
-const SELECT_FIRST = new Set(['move', 'copy', 'rotate', 'scale', 'mirror', 'erase', 'explode']);
+export const EDIT_TOOLS = new Set(['move', 'copy', 'rotate', 'scale', 'mirror', 'offset', 'erase', 'explode', 'polygon', 'dist', 'id', 'angle', 'area', 'radius', 'list']);
+const INQUIRY = new Set(['dist', 'id', 'angle', 'area', 'radius', 'list']);
+export const dimOpts = { mode: 'aligned' };
+let result = null; // last measurement drawn in the viewport
+const SELECT_FIRST = new Set(['move', 'copy', 'rotate', 'scale', 'mirror', 'erase', 'explode', 'list']);
 export const acad = { offsetDist: null, polySides: 6, mirrorErase: false };
 function ensureCmd() {
   if (st.cmd && st.cmd.tool === tool()) return st.cmd;
   const t = tool();
-  st.cmd = { tool: t, stage: SELECT_FIRST.has(t) ? (S.ed.drawSel.size ? 'base' : 'select') : t === 'offset' ? 'distance' : t === 'polygon' ? 'sides' : 'base' };
-  if ((t === 'erase' || t === 'explode') && S.ed.drawSel.size) { runSelectionCommand(t); }
+  st.cmd = { tool: t, pts: [], stage: SELECT_FIRST.has(t) ? (S.ed.drawSel.size ? 'base' : 'select') : t === 'offset' ? 'distance' : t === 'polygon' ? 'sides' : t === 'area' ? 'collect' : t === 'radius' ? 'pick' : 'base' };
+  if ((t === 'erase' || t === 'explode' || t === 'list') && S.ed.drawSel.size) { runSelectionCommand(t); }
   return st.cmd;
 }
 export function startCommand() { st.cmd = null; if (EDIT_TOOLS.has(tool())) ensureCmd(); emit('drawcard'); view.render(); }
-function pointStage() { const c = st.cmd; return c && ['base', 'second', 'center', 'vertex', 'first', 'side'].includes(c.stage); }
+function pointStage() { const c = st.cmd; return c && ['base', 'second', 'center', 'vertex', 'first', 'side', 'p1', 'p2', 'collect'].includes(c.stage); }
 function fromPt() {
   if (st.start) return st.start;
   if (tool() === 'arc' && st.arc) return st.arc.c;
   const c = st.cmd; if (!c) return null;
   if (c.stage === 'second') return c.base;
   if (c.stage === 'vertex') return c.center;
+  if (c.stage === 'p1' || c.stage === 'p2') return c.base;
+  if (c.stage === 'collect' && c.pts.length) return c.pts[c.pts.length - 1];
   return null;
 }
 export function lastPoint() { return fromPt() || st.last || [0, 0]; }
@@ -624,6 +644,7 @@ function xform(label, op, copy = false) {
   runOp(F.sketchOp(label, s.id, k => { const r = SK.transformEntities(k, ids, op, copy); if (typeof r === 'string') return r; if (!copy) S.ed.drawSel = new Set(r); }));
 }
 function runSelectionCommand(t) {
+  if (t === 'list') { listSelection(); st.cmd = null; S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); return; }
   if (t === 'erase') { deleteSelected(); }
   else {
     const s = sk(), ids = selIds();
@@ -633,6 +654,7 @@ function runSelectionCommand(t) {
 }
 function cmdPoint(p) {
   const c = ensureCmd(), t = c.tool;
+  if (INQUIRY.has(t)) return inquiryPoint(c, p);
   if (t === 'polygon') {
     if (c.stage === 'center') { c.center = p; c.stage = 'vertex'; }
     else if (c.stage === 'vertex') {
@@ -662,6 +684,7 @@ function cmdPoint(p) {
 }
 function cmdTap(s, raw, wpp) {
   const c = ensureCmd();
+  if (c.tool === 'radius' || (c.tool === 'area' && c.stage === 'object')) return inquiryTap(c, s, raw, wpp);
   if (c.stage === 'select') {
     const e = SK.pickEntity(s, raw, 16 * wpp);
     if (e) { S.ed.drawSel.has(e.id) ? S.ed.drawSel.delete(e.id) : S.ed.drawSel.add(e.id); emit('selection'); }
@@ -679,6 +702,7 @@ function cmdTap(s, raw, wpp) {
 export function enter() {
   const t = tool(), c = st.cmd;
   if (['line', 'rect', 'circle', 'arc', 'dim', 'trim', 'extend', 'corner'].includes(t)) { resetTool(); S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); return true; } // Enter ends the command
+  if (c && c.tool === 'area' && c.stage === 'collect' && c.pts.length >= 3) { reportArea(c.pts); endInquiry(); return true; }
   if (c && c.stage === 'select') {
     if (!S.ed.drawSel.size) { toast('Select objects first'); return true; }
     if (t === 'erase' || t === 'explode') { runSelectionCommand(t); return true; }
@@ -701,6 +725,7 @@ export function typed(raw) {
   if (t === 'line' && (up === 'U' || up === 'UNDO') && st.chain.length > 1) { emit('undoRequest'); st.chain.pop(); st.start = st.chain[st.chain.length - 1]; if (st.chain.length < 2) st.chain = []; return true; }
   if (t === 'mirror' && c && (up === 'Y' || up === 'N' || up === 'YES' || up === 'NO')) { acad.mirrorErase = up[0] === 'Y'; toast(`Erase source: ${acad.mirrorErase ? 'Yes' : 'No'}`); return true; }
   if (t === 'corner' && (up === 'R' || up === 'RADIUS')) { return 'radius'; }
+  if (t === 'area' && (up === 'O' || up === 'OBJECT')) { areaObjectMode(); return true; }
   if (t === 'circle' && st.start && (up === 'D' || up === 'DIAMETER')) { st.typed.dia = true; toast('Type the diameter'); return true; }
   try {
     // coordinates
@@ -737,7 +762,7 @@ export function typed(raw) {
 // ---------- prompts (AutoCAD wording) ----------
 export function prompt() {
   const t = tool(), c = st.cmd, o = [];
-  const name = { line: 'LINE', rect: 'RECTANG', circle: 'CIRCLE', arc: 'ARC', trim: 'TRIM', extend: 'EXTEND', dim: 'DIM', corner: corner.kind === 'fillet' ? 'FILLET' : 'CHAMFER', move: 'MOVE', copy: 'COPY', rotate: 'ROTATE', scale: 'SCALE', mirror: 'MIRROR', offset: 'OFFSET', erase: 'ERASE', explode: 'EXPLODE', polygon: 'POLYGON' }[t];
+  const name = { dist: 'DIST', id: 'ID', angle: 'MEASUREGEOM', area: 'AREA', radius: 'MEASUREGEOM', list: 'LIST', line: 'LINE', rect: 'RECTANG', circle: 'CIRCLE', arc: 'ARC', trim: 'TRIM', extend: 'EXTEND', dim: dimOpts.mode === 'linear' ? 'DIMLINEAR' : 'DIM', corner: corner.kind === 'fillet' ? 'FILLET' : 'CHAMFER', move: 'MOVE', copy: 'COPY', rotate: 'ROTATE', scale: 'SCALE', mirror: 'MIRROR', offset: 'OFFSET', erase: 'ERASE', explode: 'EXPLODE', polygon: 'POLYGON' }[t];
   let txt;
   if (!name) return { text: 'Command:', options: [] };
   if (t === 'line') { txt = st.start ? 'Specify next point or' : 'Specify first point:'; if (st.start) { if (st.chain.length > 2) o.push(['Close', 'C']); if (st.chain.length > 1) o.push(['Undo', 'U']); } }
@@ -746,8 +771,19 @@ export function prompt() {
   else if (t === 'arc') txt = !st.arc ? 'Specify center point of arc:' : st.arc.r == null ? 'Specify start point of arc:' : 'Specify end point of arc (CCW) or angle:';
   else if (t === 'trim') txt = 'Select object to trim:';
   else if (t === 'extend') txt = 'Select object to extend:';
-  else if (t === 'dim') txt = st.dimA ? 'Specify second extension line origin:' : 'Select first point, line, or circle:';
+  else if (t === 'dim') { txt = st.dimA ? 'Specify second extension line origin:' : `Select first point, line, or circle (${dimOpts.mode === 'linear' ? 'horizontal/vertical' : 'aligned'}):`; }
   else if (t === 'corner') { txt = `Select corner (${corner.kind === 'fillet' ? 'radius' : 'distance'} = ${fmtLen(corner.size ?? defSize() / 10)}) or`; o.push([corner.kind === 'fillet' ? 'Radius' : 'Distance', 'R']); }
+  else if (INQUIRY.has(t)) {
+    const cc = c || { stage: t === 'area' ? 'collect' : t === 'radius' ? 'pick' : t === 'list' ? 'select' : 'base', pts: [] };
+    if (t === 'dist') txt = cc.stage === 'base' ? 'Specify first point:' : 'Specify second point:';
+    else if (t === 'id') txt = 'Specify point:';
+    else if (t === 'angle') txt = cc.stage === 'base' ? 'Specify angle vertex:' : cc.stage === 'p1' ? 'Specify first angle endpoint:' : 'Specify second angle endpoint:';
+    else if (t === 'radius') txt = 'Select arc or circle:';
+    else if (t === 'list') txt = `Select objects (${S.ed.drawSel.size} found), then Enter:`;
+    else if (cc.stage === 'object') txt = 'Select a circle, rectangle or tap inside a region:';
+    else { txt = cc.pts.length < 3 ? `Specify ${cc.pts.length ? 'next' : 'first'} corner point or` : 'Specify next point or Enter for total, or'; o.push(['Object', 'O']); }
+    if (['dist', 'angle', 'area', 'radius'].includes(t)) for (const [l, v] of [['Distance', 'MD'], ['Radius', 'MR'], ['Angle', 'MA'], ['Area', 'MAR']]) if (v !== { dist: 'MD', radius: 'MR', angle: 'MA', area: 'MAR' }[t]) o.push([l, v]);
+  }
   else {
     const cc = c || { stage: SELECT_FIRST.has(t) ? (S.ed.drawSel.size ? 'base' : 'select') : t === 'offset' ? 'distance' : 'sides' };
     if (cc.stage === 'select') txt = `Select objects (${S.ed.drawSel.size} found), then Enter:`;
@@ -759,4 +795,79 @@ export function prompt() {
   }
   if (!o.length) txt = txt.replace(/ or$/, ':');
   return { text: `${name} ${txt}`, options: o };
+}
+
+
+// ---------- inquiry commands: DIST, ID, MEASUREGEOM (angle, area, radius), LIST ----------
+const log = t => emit('cmdlog', t);
+const f4 = v => fmtLen(v, false);
+function endInquiry() { st.cmd = null; S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); }
+function inquiryPoint(c, p) {
+  const t = c.tool, s = sk();
+  if (t === 'id') {
+    const w = SK.toW(s.plane, p);
+    log(`ID  X = ${f4(p[0])}  Y = ${f4(p[1])}   (world ${w.map(f4).join(', ')} ${S.settings.unit})`);
+    result = { type: 'pt', pts: [p], text: `${f4(p[0])}, ${f4(p[1])}` };
+    return endInquiry();
+  }
+  if (t === 'dist') {
+    if (c.stage === 'base') { c.base = p; c.stage = 'second'; return; }
+    const d = [p[0] - c.base[0], p[1] - c.base[1]], L = Math.hypot(d[0], d[1]);
+    const a = ((Math.atan2(d[1], d[0]) * 180 / Math.PI) + 360) % 360;
+    log(`DIST  Distance = ${fmtLen(L)},  Angle in XY plane = ${fmtAng(a)},  ΔX = ${f4(d[0])},  ΔY = ${f4(d[1])}`);
+    result = { type: 'dist', pts: [c.base, p], text: fmtLen(L) };
+    return endInquiry();
+  }
+  if (t === 'angle') {
+    if (c.stage === 'base') { c.base = p; c.stage = 'p1'; return; }
+    if (c.stage === 'p1') { c.p1 = p; c.stage = 'p2'; return; }
+    const ang = SK.angleAt(c.base, c.p1, p);
+    log(`MEASUREGEOM  Angle = ${fmtAng(ang)}   (supplement ${fmtAng(180 - ang)})`);
+    result = { type: 'angle', pts: [c.base, c.p1, p], text: fmtAng(ang) };
+    return endInquiry();
+  }
+  if (t === 'area') { c.pts.push(p); return; }
+}
+function reportArea(pts) {
+  const { area, perimeter } = SK.polygonArea(pts);
+  log(`AREA  Area = ${fmtArea(area)},  Perimeter = ${fmtLen(perimeter)}`);
+  result = { type: 'area', pts, text: fmtArea(area) };
+}
+function inquiryTap(c, s, raw, wpp) {
+  if (c.tool === 'radius') {
+    const e = SK.pickEntity(s, raw, 16 * wpp);
+    if (!e || (e.t !== 'circle' && e.t !== 'arc')) return toast('Tap a circle or arc');
+    log(`MEASUREGEOM  Radius = ${fmtLen(e.r)},  Diameter = ${fmtLen(2 * e.r)}${e.t === 'arc' ? `,  Arc length = ${fmtLen(e.r * SK.sweep(e))}` : `,  Circumference = ${fmtLen(2 * Math.PI * e.r)}`}`);
+    result = { type: 'pt', pts: [e.c], text: `R ${fmtLen(e.r)}` };
+    return endInquiry();
+  }
+  // AREA Object: an exact closed entity under the finger, else the region containing the tap
+  const e = SK.pickEntity(s, raw, 12 * wpp), ea = e && (e.t === 'circle' || e.t === 'rect') ? SK.entityArea(e) : null;
+  if (ea) { log(`AREA  Area = ${fmtArea(ea.area)},  ${e.t === 'circle' ? 'Circumference' : 'Perimeter'} = ${fmtLen(ea.perimeter)}`); result = { type: 'pt', pts: [raw], text: fmtArea(ea.area) }; return endInquiry(); }
+  const r = SK.regionAt(s, raw);
+  if (!r) return toast('Tap inside a closed region');
+  const { area, perimeter } = SK.regionArea(r);
+  log(`AREA  Region area = ${fmtArea(area)},  Perimeter = ${fmtLen(perimeter)}${r.holes.length ? `  (${r.holes.length} hole${r.holes.length > 1 ? 's' : ''} subtracted)` : ''}`);
+  result = { type: 'area', pts: r.outer, text: fmtArea(area) };
+  endInquiry();
+}
+export function areaObjectMode() { const c = ensureCmd(); if (c.tool === 'area') { c.stage = 'object'; emit('drawcard'); } }
+function listSelection() {
+  const s = sk();
+  for (const id of S.ed.drawSel) {
+    const e = SK.entById(s, id); if (!e) continue;
+    if (e.t === 'line') log(`LIST  LINE  from ${f4(e.a[0])},${f4(e.a[1])}  to ${f4(e.b[0])},${f4(e.b[1])}  Length = ${fmtLen(SK.d2(e.a, e.b))}  Angle = ${fmtAng(((Math.atan2(e.b[1] - e.a[1], e.b[0] - e.a[0]) * 180 / Math.PI) + 360) % 360)}`);
+    else if (e.t === 'circle') log(`LIST  CIRCLE  center ${f4(e.c[0])},${f4(e.c[1])}  Radius = ${fmtLen(e.r)}  Circumference = ${fmtLen(2 * Math.PI * e.r)}  Area = ${fmtArea(Math.PI * e.r * e.r)}`);
+    else if (e.t === 'arc') log(`LIST  ARC  center ${f4(e.c[0])},${f4(e.c[1])}  Radius = ${fmtLen(e.r)}  Start = ${fmtAng(e.a0 * 180 / Math.PI)}  Sweep = ${fmtAng(SK.sweep(e) * 180 / Math.PI)}  Length = ${fmtLen(e.r * SK.sweep(e))}`);
+    else if (e.t === 'rect') log(`LIST  RECTANGLE  corner ${f4(e.x)},${f4(e.y)}  ${fmtLen(e.w)} × ${fmtLen(e.h)}  Area = ${fmtArea(e.w * e.h)}  Perimeter = ${fmtLen(2 * (e.w + e.h))}`);
+  }
+}
+function drawResult(s, W) {
+  const m = matL(0x6fe0a0, true, 0.95);
+  const P = result.pts;
+  if (result.type === 'dist') previewGroup.add(lineObj(P.map(W), m));
+  if (result.type === 'angle') previewGroup.add(lineObj([W(P[1]), W(P[0]), W(P[2])], m));
+  if (result.type === 'area') previewGroup.add(lineObj(P.map(W), m, true));
+  const at = result.type === 'area' ? [P.reduce((a, p) => a + p[0], 0) / P.length, P.reduce((a, p) => a + p[1], 0) / P.length] : result.type === 'dist' ? [(P[0][0] + P[1][0]) / 2, (P[0][1] + P[1][1]) / 2] : P[0];
+  view.label(W(at), result.text, 'measure');
 }

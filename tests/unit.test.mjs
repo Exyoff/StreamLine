@@ -252,3 +252,22 @@ test('Plasticity modifiers: push/pull, shell, mirror', async () => {
   const mir = mirrorMesh(L.v, L.f, [1, 0, 0], 0, true);
   near(meshVolume(mir), 2000, 1e-9, 'mirrored across x=0 and fused'); assert.ok(watertight(mir));
 });
+
+test('AutoCAD inquiry: areas, angles, horizontal/vertical dimensions', async () => {
+  const { polygonArea, regionArea, entityArea, angleAt, setDimValue: setDim, dimValue: dv } = await import('../js/sketch.js');
+  assert.deepEqual(polygonArea([[0, 0], [4, 0], [4, 3], [0, 3]]), { area: 12, perimeter: 14 });
+  const R = regions(sk([{ t: 'rect', x: 0, y: 0, w: 20, h: 10 }, { t: 'circle', c: [10, 5], r: 3 }])).find(r => r.holes.length);
+  near(regionArea(R).area, 200 - ngonArea(3, 64), 1e-9);
+  near(entityArea({ t: 'circle', r: 2 }).area, 4 * Math.PI, 1e-12);
+  near(angleAt([0, 0], [1, 0], [1, 1]), 45, 1e-12);
+  near(angleAt([0, 0], [1, 0], [-1, 0]), 180, 1e-12);
+  const s = { ents: [{ id: 1, t: 'line', a: [0, 0], b: [10, 4] }], cons: [], nextEnt: 10 };
+  const h = { id: 2, t: 'dim', kind: 'hor', A: { e: 1, k: 'a' }, B: { e: 1, k: 'b' }, value: 10 };
+  const v = { id: 3, t: 'dim', kind: 'ver', A: { e: 1, k: 'a' }, B: { e: 1, k: 'b' }, value: 4 };
+  s.ents.push(h, v);
+  assert.equal(dv(s, h), 10); assert.equal(dv(s, v), 4);
+  setDim(s, h, 25);
+  assert.deepEqual(s.ents[0].b, [25, 4], 'horizontal dimension drives only X');
+  setDim(s, v, 7.5);
+  assert.deepEqual(s.ents[0].b, [25, 7.5], 'vertical dimension drives only Y');
+});

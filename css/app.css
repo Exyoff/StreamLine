@@ -63,7 +63,7 @@ input, select { font: inherit; }
 .vlabel.cons { background: #3a3d45; color: #ffd27a; font-size: 11px; padding: 3px 5px; min-width: 18px; text-align: center; border-color: rgba(255,210,122,.4); }
 .vlabel.edge { background: rgba(20,21,24,.6); font-size: 11px; padding: 3px 5px; }
 #viewport { --cmdh: 0px; }
-body.has-cmd #viewport { --cmdh: 104px; }
+body.has-cmd #viewport { --cmdh: 122px; }
 #hud {
   position: absolute; left: calc(var(--sal) + 10px); top: 8px; right: 12px; pointer-events: none;
   font: 12px/1.45 var(--font); color: var(--muted); text-shadow: 0 1px 2px #000;
@@ -229,7 +229,7 @@ body.has-cmd #viewport { --cmdh: 104px; }
   .act { min-width: 52px; padding-top: 4px; }
   .act span:last-child, .tool span:last-child { display: none; }
   #tools { padding: 2px 6px; }
-  body.has-cmd #viewport { --cmdh: 72px; }
+  body.has-cmd #viewport { --cmdh: 88px; }
   #statusbar { display: none; }
   #vtools-r { grid-template-columns: repeat(4, 44px); right: calc(var(--sar) + 106px); }
   #vtools-l { flex-direction: row; }
@@ -271,3 +271,10 @@ body.ws-model #lastop .field > label { font-size: 12px; color: #b9bdc6; text-tra
 body.ws-model #lastop .field .val { width: 120px; height: 32px; font-size: 13px; }
 body.ws-model #lastop .field .seg button { height: 30px; padding: 0 8px; font-size: 12px; }
 body.ws-model #lastop .field.wide { flex-direction: column; align-items: stretch; }
+
+#cmdlog { font-size: 11.5px; color: #8fe3b0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; min-height: 16px; cursor: pointer; -webkit-user-select: text; user-select: text; }
+#cmdlog.empty { color: #5d6672; }
+#cmdhistory { position: absolute; left: calc(var(--sal) + 6px); right: calc(var(--sar) + 6px); bottom: calc(var(--cmdh) + 4px); max-height: 40%; overflow-y: auto; z-index: 4;
+  background: rgba(15,18,22,.97); border: 1px solid #3b4450; border-radius: 10px; padding: 8px 10px; font: 12px/1.6 var(--mono); color: #cfe9d9; -webkit-user-select: text; user-select: text; }
+#cmdhistory[hidden] { display: none; }
+.vlabel.measure { background: #0f2a1c; color: #8fe3b0; border-color: #2f7a52; font-size: 12.5px; }

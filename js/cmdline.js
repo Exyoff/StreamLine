@@ -1,5 +1,5 @@
 // AutoCAD-style command line for the Draw and CAD workspaces.
-import { S, emit, saveSettings } from './state.js';
+import { S, emit, on, saveSettings } from './state.js';
 import { $, h, toast } from './ui.js';
 import * as Draw from './draw.js';
 
@@ -7,6 +7,8 @@ let ctx = null;          // app callbacks
 let last = null;         // last command, repeated by an empty Enter
 let pending = null;      // 3D command waiting for a selection: { name, prompt, run }
 let hist = '';
+const logLines = [];
+let logOpen = false;
 
 // AutoCAD command names and aliases → actions
 const DRAW_TOOLS = {
@@ -15,7 +17,8 @@ const DRAW_TOOLS = {
   TR: 'trim', TRIM: 'trim', EX: 'extend', EXTEND: 'extend', O: 'offset', OFFSET: 'offset',
   M: 'move', MOVE: 'move', CO: 'copy', CP: 'copy', COPY: 'copy', RO: 'rotate', ROTATE: 'rotate',
   SC: 'scale', SCALE: 'scale', MI: 'mirror', MIRROR: 'mirror', E: 'erase', ERASE: 'erase', X: 'explode', EXPLODE: 'explode',
-  DI: 'dim', DIM: 'dim', DLI: 'dim', DIMLINEAR: 'dim', DAL: 'dim', DIMALIGNED: 'dim', DRA: 'dim', DIMRADIUS: 'dim', DDI: 'dim', DIMDIAMETER: 'dim', DAN: 'dim', DIMANGULAR: 'dim',
+  DI: 'dist', DIST: 'dist', ID: 'id', AA: 'area', AREA: 'area', LI: 'list', LS: 'list', LIST: 'list', MEA: 'dist', MEASUREGEOM: 'dist', MD: 'dist', MR: 'radius', MA: 'angle', MAR: 'area',
+  DIM: 'dim', DLI: 'dim', DIMLINEAR: 'dim', DAL: 'dim', DIMALIGNED: 'dim', DRA: 'dim', DIMRADIUS: 'dim', DDI: 'dim', DIMDIAMETER: 'dim', DAN: 'dim', DIMANGULAR: 'dim',
   SELECT: 'select',
 };
 const CONSTRAINTS = { GCHORIZONTAL: 'h', GCH: 'h', GCVERTICAL: 'v', GCV: 'v', GCPARALLEL: 'par', GCPA: 'par', GCPERPENDICULAR: 'perp', GCPE: 'perp', GCEQUAL: 'eq', GCE: 'eq', GCTANGENT: 'tan', GCT: 'tan', GCCONCENTRIC: 'conc', GCCO: 'conc', GCFIX: 'fix', GCF: 'fix' };
@@ -24,6 +27,8 @@ const FKEYS = { F3: 'osnap', F7: 'grid', F8: 'ortho', F9: 'snap', F10: 'polar' }
 
 export function initCmdline(c) {
   ctx = c;
+  on('cmdlog', t => { logLines.push(t); if (logLines.length > 60) logLines.shift(); render(); });
+  $('#cmdlog').addEventListener('click', () => { logOpen = !logOpen; render(); });
   const inp = $('#cmdin');
   inp.addEventListener('keydown', e => {
     if (FKEYS[e.key]) { e.preventDefault(); toggle(FKEYS[e.key]); return; }
@@ -85,7 +90,7 @@ export function exec(raw) {
   if (DRAW_TOOLS[up] || up === 'F' || up === 'FILLET' || up === 'CHA' || up === 'CHAMFER') {
     if (S.ed.workspace !== 'draw') ctx.setWorkspace('draw');
     last = up;
-    if (DRAW_TOOLS[up]) { ctx.setTool(DRAW_TOOLS[up]); Draw.startCommand(); }
+    if (DRAW_TOOLS[up]) { if (DRAW_TOOLS[up] === 'dim') Draw.dimOpts.mode = up === 'DLI' || up === 'DIMLINEAR' ? 'linear' : 'aligned'; ctx.setTool(DRAW_TOOLS[up]); Draw.startCommand(); }
     else { Draw.corner.kind = up.startsWith('F') ? 'fillet' : 'chamfer'; ctx.setTool('corner'); }
     emit('cmd'); return;
   }
@@ -127,6 +132,12 @@ export function render() {
   if (pending) text = `${pending.name} ${pending.prompt}`;
   else if (S.ed.workspace === 'draw') ({ text, options } = Draw.prompt());
   else if (S.ed.tool === 'edge') text = 'Command: select edges, then FILLETEDGE or CHAMFEREDGE';
+  const lg = $('#cmdlog');
+  lg.textContent = logLines.length ? logLines[logLines.length - 1] : 'Command history — results of DIST, AREA, LIST… appear here';
+  lg.classList.toggle('empty', !logLines.length);
+  const pan = $('#cmdhistory');
+  pan.hidden = !logOpen;
+  if (logOpen) { pan.replaceChildren(...(logLines.length ? logLines : ['(empty)']).map(l => h('div', {}, l))); pan.scrollTop = 1e6; }
   const el = $('#cmdprompt');
   el.replaceChildren(hist ? h('span', { class: 'hist' }, hist) : '', h('span', {}, text), ...options.map(([l, v]) => h('button', { class: 'opt', 'data-v': v }, l)));
   el.scrollLeft = 1e6;

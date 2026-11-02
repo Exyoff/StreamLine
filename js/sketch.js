@@ -356,6 +356,7 @@ export function lineAngle(sk, d) {
   return x * 180 / Math.PI;
 }
 export function dimValue(sk, d) {
+  if (d.kind === 'hor' || d.kind === 'ver') { const A = refPoint(sk, d.A), B = refPoint(sk, d.B); return A && B ? Math.abs(d.kind === 'hor' ? B[0] - A[0] : B[1] - A[1]) : null; }
   if (d.kind === 'ang') { const v = lineAngle(sk, d); return v == null ? null : Math.abs(v); }
   if (d.kind === 'lin') { const A = refPoint(sk, d.A), B = refPoint(sk, d.B); return A && B ? d2(A, B) : null; }
   const e = entById(sk, d.e); if (!e) return null;
@@ -364,12 +365,12 @@ export function dimValue(sk, d) {
 export function setDimValue(sk, d, v) {
   if (sk.cons && sk.cons.length || sk.ents.some(x => x.t === 'dim' && x.value != null)) {
     const err = editAndSolve(sk, () => {
-      d.value = d.kind === 'ang' ? Math.sign(d.value || 1) * v : v;
+      d.value = d.kind === 'ang' || d.kind === 'hor' || d.kind === 'ver' ? Math.sign(d.value || 1) * v : v;
       if (d.kind === 'ang') { // rotate the second line about its start so its length is kept
         const a = entById(sk, d.la), b = entById(sk, d.lb);
         if (a && b) { const base = Math.atan2(a.b[1] - a.a[1], a.b[0] - a.a[0]) + d.value * Math.PI / 180, L = d2(b.a, b.b); b.b = [b.a[0] + L * Math.cos(base), b.a[1] + L * Math.sin(base)]; }
       }
-    }, { heavyRefs: d.kind === 'lin' ? [d.A] : d.kind === 'ang' ? [{ e: d.la, k: 'a' }, { e: d.la, k: 'b' }] : [] });
+    }, { heavyRefs: d.kind === 'lin' || d.kind === 'hor' || d.kind === 'ver' ? [d.A] : d.kind === 'ang' ? [{ e: d.la, k: 'a' }, { e: d.la, k: 'b' }] : [] });
     if (!err) return;
     d.value = null; // fall back to a direct edit below
   }
@@ -409,7 +410,7 @@ export function toDXF(sk) {
 export function pruneCons(sk) {
   const ids = new Set(sk.ents.map(e => e.id));
   sk.cons = (sk.cons || []).filter(c => ids.has(c.a) && (c.b == null || ids.has(c.b)) && (!c.p || ids.has(c.p.e)));
-  sk.ents = sk.ents.filter(d => d.t !== 'dim' || (d.kind === 'lin' ? ids.has(d.A.e) && ids.has(d.B.e) && refPoint(sk, d.A) && refPoint(sk, d.B) : d.kind === 'ang' ? ids.has(d.la) && ids.has(d.lb) : ids.has(d.e)));
+  sk.ents = sk.ents.filter(d => d.t !== 'dim' || (d.kind === 'lin' || d.kind === 'hor' || d.kind === 'ver' ? ids.has(d.A.e) && ids.has(d.B.e) && refPoint(sk, d.A) && refPoint(sk, d.B) : d.kind === 'ang' ? ids.has(d.la) && ids.has(d.lb) : ids.has(d.e)));
 }
 export const CONS_LABEL = { h: 'H', v: 'V', par: '∥', perp: '⊥', eq: '=', tan: 'T', conc: '◎', fix: '⚓', mid: 'M' };
 
@@ -574,4 +575,30 @@ export function addPolygon(sk, c, vertex, n) {
   for (let k = 0; k < n; k++) { const e = { id: (sk.nextEnt = (sk.nextEnt || 1000) + 1), t: 'line', a: pts[k].slice(), b: pts[(k + 1) % n].slice() }; sk.ents.push(e); ids.push(e.id); }
   void a0;
   return ids;
+}
+
+
+// ---------- inquiry (AutoCAD DIST / MEASUREGEOM / AREA) ----------
+export function polygonArea(pts) {
+  let a = 0, per = 0;
+  for (let i = 0; i < pts.length; i++) { const p = pts[i], q = pts[(i + 1) % pts.length]; a += p[0] * q[1] - q[0] * p[1]; per += d2(p, q); }
+  return { area: Math.abs(a) / 2, perimeter: per };
+}
+export function regionArea(r) {
+  const o = polygonArea(r.outer);
+  const holes = r.holes.map(polygonArea);
+  return { area: o.area - holes.reduce((s, h) => s + h.area, 0), perimeter: o.perimeter + holes.reduce((s, h) => s + h.perimeter, 0) };
+}
+// exact area/perimeter of a single closed entity
+export function entityArea(e) {
+  if (e.t === 'circle') return { area: Math.PI * e.r * e.r, perimeter: 2 * Math.PI * e.r };
+  if (e.t === 'rect') return { area: e.w * e.h, perimeter: 2 * (e.w + e.h) };
+  if (e.t === 'arc') { const sw = sweep(e); return { area: 0.5 * e.r * e.r * (sw - Math.sin(sw)), perimeter: e.r * sw }; }
+  if (e.t === 'line') return { area: 0, perimeter: d2(e.a, e.b) };
+  return null;
+}
+// angle at vertex v from p1 to p2, in degrees (0–180)
+export function angleAt(v, p1, p2) {
+  const a = [p1[0] - v[0], p1[1] - v[1]], b = [p2[0] - v[0], p2[1] - v[1]];
+  return Math.atan2(Math.abs(a[0] * b[1] - a[1] * b[0]), a[0] * b[0] + a[1] * b[1]) * 180 / Math.PI;
 }

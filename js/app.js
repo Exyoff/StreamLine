@@ -470,6 +470,7 @@ function renderActions() {
     row.replaceChildren(
       act(I.constrain, 'Constrain', e => openConstrainMenu(e.currentTarget)),
       act(I.sketch, 'Sketch', e => openSketchMenu(e.currentTarget)),
+      act(I.measure, 'Inquiry', e => openInquiryMenu(e.currentTarget)),
       act(I.move, 'Move', () => acadTool('move')),
       act(I.dup, 'Copy', () => acadTool('copy')),
       act(I.rotate, 'Rotate', () => acadTool('rotate')),
@@ -607,6 +608,15 @@ function renderDrawCard() {
   el.hidden = !content;
   if (content) el.replaceChildren(content);
   renderLastOp();
+}
+function openInquiryMenu(anchor) {
+  const it = (icon, l, t, k, pre) => menuItem(icon, l, () => { if (pre) pre(); acadTool(t); }, k);
+  popover(anchor, h('div', {}, h('div', { class: 'mtitle' }, 'Inquiry · Dimensions'),
+    it(I.measure, 'Distance', 'dist', 'DI'), it(I.rotate, 'Angle', 'angle', 'MA'), it(I.rect, 'Area', 'area', 'AA'),
+    it(I.circle, 'Radius', 'radius', 'MR'), it(I.origin, 'ID point', 'id', 'ID'), it(I.file, 'List', 'list', 'LI'),
+    h('div', { class: 'msep' }),
+    it(I.dim, 'Linear (H/V) dimension', 'dim', 'DLI', () => { Draw.dimOpts.mode = 'linear'; }),
+    it(I.dim, 'Aligned / angular / radial dimension', 'dim', 'DIM', () => { Draw.dimOpts.mode = 'aligned'; })), { above: true });
 }
 function openConstrainMenu(anchor) {
   const C = [['h', 'Horizontal', 'H'], ['v', 'Vertical', 'V'], ['par', 'Parallel', '∥'], ['perp', 'Perpendicular', '⊥'], ['eq', 'Equal', '='], ['tan', 'Tangent', 'T'], ['conc', 'Concentric', '◎'], ['fix', 'Fix', '⚓']];
