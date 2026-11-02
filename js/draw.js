@@ -10,9 +10,12 @@ import { runOp, updateOp, commit, cancelOp, getLast } from './ops.js';
 import { fmtLen, fmtAng } from './units.js';
 import { h, field, toast, openKeypad, $ } from './ui.js';
 import { xfFor } from './scene.js';
+import { editAndSolve, dof as sketchDof } from './constraints.js';
+import { defSize } from './operators.js';
 import { I } from './icons.js';
 
 const D = Math.PI / 180;
+export const corner = { kind: 'fillet', size: null };
 export const st = { start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null };
 export function resetTool() { Object.assign(st, { start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null }); view.render(); emit('drawcard'); }
 const sk = () => SK.activeSketch();
@@ -53,15 +56,20 @@ function snapAt(x, y, from = st.start, exclude = null) {
 const ang = (a, b) => Math.atan2(b[1] - a[1], b[0] - a[0]);
 
 // ---------- entity creation ----------
-function add(label, ent) {
+function add(label, ent, post) {
   const id = sk().id;
   let made = null;
-  runOp(F.sketchOp(label, id, s => { made = F.addEntity(s, JSON.parse(JSON.stringify(ent))); }));
+  runOp(F.sketchOp(label, id, s => { made = F.addEntity(s, JSON.parse(JSON.stringify(ent))); if (post) post(s, made); }));
   return made;
 }
+const autoHV = (s, e) => {
+  s.cons = s.cons || [];
+  if (Math.abs(e.a[1] - e.b[1]) < 1e-12) s.cons.push({ id: ++s.nextEnt, t: 'h', a: e.id });
+  else if (Math.abs(e.a[0] - e.b[0]) < 1e-12) s.cons.push({ id: ++s.nextEnt, t: 'v', a: e.id });
+};
 function placeLine(a, b) {
   if (SK.d2(a, b) < 1e-9) return;
-  add('Line', { t: 'line', a, b });
+  add('Line', { t: 'line', a, b }, autoHV);
   if (!st.chain.length) st.chain.push(a);
   st.chain.push(b);
   // closed the loop?
@@ -92,7 +100,7 @@ export function down(x, y) {
   const s = sk(); if (!s) return false;
   const t = tool();
   if (t === 'select') return gripDown(x, y);
-  if (t === 'trim' || t === 'dim') return false; // handled as taps
+  if (t === 'trim' || t === 'dim' || t === 'corner') return false; // handled as taps
   st.press = { x, y, moved: false };
   snapAt(x, y);
   view.render(); emit('drawcard');
@@ -107,7 +115,7 @@ export function move(x, y) {
   view.render(); emit('drawcard');
 }
 export function hover(x, y) {
-  if (S.ed.workspace !== 'draw' || !sk() || ['select', 'trim', 'dim'].includes(tool())) return;
+  if (S.ed.workspace !== 'draw' || !sk() || ['select', 'trim', 'dim', 'corner'].includes(tool())) return;
   snapAt(x, y, st.start || (st.arc ? st.arc.c : null)); view.render(); emit('drawcard');
 }
 export function up() {
@@ -170,8 +178,13 @@ export function tap(x, y) {
   const raw = planePt(x, y);
   const wpp = view.worldPerPixel(SK.toW(s.plane, raw));
   if (t === 'select') {
-    // dimension labels first
+    // dimension labels, then constraint glyphs
     for (const L of st.dimLabels || []) if (Math.hypot(L.x - x, L.y - y) < 28) { editDim(L.dim); return; }
+    for (const G of st.consLabels || []) if (Math.hypot(G.x - x, G.y - y) < 16) {
+      const cid = G.c.id;
+      runOp(F.sketchOp('Remove constraint', s.id, k => { k.cons = (k.cons || []).filter(c => c.id !== cid); }));
+      toast(`Removed ${SK.CONS_LABEL[G.c.t]} constraint`); return;
+    }
     const e = SK.pickEntity(s, raw, 16 * wpp);
     if (e) { if (S.ed.multi) { S.ed.drawSel.has(e.id) ? S.ed.drawSel.delete(e.id) : S.ed.drawSel.add(e.id); } else S.ed.drawSel = new Set([e.id]); }
     else if (!S.ed.multi) S.ed.drawSel = new Set();
@@ -180,19 +193,31 @@ export function tap(x, y) {
     const e = SK.pickEntity(s, raw, 16 * wpp);
     if (!e) { toast('Tap the piece of a line, arc or circle to remove'); return; }
     const skId = s.id, eid = e.id;
-    runOp(F.sketchOp('Trim', skId, sk2 => { const ee = SK.entById(sk2, eid); if (!ee) return 'Gone'; SK.trimAt(sk2, ee, raw); sk2.ents = sk2.ents.filter(d => d.t !== 'dim' || dimValid(sk2, d)); }));
+    runOp(F.sketchOp('Trim', skId, sk2 => { const ee = SK.entById(sk2, eid); if (!ee) return 'Gone'; SK.trimAt(sk2, ee, raw); SK.pruneCons(sk2); }));
+  } else if (t === 'corner') {
+    const size = corner.size ?? defSize() / 10, kind = corner.kind, skId = s.id;
+    runOp(F.sketchOp(kind === 'fillet' ? 'Sketch fillet' : 'Sketch chamfer', skId, sk2 => { const r = SK.cornerOp(sk2, raw, 18 * wpp, size, kind); if (typeof r === 'string') return r; SK.pruneCons(sk2); }));
   } else if (t === 'dim') {
+    // a tap on a circle/arc outline (not right at its centre) dimensions the radius/diameter
+    const onCurve = SK.pickEntity(s, raw, 12 * wpp);
+    if (!st.dimA && onCurve && (onCurve.t === 'circle' || onCurve.t === 'arc') && SK.d2(raw, onCurve.c) > 14 * wpp) {
+      const e = onCurve;
+      const d = add('Dimension', { t: 'dim', kind: e.t === 'circle' ? 'dia' : 'rad', e: e.id, value: e.t === 'circle' ? 2 * e.r : e.r });
+      if (d) editDim(d);
+      return;
+    }
     const r = SK.snapPoint(s, raw, { pxTol: 22, wpp, refPts: [] });
     if (r.ref && r.kind !== 'Mid') {
       if (!st.dimA) { st.dimA = r.ref; toast('Tap the second point'); view.render(); return; }
       if (st.dimA.e === r.ref.e && st.dimA.k === r.ref.k) return;
-      const d = add('Dimension', { t: 'dim', kind: 'lin', A: st.dimA, B: r.ref });
+      const pa = SK.refPoint(s, st.dimA), pb = SK.refPoint(s, r.ref);
+      const d = add('Dimension', { t: 'dim', kind: 'lin', A: st.dimA, B: r.ref, value: SK.d2(pa, pb) });
       st.dimA = null;
       if (d) editDim(d);
       return;
     }
     const e = SK.pickEntity(s, raw, 16 * wpp);
-    if (e && (e.t === 'circle' || e.t === 'arc')) { const d = add('Dimension', { t: 'dim', kind: e.t === 'circle' ? 'dia' : 'rad', e: e.id }); if (d) editDim(d); return; }
+    if (e && (e.t === 'circle' || e.t === 'arc')) { const d = add('Dimension', { t: 'dim', kind: e.t === 'circle' ? 'dia' : 'rad', e: e.id, value: e.t === 'circle' ? 2 * e.r : e.r }); if (d) editDim(d); return; }
     toast('Tap end/corner/centre points, or a circle or arc');
   }
   view.render(); emit('drawcard');
@@ -206,12 +231,36 @@ function editDim(d) {
     onCommit: nv => runOp(F.sketchOp('Set dimension', skId, (sk2, p) => SK.setDimValue(sk2, SK.entById(sk2, did), p.value), [{ key: 'value', label: 'Value', kind: 'len' }]), { value: nv }) });
 }
 
+// ---------- constraints ----------
+export function constrain(t) {
+  const s = sk(); if (!s) return;
+  const ents = [...S.ed.drawSel].map(id => SK.entById(s, id)).filter(Boolean);
+  const lines = ents.filter(e => e.t === 'line'), curves = ents.filter(e => e.t === 'circle' || e.t === 'arc');
+  let add = [];
+  if (t === 'h' || t === 'v') { if (!lines.length) return toast('Select one or more lines'); add = lines.map(l => ({ t, a: l.id })); }
+  else if (t === 'par' || t === 'perp') { if (lines.length !== 2) return toast('Select exactly 2 lines'); add = [{ t, a: lines[0].id, b: lines[1].id }]; }
+  else if (t === 'eq') { const g = lines.length === 2 ? lines : curves.length === 2 ? curves : null; if (!g) return toast('Select 2 lines or 2 circles/arcs'); add = [{ t, a: g[0].id, b: g[1].id }]; }
+  else if (t === 'tan') { const pair = lines.length === 1 && curves.length === 1 ? [lines[0], curves[0]] : curves.length === 2 ? curves : null; if (!pair) return toast('Select a line and a circle/arc, or 2 circles/arcs'); add = [{ t, a: pair[0].id, b: pair[1].id }]; }
+  else if (t === 'conc') { if (curves.length !== 2) return toast('Select 2 circles/arcs'); add = [{ t, a: curves[0].id, b: curves[1].id }]; }
+  else if (t === 'fix') { if (!ents.length) return toast('Select entities to fix'); add = ents.filter(e => e.t !== 'dim').map(e => ({ t, a: e.id, v: fixValuesOf(e) })); }
+  const ids = add;
+  const ok = runOp(F.sketchOp(`Constrain ${SK.CONS_LABEL[t]}`, s.id, k => editAndSolve(k, kk => { kk.cons = kk.cons || []; for (const c of ids) kk.cons.push({ id: ++kk.nextEnt, ...c }); })));
+  if (ok) toast(`${SK.CONS_LABEL[t]} applied · ${dofText()}`);
+}
+import { fixValues as fixValuesOf } from './constraints.js';
+let dofCache = { k: null, v: 0 };
+export function dofText() {
+  const s = sk(); if (!s) return '';
+  if (dofCache.k !== s.ents || dofCache.c !== s.cons) dofCache = { k: s.ents, c: s.cons, v: sketchDof(s) };
+  return dofCache.v === 0 ? 'fully constrained' : `${dofCache.v} DOF free`;
+}
+
 export function deleteSelected() {
   const s = sk(); if (!s || !S.ed.drawSel.size) { toast('Select sketch entities first'); return; }
   const ids = new Set(S.ed.drawSel);
   runOp(F.sketchOp('Delete', s.id, sk2 => {
     sk2.ents = sk2.ents.filter(e => !ids.has(e.id));
-    sk2.ents = sk2.ents.filter(d => d.t !== 'dim' || dimValid(sk2, d));
+    SK.pruneCons(sk2);
     S.ed.drawSel = new Set();
   }));
 }
@@ -234,6 +283,13 @@ export function cardContent() {
     return h('div', {}, title(entTitle(ents[0])), entFields(s, ents[0]));
   }
   if (t === 'trim') return title('Trim', 'tap pieces to remove');
+  if (t === 'corner') {
+    const size = corner.size ?? defSize() / 10;
+    return h('div', {}, title(corner.kind === 'fillet' ? 'Fillet' : 'Chamfer', 'tap a corner of two lines'),
+      h('div', { class: 'fields' },
+        h('div', { class: 'field' }, h('label', {}, 'Type'), h('div', { class: 'seg' }, ...[['fillet', 'Fillet'], ['chamfer', 'Chamfer']].map(([k, l]) => h('button', { class: corner.kind === k ? 'on' : '', onclick: () => { corner.kind = k; emit('drawcard'); } }, l)))),
+        field({ label: corner.kind === 'fillet' ? 'Radius' : 'Distance', kind: 'len', value: size, min: 1e-6, onCommit: v => { corner.size = v; emit('drawcard'); } })));
+  }
   if (t === 'dim') return title('Dimension', st.dimA ? 'tap the second point' : 'tap two points, or a circle/arc');
   if (t === 'line') {
     if (!st.start) return h('div', {}, title('Line', 'tap or drag · or type the start'), xyFields('Start', (p, k) => setStart(p, k)));
@@ -285,17 +341,17 @@ export function cardContent() {
 function entTitle(e) { return { line: 'Line', rect: 'Rectangle', circle: 'Circle', arc: 'Arc', dim: 'Dimension' }[e.t] || e.t; }
 function entFields(s, e) {
   const skId = s.id, id = e.id;
-  const edit = (label, fn) => v => runOp(F.sketchOp(label, skId, sk2 => { const ee = SK.entById(sk2, id); if (!ee) return 'Gone'; return fn(sk2, ee, v); }));
+  const edit = (label, fn) => v => runOp(F.sketchOp(label, skId, sk2 => editAndSolve(sk2, k => { const ee = SK.entById(k, id); if (!ee) return 'Gone'; return fn(k, ee, v); })));
   const fs = [];
   if (e.t === 'line') {
     const L = SK.d2(e.a, e.b), A = ang(e.a, e.b) / D;
     fs.push(
-      field({ label: 'Length', kind: 'len', value: L, min: 1e-9, onCommit: edit('Line length', (k, ee, v) => { const a = ang(ee.a, ee.b); SK.movePoint(k, { e: id, k: 'b' }, [ee.a[0] + v * Math.cos(a), ee.a[1] + v * Math.sin(a)]); }) }),
-      field({ label: 'Angle', kind: 'ang', value: A, onCommit: edit('Line angle', (k, ee, v) => { const l = SK.d2(ee.a, ee.b); SK.movePoint(k, { e: id, k: 'b' }, [ee.a[0] + l * ecos(v), ee.a[1] + l * esin(v)]); }) }),
-      field({ label: 'Start X', kind: 'len', value: e.a[0], cls: 'ax-x', onCommit: edit('Line start', (k, ee, v) => SK.movePoint(k, { e: id, k: 'a' }, [v, ee.a[1]])) }),
-      field({ label: 'Start Y', kind: 'len', value: e.a[1], cls: 'ax-y', onCommit: edit('Line start', (k, ee, v) => SK.movePoint(k, { e: id, k: 'a' }, [ee.a[0], v])) }),
-      field({ label: 'End X', kind: 'len', value: e.b[0], cls: 'ax-x', onCommit: edit('Line end', (k, ee, v) => SK.movePoint(k, { e: id, k: 'b' }, [v, ee.b[1]])) }),
-      field({ label: 'End Y', kind: 'len', value: e.b[1], cls: 'ax-y', onCommit: edit('Line end', (k, ee, v) => SK.movePoint(k, { e: id, k: 'b' }, [ee.b[0], v])) }));
+      field({ label: 'Length', kind: 'len', value: L, min: 1e-9, onCommit: edit('Line length', (k, ee, v) => { const L0 = SK.d2(ee.a, ee.b); ee.b = [ee.a[0] + (ee.b[0] - ee.a[0]) * v / L0, ee.a[1] + (ee.b[1] - ee.a[1]) * v / L0]; }) }),
+      field({ label: 'Angle', kind: 'ang', value: A, onCommit: edit('Line angle', (k, ee, v) => { const l = SK.d2(ee.a, ee.b); ee.b = [ee.a[0] + l * ecos(v), ee.a[1] + l * esin(v)]; }) }),
+      field({ label: 'Start X', kind: 'len', value: e.a[0], cls: 'ax-x', onCommit: edit('Line start', (k, ee, v) => { ee.a = [v, ee.a[1]]; }) }),
+      field({ label: 'Start Y', kind: 'len', value: e.a[1], cls: 'ax-y', onCommit: edit('Line start', (k, ee, v) => { ee.a = [ee.a[0], v]; }) }),
+      field({ label: 'End X', kind: 'len', value: e.b[0], cls: 'ax-x', onCommit: edit('Line end', (k, ee, v) => { ee.b = [v, ee.b[1]]; }) }),
+      field({ label: 'End Y', kind: 'len', value: e.b[1], cls: 'ax-y', onCommit: edit('Line end', (k, ee, v) => { ee.b = [ee.b[0], v]; }) }));
   } else if (e.t === 'rect') {
     fs.push(
       field({ label: 'X', kind: 'len', value: e.x, cls: 'ax-x', onCommit: edit('Rect X', (k, ee, v) => { ee.x = v; }) }),
@@ -394,6 +450,17 @@ function renderSketches() {
       const g = dimGeom(act, d); if (!g) continue;
       const w = SK.toW(act.plane, g.mid); view.label(w, g.text, 'dim');
       const q = view.project(w); st.dimLabels.push({ dim: d, x: q.x, y: q.y - 14 });
+    }
+    st.consLabels = [];
+    const seen = new Map();
+    for (const c of act.cons || []) {
+      const e = SK.entById(act, c.a); if (!e) continue;
+      const kp = SK.keyPoints(e), anchor = (kp.find(q => q.k === 'mid' || q.k === 'c' || q.k === 'ctr') || kp[0]).p;
+      const n = seen.get(e.id) || 0; seen.set(e.id, n + 1);
+      const w = SK.toW(act.plane, anchor), q = view.project(w);
+      const lab = SK.CONS_LABEL[c.t] + (c.b != null ? '' : '');
+      view.labelAt(q.x + 14 + n * 20, q.y + 16, lab, 'cons');
+      st.consLabels.push({ c, x: q.x + 14 + n * 20, y: q.y + 16 });
     }
     drawAxes(act);
   } else clearGroup(previewGroup);

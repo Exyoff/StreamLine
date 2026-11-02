@@ -6,6 +6,7 @@ export const S = {
     sketch: null,          // active sketch id
     drawSel: new Set(),    // selected sketch entity ids
     profiles: [],          // selected regions [{sk, pt:[x,y]}]
+    edges: [],             // selected body edges [{obj, a, b}] (world)
     pickFace: false,       // waiting for a tap on a face to start a sketch
     tools: { draw: 'line', cad: 'select', model: 'select' },
     mode: 'object',        // 'object' | 'edit'

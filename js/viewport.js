@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { S, emit, activeObj } from './state.js';
 import { triangulateFace, meshEdges, selectedFaces, newell, norm } from './mesh.js';
 import { objMatrix, xfFor } from './scene.js';
+import { featureEdges } from './edges.js';
 import { unitFactor } from './units.js';
 import { defSize } from './operators.js';
 
@@ -278,7 +279,7 @@ function buildVisual(o, editing) {
   g.computeBoundingSphere();
   const mesh = new THREE.Mesh(g, matMesh); mesh.userData.objId = o.id;
 
-  const E = meshEdges(m), ep = [], ec = [];
+  const E = editing ? meshEdges(m) : featureEdges(m.v, m.f).map(e => [e.a, e.b]), ep = [], ec = [];
   for (const [a, b] of E) {
     ep.push(...m.v[a], ...m.v[b]);
     if (editing) { const s = S.ed.editSel.has(a) && S.ed.editSel.has(b); const c = s ? COL.sel : COL.edge; ec.push(c.r, c.g, c.b, c.r, c.g, c.b); }
@@ -411,6 +412,14 @@ view.label = (world, text, cls = '') => {
   labelIdx++;
   el.className = 'vlabel ' + cls; el.textContent = text; el.style.display = '';
   el.style.transform = `translate(${s.x.toFixed(1)}px, ${s.y.toFixed(1)}px) translate(-50%, -130%)`;
+};
+
+view.labelAt = (x, y, text, cls = '') => {
+  let el = labelPool[labelIdx];
+  if (!el) { el = document.createElement('div'); labelsEl.appendChild(el); labelPool.push(el); }
+  labelIdx++;
+  el.className = 'vlabel ' + cls; el.textContent = text; el.style.display = '';
+  el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -50%)`;
 };
 
 // ---------- render loop ----------

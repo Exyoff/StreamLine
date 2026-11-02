@@ -8,7 +8,7 @@ const undoStack = [], redoStack = [];
 let last = null; // { def, params, base, undoSnap, committed, handle }
 
 function edCopy() {
-  return { workspace: S.ed.workspace, sketch: S.ed.sketch, drawSel: new Set(S.ed.drawSel), profiles: JSON.parse(JSON.stringify(S.ed.profiles)), mode: S.ed.mode, selected: new Set(S.ed.selected), active: S.ed.active, editSel: new Set(S.ed.editSel), selOrder: S.ed.selOrder.slice(), nextId: S.doc.nextId };
+  return { workspace: S.ed.workspace, sketch: S.ed.sketch, drawSel: new Set(S.ed.drawSel), profiles: JSON.parse(JSON.stringify(S.ed.profiles)), edges: JSON.parse(JSON.stringify(S.ed.edges || [])), mode: S.ed.mode, selected: new Set(S.ed.selected), active: S.ed.active, editSel: new Set(S.ed.editSel), selOrder: S.ed.selOrder.slice(), nextId: S.doc.nextId };
 }
 function makeBase(def, params) {
   const t = def.touch ? def.touch(params) : 'all';
@@ -25,7 +25,7 @@ function restore(base) {
   else S.doc.objects = base.list.map(o => base.clones.has(o.id) ? cloneObj(base.clones.get(o.id), base.shareMesh) : o);
   S.doc.sketches = JSON.parse(base.sketches);
   const e = base.ed;
-  S.ed.workspace = e.workspace; S.ed.sketch = e.sketch; S.ed.drawSel = new Set(e.drawSel); S.ed.profiles = JSON.parse(JSON.stringify(e.profiles));
+  S.ed.workspace = e.workspace; S.ed.sketch = e.sketch; S.ed.drawSel = new Set(e.drawSel); S.ed.profiles = JSON.parse(JSON.stringify(e.profiles)); S.ed.edges = JSON.parse(JSON.stringify(e.edges || []));
   S.ed.mode = e.mode; S.ed.selected = new Set(e.selected); S.ed.active = e.active;
   S.ed.editSel = new Set(e.editSel); S.ed.selOrder = e.selOrder.slice(); S.doc.nextId = e.nextId;
 }

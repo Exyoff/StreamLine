@@ -185,3 +185,33 @@ export const bodyBoolean = {
     S.ed.selected = new Set([t.id]); S.ed.active = t.id;
   },
 };
+
+// ---------- 3D edge fillet / chamfer ----------
+import { edgeBlend } from './edges.js';
+export const edgeBlendOp = {
+  label: p => (p.kind === 'fillet' ? 'Fillet' : 'Chamfer') + ` · ${p.edges.length} edge${p.edges.length === 1 ? '' : 's'}`,
+  defaults: () => ({ kind: 'fillet', size: defSize() / 10, segs: 8 }),
+  prepare(p) {
+    p.edges ??= JSON.parse(JSON.stringify(S.ed.edges || []));
+    if (!p.edges.length) return 'Pick body edges first (Edge tool)';
+    p._objs = [...new Set(p.edges.map(e => e.obj))];
+  },
+  touch: p => ({ ids: p._objs, mesh: true }),
+  fields: p => [lenF('size', p.kind === 'fillet' ? 'Radius' : 'Distance'), ...(p.kind === 'fillet' ? [{ key: 'segs', label: 'Segments / 90°', kind: 'int', min: 1, max: 64 }] : []), { key: 'kind', label: 'Type', kind: 'choice', options: [['fillet', 'Fillet'], ['chamfer', 'Chamfer']], wide: true }],
+  apply(p) {
+    if (!(p.size > 0)) return 'Size must be > 0';
+    for (const id of p._objs) {
+      const o = objById(id); if (!o) return 'Body missing';
+      let W = worldVerts(o), faces = o.mesh.f;
+      for (const e of p.edges.filter(x => x.obj === id)) {
+        const r = edgeBlend(W, faces, e.a, e.b, p.size, p.kind, Math.max(1, Math.round(p.segs)));
+        if (typeof r === 'string') return r;
+        W = r.v; faces = r.f;
+      }
+      const xf = xfFor(o);
+      o.mesh = new M.PolyMesh(W.map(xf.toL), faces);
+      if (o.scl.filter(s => s < 0).length % 2) o.mesh.f.forEach(f => f.reverse());
+    }
+    S.ed.edges = [];
+  },
+};

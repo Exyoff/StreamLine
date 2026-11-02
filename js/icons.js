@@ -64,5 +64,10 @@ export const I = {
   intersect: s('<circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6"/><path d="M12 7a6 6 0 0 1 0 10 6 6 0 0 1 0-10z" fill="currentColor" fill-opacity=".6"/>'),
   face: s('<path d="M4 18 12 6l8 12z" fill="currentColor" fill-opacity=".55"/>'),
   next: s('<path d="M5 12h14M13 6l6 6-6 6"/>'),
+  corner: s('<path d="M4 20V11a7 7 0 0 1 7-7h9"/><path d="M4 4h3M4 4v3" opacity=".5"/>'),
+  edgeSel: s('<path d="M4 16l8-4 8 4-8 4z" opacity=".4"/><path d="M4 16l8 4" stroke-width="3"/>'),
+  fillet: s('<path d="M4 20V12a8 8 0 0 1 8-8h8"/><path d="M4 20h16V4" opacity=".4"/>'),
+  chamfer: s('<path d="M4 20V10l6-6h10"/><path d="M4 20h16V4" opacity=".4"/>'),
+  constrain: s('<path d="M7 4v16M17 4v16"/><path d="M4 9h6M14 15h6"/>'),
   backspace: s('<path d="M21 5H8l-6 7 6 7h13z"/><path d="m12 9 6 6M18 9l-6 6"/>'),
 };

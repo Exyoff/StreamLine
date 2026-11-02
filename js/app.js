@@ -14,6 +14,7 @@ import * as IO from './io.js';
 import * as SK from './sketch.js';
 import * as F from './features.js';
 import * as Draw from './draw.js';
+import { featureEdges, straightRun } from './edges.js';
 
 const DOC_KEY = 'streamline.doc.v1';
 const AXC = ['ax-x', 'ax-y', 'ax-z'];
@@ -116,7 +117,36 @@ function activateSketch(id) {
 }
 
 // ---------- CAD taps: profiles & bodies ----------
+function edgeTap(x, y) {
+  let best = null;
+  const hit = view.pickObject(x, y);
+  for (const o of S.doc.objects) {
+    if (o.hidden) continue;
+    const W = worldVerts(o), fe = featureEdges(W, o.mesh.f);
+    for (const e of fe) {
+      const A = view.project(W[e.a]), B = view.project(W[e.b]);
+      if (!A.front || !B.front) continue;
+      const dx = B.x - A.x, dy = B.y - A.y, L2 = dx * dx + dy * dy;
+      let t = L2 ? ((x - A.x) * dx + (y - A.y) * dy) / L2 : 0; t = Math.max(0, Math.min(1, t));
+      const d = Math.hypot(A.x + dx * t - x, A.y + dy * t - y);
+      if (d > 24) continue;
+      const P = W[e.a].map((c, k) => c + (W[e.b][k] - c) * t);
+      const depth = view.project(P).depth;
+      if (hit && hit.id !== o.id && view.project(hit.point).depth < depth - 1e-3) continue; // hidden behind another body
+      if (!best || d < best.d) best = { d, o, W, fe, e };
+    }
+  }
+  if (!best) { if (!S.ed.multi) S.ed.edges = []; return selectionChanged(); }
+  const [a, b] = straightRun(best.W, best.fe, best.e.a, best.e.b);
+  const same = q => q.obj === best.o.id && ((M.dist(q.a, a) < 1e-6 && M.dist(q.b, b) < 1e-6) || (M.dist(q.a, b) < 1e-6 && M.dist(q.b, a) < 1e-6));
+  const i = S.ed.edges.findIndex(same);
+  if (i >= 0) S.ed.edges.splice(i, 1);
+  else if (S.ed.multi || (S.ed.edges.length && S.ed.edges.every(q => q.obj === best.o.id))) S.ed.edges.push({ obj: best.o.id, a, b });
+  else S.ed.edges = [{ obj: best.o.id, a, b }];
+  selectionChanged();
+}
 function cadTap(x, y) {
+  if (S.ed.tool === 'edge') return edgeTap(x, y);
   const ray = view.ray(x, y).ray;
   let best = null;
   for (const sk of S.doc.sketches || []) {
@@ -232,9 +262,10 @@ function setTool(t) {
 // =====================================================================
 // measure tool
 // =====================================================================
-let measureGroup, measureKey = '';
+let measureGroup, measureKey = '', edgeGroup;
 function initMeasureOverlay() {
   measureGroup = new THREE.Group(); view.overlayScene.add(measureGroup);
+  edgeGroup = new THREE.Group(); view.overlayScene.add(edgeGroup);
   view.renderHooks.push(drawOverlays);
 }
 function measureTap(x, y) {
@@ -277,6 +308,18 @@ function drawOverlays() {
   }
   if (pts.length === 2) view.label(M.mul(M.add(pts[0].p, pts[1].p), 0.5), fmtLen(M.dist(pts[0].p, pts[1].p)), 'dim');
 
+  // selected body edges (CAD)
+  edgeGroup.clear();
+  if (S.ed.workspace === 'cad' && S.ed.edges.length) {
+    const mat = new THREE.LineBasicMaterial({ color: 0xff9a1f, depthTest: false });
+    for (const e of S.ed.edges) {
+      edgeGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...e.a), new THREE.Vector3(...e.b)]), mat));
+      const mk = new THREE.Mesh(new THREE.RingGeometry(0.5, 1, 16), new THREE.MeshBasicMaterial({ color: 0xff9a1f, depthTest: false }));
+      const mid = M.mul(M.add(e.a, e.b), 0.5);
+      mk.position.set(...mid); mk.quaternion.copy(camera().quaternion); mk.scale.setScalar(view.worldPerPixel(mid) * 6); edgeGroup.add(mk);
+      view.label(mid, fmtLen(M.dist(e.a, e.b)), 'edge');
+    }
+  }
   // edge lengths of selected edges (edit mode)
   if (S.ed.mode === 'edit' && S.settings.edgeLengths !== false && !gizmoActive()) {
     const o = activeObj(); if (!o) return;
@@ -294,8 +337,8 @@ function drawOverlays() {
 // static UI
 // =====================================================================
 const TOOLS = {
-  draw: [['select', 'Select', I.select], ['line', 'Line', I.line], ['rect', 'Rect', I.rect], ['circle', 'Circle', I.circle], ['arc', 'Arc', I.arc], ['trim', 'Trim', I.trim], ['dim', 'Dim', I.dim]],
-  cad: [['select', 'Select', I.select], ['measure', 'Measure', I.measure]],
+  draw: [['select', 'Select', I.select], ['line', 'Line', I.line], ['rect', 'Rect', I.rect], ['circle', 'Circle', I.circle], ['arc', 'Arc', I.arc], ['corner', 'Fillet', I.corner], ['trim', 'Trim', I.trim], ['dim', 'Dim', I.dim]],
+  cad: [['select', 'Select', I.select], ['edge', 'Edge', I.edgeSel], ['measure', 'Measure', I.measure]],
   model: [['select', 'Select', I.select], ['move', 'Move', I.move], ['rotate', 'Rotate', I.rotate], ['scale', 'Scale', I.scale], ['measure', 'Measure', I.measure]],
 };
 function renderTools() {
@@ -377,6 +420,7 @@ function renderActions() {
   if (S.ed.workspace === 'draw') {
     row.replaceChildren(
       act(I.sketch, 'Sketch', e => openSketchMenu(e.currentTarget), 'primary'),
+      act(I.constrain, 'Constrain', e => openConstrainMenu(e.currentTarget)),
       act(I.face, 'On face', () => startFacePick()),
       act(I.trash, 'Delete', () => Draw.deleteSelected(), 'danger'),
       act(I.save, 'DXF', () => exportDXF()),
@@ -388,6 +432,8 @@ function renderActions() {
     row.replaceChildren(
       act(I.extrude, 'Extrude', () => runOp(F.extrude), 'primary'),
       act(I.revolve, 'Revolve', () => runOp(F.revolve)),
+      act(I.fillet, 'Fillet', () => runOp(F.edgeBlendOp, { kind: 'fillet' })),
+      act(I.chamfer, 'Chamfer', () => runOp(F.edgeBlendOp, { kind: 'chamfer' })),
       act(I.union, 'Union', () => runOp(F.bodyBoolean, { kind: 'union' })),
       act(I.subtract, 'Subtract', () => runOp(F.bodyBoolean, { kind: 'subtract' })),
       act(I.intersect, 'Intersect', () => runOp(F.bodyBoolean, { kind: 'intersect' })),
@@ -438,15 +484,15 @@ function renderHud() {
   const step = `Snap ${S.settings.snap ? fmtLen(S.settings.snapStep) : 'off'}`;
   if (S.ed.workspace === 'draw') {
     const sk = SK.activeSketch();
-    if (sk) parts.push(`<b>${esc(sk.name)}</b> · ${sk.face ? 'on face' : esc(planeName(sk))}`, `${sk.ents.filter(e => e.t !== 'dim').length} entities · ${SK.regions(sk).length} closed region${SK.regions(sk).length === 1 ? '' : 's'}`);
+    if (sk) parts.push(`<b>${esc(sk.name)}</b> · ${sk.face ? 'on face' : esc(planeName(sk))}`, `${sk.ents.filter(e => e.t !== 'dim').length} entities · ${SK.regions(sk).length} closed region${SK.regions(sk).length === 1 ? '' : 's'} · ${Draw.dofText()}`);
     parts.push(`Grid ${fmtLen(view.gridStep)} · ${step} · ${S.settings.angleStep}°`);
     $('#hud').innerHTML = parts.join('<br>');
     return;
   }
   if (S.ed.workspace === 'cad') {
     const t = selectedObjs();
-    parts.push(`<b>CAD</b> · ${S.ed.profiles.length} profile${S.ed.profiles.length === 1 ? '' : 's'} · ${t.length ? esc(t.map(x => x.name).join(', ')) : 'no body'} selected`);
-    parts.push(S.ed.pickFace ? '<b>Tap a face…</b>' : 'Tap regions to pick profiles, bodies to target');
+    parts.push(`<b>CAD</b> · ${S.ed.profiles.length} profile${S.ed.profiles.length === 1 ? '' : 's'} · ${S.ed.edges.length} edge${S.ed.edges.length === 1 ? '' : 's'} · ${t.length ? esc(t.map(x => x.name).join(', ')) : 'no body'}`);
+    parts.push(S.ed.pickFace ? '<b>Tap a face…</b>' : S.ed.tool === 'edge' ? 'Tap edges, then Fillet or Chamfer' : 'Tap regions to pick profiles, bodies to target');
     $('#hud').innerHTML = parts.join('<br>');
     return;
   }
@@ -466,6 +512,13 @@ function renderDrawCard() {
   el.hidden = !content;
   if (content) el.replaceChildren(content);
   renderLastOp();
+}
+function openConstrainMenu(anchor) {
+  const C = [['h', 'Horizontal', 'H'], ['v', 'Vertical', 'V'], ['par', 'Parallel', '∥'], ['perp', 'Perpendicular', '⊥'], ['eq', 'Equal', '='], ['tan', 'Tangent', 'T'], ['conc', 'Concentric', '◎'], ['fix', 'Fix', '⚓']];
+  popover(anchor, h('div', {}, h('div', { class: 'mtitle' }, `Constrain selection · ${S.ed.drawSel.size}`),
+    ...C.map(([t, l, g]) => menuItem('', l, () => Draw.constrain(t), g)),
+    h('div', { class: 'msep' }),
+    h('div', { class: 'note', style: 'padding:6px 12px 8px;max-width:260px' }, 'Touching points stay joined automatically. Tap a glyph (Select tool) to remove a constraint.')), { above: true });
 }
 function openSketchMenu(anchor) {
   const sks = S.doc.sketches || [];
@@ -811,7 +864,9 @@ function onKey(e) {
     if (n === 'Decimal') { $('#btn-frame').click(); return; }
   }
   if (S.ed.workspace === 'draw') {
-    const dm = { q: 'select', l: 'line', r: 'rect', c: 'circle', a: 'arc', t: 'trim', d: 'dim' };
+    const dm = { q: 'select', l: 'line', r: 'rect', c: 'circle', a: 'arc', t: 'trim', d: 'dim', f: 'corner' };
+    const cm = { h: 'h', v: 'v', p: 'par', o: 'perp', e: 'eq', g: 'tan' };
+    if (e.shiftKey && cm[k]) { Draw.constrain(cm[k]); return; }
     if (dm[k]) { setTool(dm[k]); return; }
     if (k === 'escape' || k === 'enter') { Draw.resetTool(); return; }
     if (k === 'delete' || k === 'backspace' || k === 'x') { Draw.deleteSelected(); return; }

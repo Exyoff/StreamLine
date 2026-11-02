@@ -101,18 +101,25 @@ export function boolean(kind, aPolys, bPolys) {
 
 // ---------- polygons -> clean PolyMesh ----------
 export function polysToMesh(polys) {
-  const Q = 1e-5, map = new Map(), v = [];
+  // tolerance weld: a point merges with any existing point within Q (neighbouring cells are searched,
+  // so near-identical points straddling a cell boundary still weld)
+  const Q = 1e-5, grid = new Map(), v = [];
   const idx = p => {
-    const k = Math.round(p[0] / Q) + ',' + Math.round(p[1] / Q) + ',' + Math.round(p[2] / Q);
-    if (!map.has(k)) { map.set(k, v.length); v.push(p.slice()); }
-    return map.get(k);
+    const cx = Math.floor(p[0] / Q), cy = Math.floor(p[1] / Q), cz = Math.floor(p[2] / Q);
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+      const cell = grid.get((cx + dx) + ',' + (cy + dy) + ',' + (cz + dz));
+      if (cell) for (const i of cell) { const q = v[i]; if (Math.abs(q[0] - p[0]) <= Q && Math.abs(q[1] - p[1]) <= Q && Math.abs(q[2] - p[2]) <= Q) return i; }
+    }
+    const k = cx + ',' + cy + ',' + cz;
+    (grid.get(k) || grid.set(k, []).get(k)).push(v.length); v.push(p.slice());
+    return v.length - 1;
   };
   let f = polys.map(p => {
     const r = [];
     for (const q of p.v) { const i = idx(q); if (r[r.length - 1] !== i) r.push(i); }
     if (r.length > 1 && r[0] === r[r.length - 1]) r.pop();
     return r;
-  }).filter(r => r.length >= 3);
+  }).filter(r => r.length >= 3 && len(newell(r.map(i => v[i]))) > 1e-12);
   const m = new PolyMesh(v, f);
   fixTJunctions(m);
   mergeCoplanar(m);

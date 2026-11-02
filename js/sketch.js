@@ -2,6 +2,7 @@
 // Sketch: { id, name, plane:{o,u,v,n}, ents:[...], face:{obj,..}|null, hidden }
 // Entities (2D mm): line {a,b} · circle {c,r} · arc {c,r,a0,a1} (CCW, rad) · rect {x,y,w,h} · dim {kind:'lin'|'rad'|'dia', A, B | e}
 import { S } from './state.js';
+import { editAndSolve } from './constraints.js';
 
 export const PLANES = {
   XY: { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1], label: 'Top (XY)' },
@@ -43,6 +44,16 @@ export function refPoint(sk, ref) {
 }
 // Move a point and everything coincident with it (simple connectivity, like a CAD coincidence constraint).
 export function movePoint(sk, ref, np) {
+  // constraint-aware: solve with the point pinned; fall back to plain coincident drag if that conflicts
+  const snap = JSON.stringify(sk.ents);
+  const err = editAndSolve(sk, () => {}, { pins: [{ ref, p: np }] });
+  if (!err) return;
+  // unreachable target: move there, then project back onto the constraints (closest valid position)
+  sk.ents = JSON.parse(snap);
+  const err2 = editAndSolve(sk, k => { movePointNaive(k, ref, np); });
+  if (err2) { sk.ents = JSON.parse(snap); return err2; }
+}
+export function movePointNaive(sk, ref, np) {
   const old = refPoint(sk, ref); if (!old) return;
   const tol = 1e-7;
   for (const e of sk.ents) for (const kp of keyPoints(e)) {
@@ -335,6 +346,12 @@ export function dimValue(sk, d) {
   return d.kind === 'dia' ? 2 * e.r : e.r;
 }
 export function setDimValue(sk, d, v) {
+  if (sk.cons && sk.cons.length || sk.ents.some(x => x.t === 'dim' && x.value != null)) {
+    const err = editAndSolve(sk, () => { d.value = v; }, { heavyRefs: d.kind === 'lin' ? [d.A] : [] });
+    if (!err) return;
+    d.value = null; // fall back to a direct edit below
+  }
+  if (d.value !== undefined) d.value = v;
   if (d.kind === 'lin') {
     const A = refPoint(sk, d.A), B = refPoint(sk, d.B);
     const L = d2(A, B); if (L < 1e-12) return 'Points coincide';
@@ -359,3 +376,65 @@ export function toDXF(sk) {
   L.push('0', 'ENDSEC', '0', 'EOF');
   return L.join('\n') + '\n';
 }
+
+// remove constraints / dims that reference deleted entities
+export function pruneCons(sk) {
+  const ids = new Set(sk.ents.map(e => e.id));
+  sk.cons = (sk.cons || []).filter(c => ids.has(c.a) && (c.b == null || ids.has(c.b)) && (!c.p || ids.has(c.p.e)));
+  sk.ents = sk.ents.filter(d => d.t !== 'dim' || (d.kind === 'lin' ? ids.has(d.A.e) && ids.has(d.B.e) && refPoint(sk, d.A) && refPoint(sk, d.B) : ids.has(d.e)));
+}
+export const CONS_LABEL = { h: 'H', v: 'V', par: '∥', perp: '⊥', eq: '=', tan: 'T', conc: '◎', fix: '⚓', mid: 'M' };
+
+// ---------- 2D corner fillet / chamfer ----------
+// Finds two lines meeting at the corner nearest p (within tol), then rounds (arc radius r) or bevels (distance r).
+export function explodeRect(sk, e) {
+  const idx = sk.ents.indexOf(e);
+  const c = rectCorners(e);
+  const lines = [0, 1, 2, 3].map(i => ({ id: (sk.nextEnt = (sk.nextEnt || 1000) + 1), t: 'line', a: c[i].slice(), b: c[(i + 1) % 4].slice() }));
+  sk.ents.splice(idx, 1, ...lines);
+  return lines;
+}
+export function findCorner(sk, p, tol) {
+  // explode rectangles whose corner is near p
+  for (const e of sk.ents.slice()) if (e.t === 'rect' && rectCorners(e).some(c => d2(c, p) <= tol)) explodeRect(sk, e);
+  let best = null;
+  const ends = [];
+  for (const e of sk.ents) if (e.t === 'line') { ends.push({ e, k: 'a', p: e.a }); ends.push({ e, k: 'b', p: e.b }); }
+  for (const q of ends) {
+    if (d2(q.p, p) > tol) continue;
+    const mates = ends.filter(o => o.e !== q.e && d2(o.p, q.p) < 1e-7);
+    if (mates.length === 1 && (!best || d2(q.p, p) < best.d)) best = { d: d2(q.p, p), A: q, B: mates[0] };
+  }
+  return best;
+}
+export function cornerOp(sk, p, tol, r, kind) {
+  const c = findCorner(sk, p, tol);
+  if (!c) return 'Tap a corner where exactly two lines meet';
+  const P = c.A.p.slice();
+  const other = q => (q.k === 'a' ? q.e.b : q.e.a);
+  const u1 = norm2(sub2(other(c.A), P)), u2 = norm2(sub2(other(c.B), P));
+  const L1 = d2(other(c.A), P), L2 = d2(other(c.B), P);
+  const cosT = Math.max(-1, Math.min(1, u1[0] * u2[0] + u1[1] * u2[1])), th = Math.acos(cosT);
+  if (th < 1e-6 || Math.PI - th < 1e-6) return 'Lines are parallel';
+  const t = kind === 'chamfer' ? r : r / Math.tan(th / 2);
+  if (t > L1 + 1e-9 || t > L2 + 1e-9) return `Too large: needs ${(t).toFixed(3)} mm of each line`;
+  const T1 = [P[0] + u1[0] * t, P[1] + u1[1] * t], T2 = [P[0] + u2[0] * t, P[1] + u2[1] * t];
+  c.A.e[c.A.k] = T1; c.B.e[c.B.k] = T2;
+  sk.ents = sk.ents.filter(e => !(e.t === 'line' && d2(e.a, e.b) < 1e-9));
+  const nid = () => (sk.nextEnt = (sk.nextEnt || 1000) + 1);
+  if (kind === 'chamfer') { const ln = { id: nid(), t: 'line', a: T1, b: T2 }; sk.ents.push(ln); return { ent: ln }; }
+  const bis = norm2([u1[0] + u2[0], u1[1] + u2[1]]);
+  const dc = r / Math.sin(th / 2);
+  const C = [P[0] + bis[0] * dc, P[1] + bis[1] * dc];
+  const a1 = Math.atan2(T1[1] - C[1], T1[0] - C[0]), a2 = Math.atan2(T2[1] - C[1], T2[0] - C[0]);
+  const want = Math.PI - th;
+  let s12 = ((a2 - a1) % TAU + TAU) % TAU;
+  const arc = Math.abs(s12 - want) < 1e-6 ? { a0: a1, a1: a1 + want } : { a0: a2, a1: a2 + want };
+  const e = { id: nid(), t: 'arc', c: C, r, ...arc };
+  sk.ents.push(e);
+  sk.cons = sk.cons || [];
+  sk.cons.push({ id: nid(), t: 'tan', a: c.A.e.id, b: e.id }, { id: nid(), t: 'tan', a: c.B.e.id, b: e.id });
+  return { ent: e };
+}
+const sub2 = (a, b) => [a[0] - b[0], a[1] - b[1]];
+const norm2 = a => { const l = Math.hypot(a[0], a[1]) || 1; return [a[0] / l, a[1] / l]; };

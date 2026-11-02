@@ -60,6 +60,7 @@ input, select { font: inherit; }
 }
 .vlabel.readout { background: var(--accent); color: var(--accent-ink); border: 0; font-size: 13px; padding: 6px 8px; transform-origin: center; }
 .vlabel.dim { background: rgba(79,143,247,.9); border: 0; }
+.vlabel.cons { background: #3a3d45; color: #ffd27a; font-size: 11px; padding: 3px 5px; min-width: 18px; text-align: center; border-color: rgba(255,210,122,.4); }
 .vlabel.edge { background: rgba(20,21,24,.6); font-size: 11px; padding: 3px 5px; }
 #hud {
   position: absolute; left: calc(var(--sal) + 10px); top: 8px; right: 120px; pointer-events: none;
