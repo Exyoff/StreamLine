@@ -100,10 +100,10 @@ export function boolean(kind, aPolys, bPolys) {
 }
 
 // ---------- polygons -> clean PolyMesh ----------
-export function polysToMesh(polys) {
+export function polysToMesh(polys, opts = {}) {
   // tolerance weld: a point merges with any existing point within Q (neighbouring cells are searched,
   // so near-identical points straddling a cell boundary still weld)
-  const Q = 1e-5, grid = new Map(), v = [];
+  const Q = opts.weld || 1e-5, grid = new Map(), v = [];
   const idx = p => {
     const cx = Math.floor(p[0] / Q), cy = Math.floor(p[1] / Q), cz = Math.floor(p[2] / Q);
     for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {

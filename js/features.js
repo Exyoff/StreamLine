@@ -202,7 +202,7 @@ export const bodyBoolean = {
 };
 
 // ---------- 3D edge fillet / chamfer ----------
-import { edgeBlend, edgeFrame, circleBlend } from './edges.js';
+import { edgeBlend, edgeFrame, circleBlend, sphereCorner } from './edges.js';
 import { faceRegion, findRegion, regionCentroid, pushPull, shell, mirrorMesh } from './modifiers.js';
 export const edgeBlendOp = {
   label: p => (p.kind === 'fillet' ? 'Fillet' : 'Chamfer') + ` · ${p.edges.length} edge${p.edges.length === 1 ? '' : 's'}`,
@@ -238,6 +238,18 @@ export const edgeBlendOp = {
           : edgeBlend(W, faces, e.a, e.b, p.size, p.kind, Math.max(1, Math.round(p.segs)), p.kind === 'chamfer' ? p.size2 : null, !!p.swap);
         if (typeof r === 'string') return r;
         W = r.v; faces = r.f;
+      }
+      // corners where three selected straight edges meet at right angles get a spherical patch
+      if (p.kind === 'fillet') {
+        const straight = p.edges.filter(x => x.obj === id && !x.circle), seen = new Set();
+        for (const e of straight) for (const V of [e.a, e.b]) {
+          const key = V.map(c => c.toFixed(6)).join(); if (seen.has(key)) continue; seen.add(key);
+          const inc = straight.filter(x => M.dist(x.a, V) < 1e-6 || M.dist(x.b, V) < 1e-6);
+          if (inc.length !== 3) continue;
+          const dirs = inc.map(x => M.norm(M.sub(M.dist(x.a, V) < 1e-6 ? x.b : x.a, V)));
+          const r = sphereCorner(W, faces, V, dirs, p.size, Math.max(2, Math.round(p.segs)));
+          if (r) { W = r.v; faces = r.f; }
+        }
       }
       const xf = xfFor(o);
       o.mesh = new M.PolyMesh(W.map(xf.toL), faces);

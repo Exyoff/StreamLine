@@ -169,3 +169,25 @@ export function circleBlend(W, faces, circ, size, kind, segs90 = 8) {
   const res = polysToMesh(boolean(fr.convex ? 'subtract' : 'union', toPolys(W, faces), toPolys(tool.v, tool.f)));
   return res.f.length ? res : 'Blend failed';
 }
+
+// Round the corner where three filleted edges meet at right angles: subtract (corner box − sphere),
+// leaving a spherical patch instead of the mitred "tri-cylinder" bump. dirs: unit vectors from the
+// corner along the three edges.
+import { makeSphere } from './mesh.js';
+export function sphereCorner(W, faces, V, dirs, r, segs90 = 8) {
+  const [d1, d2, d3] = dirs;
+  if (Math.abs(M.dot(d1, d2)) > 1e-6 || Math.abs(M.dot(d1, d3)) > 1e-6 || Math.abs(M.dot(d2, d3)) > 1e-6) return null;
+  const C = M.add(V, M.mul(M.add(M.add(d1, d2), d3), r));
+  const box = [];
+  for (const c of [0, 1]) for (const b of [0, 1]) for (const a of [0, 1]) box.push(M.add(V, M.add(M.add(M.mul(d1, a * r * 1.0001), M.mul(d2, b * r * 1.0001)), M.mul(d3, c * r * 1.0001))));
+  const bf = [[0, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [2, 6, 7, 3], [0, 4, 6, 2], [1, 3, 7, 5]];
+  const bm = new PolyMesh(box, bf); M.recalcNormals(bm);
+  const n = Math.max(8, segs90 * 4), sp = makeSphere(r, n, Math.max(4, n / 2));
+  // orient the sphere's frame to the corner axes (poles along d3) and move it to C
+  const sv = sp.v.map(p => M.add(C, M.add(M.add(M.mul(d1, p[0]), M.mul(d2, p[1])), M.mul(d3, p[2]))));
+  if (M.dot(M.cross(d1, d2), d3) < 0) sp.f.forEach(f => f.reverse());
+  const cutter = boolean('subtract', toPolys(bm.v, bm.f), toPolys(sv, sp.f));
+  // the sphere touches the fillets tangentially, which leaves micron slivers: weld them away
+  const res = polysToMesh(boolean('subtract', toPolys(W, faces), cutter), { weld: 2e-3 });
+  return res.f.length ? res : null;
+}
