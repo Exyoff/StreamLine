@@ -442,3 +442,15 @@ test('2D: offset and trim ellipses and splines', async () => {
   trimAt(el, el.ents[0], [0, 5]);
   assert.equal(el.ents.filter(e => e.t === 'spline').length, 1); assert.equal(el.ents.filter(e => e.t === 'ellipse').length, 0);
 });
+
+test('3D: three fillets meeting at a box corner get a spherical corner', async () => {
+  const { sphereCorner } = await import('../js/edges.js');
+  let m = makeBox(20, 20, 20);
+  for (const [a, b] of [[[-10, 10, 10], [10, 10, 10]], [[10, -10, 10], [10, 10, 10]], [[10, 10, -10], [10, 10, 10]]]) m = edgeBlend(m.v, m.f, a, b, 3, 'fillet', 8);
+  const triCyl = Math.max(...m.v.map(p => p[0] + p[1] + p[2]));
+  assert.ok(triCyl > 27, 'edge fillets alone leave the mitred bump');
+  const r = sphereCorner(m.v, m.f, [10, 10, 10], [[-1, 0, 0], [0, -1, 0], [0, 0, -1]], 3, 8);
+  assert.ok(r && watertight(r), 'corner patch keeps the body watertight');
+  const corner = Math.max(...r.v.map(p => p[0] + p[1] + p[2]));
+  assert.ok(corner <= 21 + 3 * Math.sqrt(3) + 1e-6 && corner > 25.5, `corner now on the sphere around (7,7,7) (max x+y+z = ${corner.toFixed(3)})`);
+});
