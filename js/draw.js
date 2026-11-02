@@ -18,7 +18,7 @@ const D = Math.PI / 180;
 export const corner = { kind: 'fillet', size: null };
 let propsOpen = false; // compact entity card by default (AutoCAD-style quick properties)
 export const st = { start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null };
-export function resetTool() { result = null; if (tool() !== 'line') lineOpts.construction = false; Object.assign(st, { cmd: null, last: null, dimLine: null, start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null }); view.render(); emit('drawcard'); }
+export function resetTool() { result = null; st.arcMode = false; st.lastDir = null; if (tool() !== 'line') lineOpts.construction = false; Object.assign(st, { cmd: null, last: null, dimLine: null, start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null }); view.render(); emit('drawcard'); }
 const sk = () => SK.activeSketch();
 const tool = () => S.ed.tool;
 
@@ -70,6 +70,8 @@ const autoHV = (s, e) => {
 };
 function placeLine(a, b) {
   if (SK.d2(a, b) < 1e-9) return;
+  if (st.arcMode) return placeTangentArc(a, b);
+  const L = SK.d2(a, b); st.lastDir = [(b[0] - a[0]) / L, (b[1] - a[1]) / L];
   add(lineOpts.construction ? 'Construction line' : 'Line', { t: 'line', a, b, ...(lineOpts.construction ? { construction: true } : {}) }, autoHV);
   if (!st.chain.length) st.chain.push(a);
   st.chain.push(b);
@@ -566,6 +568,18 @@ function drawPreview(s) {
     const txt = c.tool === 'rotate' ? fmtAng(((ang(b, p) / D) + 360) % 360) : c.tool === 'scale' ? `× ${SK.d2(b, p).toFixed(4)}` : fmtLen(SK.d2(b, p));
     view.label(W(p), txt, 'readout');
   }
+  if (c && c.tool === 'ellipse' && p && c.center) {
+    const g = c.stage === 'axis' ? { t: 'ellipse', c: c.center, rx: Math.max(1e-6, SK.d2(c.center, p)), ry: Math.max(1e-6, SK.d2(c.center, p)) / 2, rot: ang(c.center, p) } : c.stage === 'other' ? { t: 'ellipse', c: c.center, rx: SK.d2(c.center, c.axis), ry: Math.max(1e-6, perpDist(c, p)), rot: ang(c.center, c.axis) } : null;
+    if (g) { const pl = SK.entPolyline(g); previewGroup.add(lineObj(pl.pts.map(W), m, true)); }
+  }
+  if (c && c.tool === 'spline' && c.pts.length) {
+    const pts = p ? [...c.pts, p] : c.pts;
+    previewGroup.add(lineObj(SK.splinePoints(pts, false).map(W), m));
+    for (const q of c.pts) previewGroup.add(osnapMarker(W(q), 'End', s));
+  }
+  if (t === 'line' && st.arcMode && st.start && p && SK.d2(st.start, p) > 1e-9) {
+    const g = tangentArc(st.start, p); if (g) previewGroup.add(lineObj(SK.entPolyline(g).pts.map(W), m));
+  }
   if (c && c.tool === 'polygon' && c.stage === 'vertex' && p) {
     const ghost = { ents: [], nextEnt: 1e6 }; SK.addPolygon(ghost, c.center, p, acad.polySides);
     for (const e of ghost.ents) previewGroup.add(lineObj([W(e.a), W(e.b)], m));
@@ -618,7 +632,7 @@ function marker(w, color) {
 // =====================================================================
 // AutoCAD-style commands: edit-command state machines, prompts, typed input
 // =====================================================================
-export const EDIT_TOOLS = new Set(['move', 'copy', 'rotate', 'scale', 'mirror', 'offset', 'erase', 'explode', 'polygon', 'arrayrect', 'arraypolar', 'dist', 'id', 'angle', 'area', 'radius', 'list']);
+export const EDIT_TOOLS = new Set(['ellipse', 'spline', 'move', 'copy', 'rotate', 'scale', 'mirror', 'offset', 'erase', 'explode', 'polygon', 'arrayrect', 'arraypolar', 'dist', 'id', 'angle', 'area', 'radius', 'list']);
 const INQUIRY = new Set(['dist', 'id', 'angle', 'area', 'radius', 'list']);
 export const lineOpts = { construction: false };
 export const dimOpts = { mode: 'aligned' };
@@ -628,18 +642,18 @@ export const acad = { offsetDist: null, polySides: 6, mirrorErase: false };
 function ensureCmd() {
   if (st.cmd && st.cmd.tool === tool()) return st.cmd;
   const t = tool();
-  st.cmd = { tool: t, pts: [], stage: SELECT_FIRST.has(t) ? (S.ed.drawSel.size ? 'base' : 'select') : t === 'offset' ? 'distance' : t === 'polygon' ? 'sides' : t === 'area' ? 'collect' : t === 'radius' ? 'pick' : 'base' };
+  st.cmd = { tool: t, pts: [], stage: SELECT_FIRST.has(t) ? (S.ed.drawSel.size ? 'base' : 'select') : t === 'offset' ? 'distance' : t === 'polygon' ? 'sides' : t === 'area' || t === 'spline' ? 'collect' : t === 'radius' ? 'pick' : t === 'ellipse' ? 'center' : 'base' };
   if ((t === 'erase' || t === 'explode' || t === 'list' || t === 'arrayrect') && S.ed.drawSel.size) { runSelectionCommand(t); }
   return st.cmd;
 }
 export function startCommand() { st.cmd = null; if (EDIT_TOOLS.has(tool())) ensureCmd(); emit('drawcard'); view.render(); }
-function pointStage() { const c = st.cmd; return c && ['base', 'second', 'center', 'vertex', 'first', 'side', 'p1', 'p2', 'collect'].includes(c.stage); }
+function pointStage() { const c = st.cmd; return c && ['base', 'second', 'center', 'vertex', 'first', 'side', 'p1', 'p2', 'collect', 'axis', 'other'].includes(c.stage); }
 function fromPt() {
   if (st.start) return st.start;
   if (tool() === 'arc' && st.arc) return st.arc.c;
   const c = st.cmd; if (!c) return null;
   if (c.stage === 'second') return c.base;
-  if (c.stage === 'vertex') return c.center;
+  if (c.stage === 'vertex' || c.stage === 'axis' || c.stage === 'other') return c.center;
   if (c.stage === 'p1' || c.stage === 'p2') return c.base;
   if (c.stage === 'collect' && c.pts.length) return c.pts[c.pts.length - 1];
   return null;
@@ -674,6 +688,15 @@ function runSelectionCommand(t) {
 function cmdPoint(p) {
   const c = ensureCmd(), t = c.tool;
   if (INQUIRY.has(t)) return inquiryPoint(c, p);
+  if (t === 'ellipse') {
+    if (c.stage === 'center') { c.center = p; c.stage = 'axis'; return; }
+    if (c.stage === 'axis') { if (SK.d2(p, c.center) < 1e-9) return; c.axis = p; c.stage = 'other'; return; }
+    return placeEllipse(c, perpDist(c, p));
+  }
+  if (t === 'spline') {
+    if (c.pts.length >= 3 && SK.d2(p, c.pts[0]) < 1e-9) return placeSpline(c, true);
+    c.pts.push(p); return;
+  }
   if (t === 'polygon') {
     if (c.stage === 'center') { c.center = p; c.stage = 'vertex'; }
     else if (c.stage === 'vertex') {
@@ -730,6 +753,7 @@ export function enter() {
   const t = tool(), c = st.cmd;
   if (['line', 'rect', 'circle', 'arc', 'dim', 'trim', 'extend', 'corner'].includes(t)) { resetTool(); S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); return true; } // Enter ends the command
   if (c && c.tool === 'area' && c.stage === 'collect' && c.pts.length >= 3) { reportArea(c.pts); endInquiry(); return true; }
+  if (c && c.tool === 'spline' && c.pts.length >= 2) { placeSpline(c, false); return true; }
   if (c && c.stage === 'select') {
     if (!S.ed.drawSel.size) { toast('Select objects first'); return true; }
     if (t === 'erase' || t === 'explode') { runSelectionCommand(t); return true; }
@@ -749,6 +773,10 @@ export function typed(raw) {
   // options
   const up = str.toUpperCase();
   if (t === 'line' && (up === 'C' || up === 'CLOSE') && st.chain.length > 2) { placeLine(st.start, st.chain[0]); emit('drawcard'); view.render(); return true; }
+  if (t === 'line' && st.start && (up === 'A' || up === 'ARC')) { st.arcMode = true; emit('drawcard'); return true; }
+  if (t === 'line' && st.start && (up === 'L' || up === 'LINE') && st.arcMode) { st.arcMode = false; emit('drawcard'); return true; }
+  if (t === 'spline' && c && (up === 'C' || up === 'CLOSE') && c.pts.length >= 3) { placeSpline(c, true); return true; }
+  if (t === 'ellipse' && c && c.stage === 'other' && /^[\d.(]/.test(str)) { try { placeEllipse(c, num(str)); } catch (err) { toast(err.message); } return true; }
   if (t === 'line' && (up === 'U' || up === 'UNDO') && st.chain.length > 1) { emit('undoRequest'); st.chain.pop(); st.start = st.chain[st.chain.length - 1]; if (st.chain.length < 2) st.chain = []; return true; }
   if (t === 'mirror' && c && (up === 'Y' || up === 'N' || up === 'YES' || up === 'NO')) { acad.mirrorErase = up[0] === 'Y'; toast(`Erase source: ${acad.mirrorErase ? 'Yes' : 'No'}`); return true; }
   if (t === 'corner' && (up === 'R' || up === 'RADIUS')) { return 'radius'; }
@@ -789,10 +817,12 @@ export function typed(raw) {
 // ---------- prompts (AutoCAD wording) ----------
 export function prompt() {
   const t = tool(), c = st.cmd, o = [];
-  const name = { arrayrect: 'ARRAYRECT', arraypolar: 'ARRAYPOLAR', dist: 'DIST', id: 'ID', angle: 'MEASUREGEOM', area: 'AREA', radius: 'MEASUREGEOM', list: 'LIST', line: 'LINE', rect: 'RECTANG', circle: 'CIRCLE', arc: 'ARC', trim: 'TRIM', extend: 'EXTEND', dim: dimOpts.mode === 'linear' ? 'DIMLINEAR' : 'DIM', corner: corner.kind === 'fillet' ? 'FILLET' : 'CHAMFER', move: 'MOVE', copy: 'COPY', rotate: 'ROTATE', scale: 'SCALE', mirror: 'MIRROR', offset: 'OFFSET', erase: 'ERASE', explode: 'EXPLODE', polygon: 'POLYGON' }[t];
+  const name = { ellipse: 'ELLIPSE', spline: 'SPLINE', arrayrect: 'ARRAYRECT', arraypolar: 'ARRAYPOLAR', dist: 'DIST', id: 'ID', angle: 'MEASUREGEOM', area: 'AREA', radius: 'MEASUREGEOM', list: 'LIST', line: 'LINE', rect: 'RECTANG', circle: 'CIRCLE', arc: 'ARC', trim: 'TRIM', extend: 'EXTEND', dim: dimOpts.mode === 'linear' ? 'DIMLINEAR' : 'DIM', corner: corner.kind === 'fillet' ? 'FILLET' : 'CHAMFER', move: 'MOVE', copy: 'COPY', rotate: 'ROTATE', scale: 'SCALE', mirror: 'MIRROR', offset: 'OFFSET', erase: 'ERASE', explode: 'EXPLODE', polygon: 'POLYGON' }[t];
   let txt;
   if (!name) return { text: 'Command:', options: [] };
-  if (t === 'line') { txt = st.start ? 'Specify next point or' : 'Specify first point:'; if (st.start) { if (st.chain.length > 2) o.push(['Close', 'C']); if (st.chain.length > 1) o.push(['Undo', 'U']); } }
+  if (t === 'line') { txt = st.start ? (st.arcMode ? 'Specify end point of arc (tangent) or' : 'Specify next point or') : 'Specify first point:'; if (st.start) { o.push(st.arcMode ? ['Line', 'L'] : ['Arc', 'A']); if (st.chain.length > 2) o.push(['Close', 'C']); if (st.chain.length > 1) o.push(['Undo', 'U']); } }
+  else if (t === 'ellipse') { const cc = c || { stage: 'center' }; txt = cc.stage === 'center' ? 'Specify center of ellipse:' : cc.stage === 'axis' ? 'Specify endpoint of axis:' : 'Specify distance to other axis:'; }
+  else if (t === 'spline') { const n = c ? c.pts.length : 0; txt = n ? 'Enter next point or Enter to finish, or' : 'Specify first point:'; if (n >= 3) o.push(['Close', 'C']); }
   else if (t === 'rect') txt = st.start ? 'Specify other corner point (or @width,height):' : 'Specify first corner point:';
   else if (t === 'circle') { txt = st.start ? 'Specify radius of circle or' : 'Specify center point for circle:'; if (st.start) o.push(['Diameter', 'D']); }
   else if (t === 'arc') txt = !st.arc ? 'Specify center point of arc:' : st.arc.r == null ? 'Specify start point of arc:' : 'Specify end point of arc (CCW) or angle:';
@@ -898,4 +928,40 @@ function drawResult(s, W) {
   if (result.type === 'area') previewGroup.add(lineObj(P.map(W), m, true));
   const at = result.type === 'area' ? [P.reduce((a, p) => a + p[0], 0) / P.length, P.reduce((a, p) => a + p[1], 0) / P.length] : result.type === 'dist' ? [(P[0][0] + P[1][0]) / 2, (P[0][1] + P[1][1]) / 2] : P[0];
   view.label(W(at), result.text, 'measure');
+}
+
+
+// ---------- ELLIPSE, SPLINE, PLINE arcs ----------
+function perpDist(c, p) {
+  const L = SK.d2(c.center, c.axis), u = [(c.axis[0] - c.center[0]) / L, (c.axis[1] - c.center[1]) / L];
+  return Math.abs((p[0] - c.center[0]) * -u[1] + (p[1] - c.center[1]) * u[0]);
+}
+function placeEllipse(c, ry) {
+  const rx = SK.d2(c.center, c.axis);
+  if (!(ry > 1e-9)) return toast('Other axis must be > 0');
+  add('Ellipse', { t: 'ellipse', c: c.center, rx, ry, rot: ang(c.center, c.axis) });
+  st.cmd = null; ensureCmd(); emit('drawcard'); view.render();
+}
+function placeSpline(c, closed) {
+  add('Spline', { t: 'spline', pts: c.pts.map(q => q.slice()), ...(closed ? { closed: true } : {}) });
+  st.cmd = null; S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection');
+}
+// arc from S to E tangent to the previous segment (AutoCAD PLINE arc mode)
+function tangentArc(S0, E) {
+  const t = st.lastDir || [1, 0], n = [-t[1], t[0]], d = [E[0] - S0[0], E[1] - S0[1]];
+  const den = 2 * (n[0] * d[0] + n[1] * d[1]);
+  if (Math.abs(den) < 1e-12) return null;
+  const r = (d[0] * d[0] + d[1] * d[1]) / den, C = [S0[0] + n[0] * r, S0[1] + n[1] * r];
+  const as = ang(C, S0), ae = ang(C, E);
+  return r > 0 ? { t: 'arc', c: C, r, a0: as, a1: ae, ccw: true } : { t: 'arc', c: C, r: -r, a0: ae, a1: as, ccw: false };
+}
+function placeTangentArc(a, b) {
+  const g = tangentArc(a, b);
+  if (!g) { st.arcMode = false; placeLine(a, b); st.arcMode = true; return; }
+  const ccw = g.ccw; delete g.ccw;
+  add('Arc', g);
+  const v = [b[0] - g.c[0], b[1] - g.c[1]], L = Math.hypot(v[0], v[1]);
+  st.lastDir = ccw ? [-v[1] / L, v[0] / L] : [v[1] / L, -v[0] / L];
+  if (!st.chain.length) st.chain.push(a);
+  st.chain.push(b); st.start = b; st.typed = {};
 }

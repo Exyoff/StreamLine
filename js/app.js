@@ -478,6 +478,8 @@ function renderActions() {
       act(I.scale, 'Scale', () => acadTool('scale')),
       act(I.inset, 'Offset', () => acadTool('offset')),
       act(I.next, 'Extend', () => acadTool('extend')),
+      act(I.circle, 'Ellipse', () => acadTool('ellipse')),
+      act(I.arc, 'Spline', () => acadTool('spline')),
       act(I.cube, 'Polygon', () => acadTool('polygon')),
       act(I.array, 'Array', () => acadTool('arrayrect')),
       act(I.revolve, 'Polar array', () => acadTool('arraypolar')),

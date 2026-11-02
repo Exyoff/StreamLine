@@ -34,6 +34,8 @@ export function keyPoints(e) {
     case 'circle': return [{ k: 'c', p: e.c, m: 1, center: 1 }, ...[0, 1, 2, 3].map(i => ({ k: 'q' + i, p: pol(e.c, e.r, i * Math.PI / 2) }))];
     case 'arc': return [{ k: 'c', p: e.c, m: 1, center: 1 }, { k: 's', p: pol(e.c, e.r, e.a0), m: 1 }, { k: 'e', p: pol(e.c, e.r, e.a0 + sweep(e)), m: 1 }, { k: 'mid', p: pol(e.c, e.r, e.a0 + sweep(e) / 2) }];
     case 'rect': return [...rectCorners(e).map((p, i) => ({ k: 'p' + i, p, m: 1 })), { k: 'ctr', p: [e.x + e.w / 2, e.y + e.h / 2], center: 1 }];
+    case 'ellipse': return [{ k: 'c', p: e.c, m: 1, center: 1 }, ...[0, 1, 2, 3].map(i => ({ k: 'q' + i, p: ellPt(e, i * Math.PI / 2) }))];
+    case 'spline': return e.pts.map((p, i) => ({ k: 'p' + i, p, m: 1 }));
     default: return [];
   }
 }
@@ -64,6 +66,8 @@ export function movePointNaive(sk, ref, np) {
 }
 function setKey(e, k, p) {
   if (e.t === 'line') e[k] = p.slice();
+  else if (e.t === 'spline') e.pts[+k.slice(1)] = p.slice();
+  else if (e.t === 'ellipse' && k === 'c') e.c = p.slice();
   else if ((e.t === 'circle' || e.t === 'arc') && k === 'c') e.c = p.slice();
   else if (e.t === 'arc') {
     const sw = sweep(e);
@@ -77,8 +81,26 @@ function setKey(e, k, p) {
 }
 
 // ---------- discretisation ----------
+export const ellPt = (e, t) => { const c = Math.cos(e.rot), s = Math.sin(e.rot), x = e.rx * ecos(t), y = e.ry * esin(t); return [e.c[0] + x * c - y * s, e.c[1] + x * s + y * c]; };
+// Catmull-Rom spline through the fit points (AutoCAD SPLINE "fit" method)
+export function splinePoints(pts, closed, per = 16) {
+  const n = pts.length; if (n < 2) return pts.slice();
+  const P = i => (closed ? pts[((i % n) + n) % n] : pts[Math.max(0, Math.min(n - 1, i))]);
+  const out = [], segs = closed ? n : n - 1;
+  for (let i = 0; i < segs; i++) {
+    const p0 = P(i - 1), p1 = P(i), p2 = P(i + 1), p3 = P(i + 2);
+    for (let k = 0; k < per; k++) {
+      const t = k / per, t2 = t * t, t3 = t2 * t;
+      out.push([0, 1].map(j => 0.5 * (2 * p1[j] + (-p0[j] + p2[j]) * t + (2 * p0[j] - 5 * p1[j] + 4 * p2[j] - p3[j]) * t2 + (-p0[j] + 3 * p1[j] - 3 * p2[j] + p3[j]) * t3)));
+    }
+  }
+  if (!closed) out.push(pts[n - 1].slice());
+  return out;
+}
 export function entPolyline(e) {
   if (e.t === 'line') return { pts: [e.a, e.b], closed: false };
+  if (e.t === 'ellipse') { const n = curveSegs(), pts = []; for (let i = 0; i < n; i++) pts.push(ellPt(e, i / n * TAU)); return { pts, closed: true }; }
+  if (e.t === 'spline') return { pts: splinePoints(e.pts, !!e.closed), closed: !!e.closed };
   if (e.t === 'rect') return { pts: rectCorners(e), closed: true };
   const n = curveSegs();
   if (e.t === 'circle') { const pts = []; for (let i = 0; i < n; i++) pts.push(pol(e.c, e.r, i / n * TAU)); return { pts, closed: true }; }
@@ -117,6 +139,7 @@ export function prims(e) {
   if (e.t === 'rect') { const c = rectCorners(e); return [0, 1, 2, 3].map(i => ({ L: 1, a: c[i], b: c[(i + 1) % 4] })); }
   if (e.t === 'circle') return [{ C: 1, c: e.c, r: e.r }];
   if (e.t === 'arc') return [{ C: 1, c: e.c, r: e.r, a0: e.a0, sw: sweep(e) }];
+  if (e.t === 'ellipse' || e.t === 'spline') { const pl = entPolyline(e), n = pl.pts.length, out = []; for (let i = 0; i < (pl.closed ? n : n - 1); i++) out.push({ L: 1, a: pl.pts[i], b: pl.pts[(i + 1) % n] }); return out; }
   return [];
 }
 const onArc = (q, p) => { if (q.sw == null) return true; let a = Math.atan2(p[1] - q.c[1], p[0] - q.c[0]) - q.a0; a = ((a % TAU) + TAU) % TAU; return a <= q.sw + 1e-9 || a >= TAU - 1e-9; };
@@ -400,6 +423,8 @@ export function toDXF(sk) {
     if (e.t === 'line') line(e.a, e.b);
     else if (e.t === 'rect') { const c = rectCorners(e); for (let i = 0; i < 4; i++) line(c[i], c[(i + 1) % 4]); }
     else if (e.t === 'circle') L.push('0', 'CIRCLE', '8', '0', '10', f(e.c[0]), '20', f(e.c[1]), '30', '0', '40', f(e.r));
+    else if (e.t === 'ellipse') L.push('0', 'ELLIPSE', '8', '0', '10', f(e.c[0]), '20', f(e.c[1]), '30', '0', '11', f(e.rx * Math.cos(e.rot)), '21', f(e.rx * Math.sin(e.rot)), '31', '0', '40', f(e.ry / e.rx), '41', '0', '42', f(TAU));
+    else if (e.t === 'spline') { const pl = entPolyline(e), n = pl.pts.length; for (let i = 0; i < (pl.closed ? n : n - 1); i++) line(pl.pts[i], pl.pts[(i + 1) % n]); }
     else if (e.t === 'arc') L.push('0', 'ARC', '8', '0', '10', f(e.c[0]), '20', f(e.c[1]), '30', '0', '40', f(e.r), '50', f(e.a0 * 180 / Math.PI), '51', f((e.a0 + sweep(e)) * 180 / Math.PI));
   }
   L.push('0', 'ENDSEC', '0', 'EOF');
@@ -499,6 +524,13 @@ export function transformEntities(sk, ids, op, copy = false) {
   for (const e of targets) {
     if (e.t === 'line') { e.a = cp(P(e.a)); e.b = cp(P(e.b)); }
     else if (e.t === 'rect') rectFromCorners(e, rectCorners(e).map(P));
+    else if (e.t === 'spline') e.pts = e.pts.map(q => cp(P(q)));
+    else if (e.t === 'ellipse') {
+      e.c = cp(P(e.c));
+      if (op.kind === 'scale') { e.rx = clean(e.rx * op.f); e.ry = clean(e.ry * op.f); }
+      if (op.kind === 'rotate') e.rot += op.deg * Math.PI / 180;
+      if (op.kind === 'mirror') e.rot = 2 * Math.atan2(op.b[1] - op.a[1], op.b[0] - op.a[0]) - e.rot;
+    }
     else if (e.t === 'circle' || e.t === 'arc') {
       e.c = cp(P(e.c));
       if (op.kind === 'scale') e.r = clean(e.r * op.f);
@@ -595,6 +627,8 @@ export function entityArea(e) {
   if (e.t === 'rect') return { area: e.w * e.h, perimeter: 2 * (e.w + e.h) };
   if (e.t === 'arc') { const sw = sweep(e); return { area: 0.5 * e.r * e.r * (sw - Math.sin(sw)), perimeter: e.r * sw }; }
   if (e.t === 'line') return { area: 0, perimeter: d2(e.a, e.b) };
+  if (e.t === 'ellipse') { const a = e.rx, b = e.ry, h = ((a - b) / (a + b)) ** 2; return { area: Math.PI * a * b, perimeter: Math.PI * (a + b) * (1 + 3 * h / (10 + Math.sqrt(4 - 3 * h))) }; }
+  if (e.t === 'spline') { const pl = entPolyline(e); return pl.closed ? polygonArea(pl.pts) : { area: 0, perimeter: pl.pts.reduce((s, p, i) => (i ? s + d2(p, pl.pts[i - 1]) : 0), 0) }; }
   return null;
 }
 // angle at vertex v from p1 to p2, in degrees (0–180)

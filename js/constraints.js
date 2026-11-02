@@ -7,12 +7,13 @@
 import { keyPoints, rectCorners, sweep, d2 } from './sketch.js';
 
 // ---------- parameter vector ----------
-const PARAMS = { line: ['a.0', 'a.1', 'b.0', 'b.1'], circle: ['c.0', 'c.1', 'r'], arc: ['c.0', 'c.1', 'r', 'a0', 'a1'], rect: ['x', 'y', 'w', 'h'] };
+const PARAMS = { line: ['a.0', 'a.1', 'b.0', 'b.1'], circle: ['c.0', 'c.1', 'r'], arc: ['c.0', 'c.1', 'r', 'a0', 'a1'], rect: ['x', 'y', 'w', 'h'], ellipse: ['c.0', 'c.1', 'rx', 'ry', 'rot'] };
 function slots(sk) {
   const out = [];
+  for (const e of sk.ents) if (e.t === 'spline') e.pts.forEach((p, i) => [0, 1].forEach(j => out.push({ e, get: () => e.pts[i][j], set: v => { e.pts[i][j] = v; }, key: `${e.id}:pts.${i}.${j}`, len: true })));
   for (const e of sk.ents) for (const k of PARAMS[e.t] || []) {
     const [f, i] = k.split('.');
-    out.push({ e, get: i == null ? () => e[f] : () => e[f][+i], set: i == null ? v => { e[f] = v; } : v => { e[f][+i] = v; }, key: e.id + ':' + k, len: !['a0', 'a1'].includes(f) });
+    out.push({ e, get: i == null ? () => e[f] : () => e[f][+i], set: i == null ? v => { e[f] = v; } : v => { e[f][+i] = v; }, key: e.id + ':' + k, len: !['a0', 'a1', 'rot'].includes(f) });
   }
   return out;
 }
