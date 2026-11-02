@@ -191,3 +191,114 @@ test('3D two-distance chamfer', () => {
   near(meshVolume(s), 8000 - 20 * 5, 1e-9, 'swap keeps the same volume');
   assert.notDeepEqual(c.v.map(p => p.join()).sort(), s.v.map(p => p.join()).sort(), 'but mirrors the bevel');
 });
+
+test('AutoCAD edits: move, copy, rotate, scale, mirror', async () => {
+  const { transformEntities } = await import('../js/sketch.js');
+  const s = sk([{ t: 'line', a: [0, 0], b: [10, 0] }, { t: 'arc', c: [0, 0], r: 5, a0: 0, a1: Math.PI / 2 }, { t: 'rect', x: 0, y: 0, w: 4, h: 2 }]);
+  transformEntities(s, [1, 2, 3], { kind: 'move', d: [1, 2] });
+  assert.deepEqual([s.ents[0].a, s.ents[0].b, s.ents[1].c, [s.ents[2].x, s.ents[2].y]], [[1, 2], [11, 2], [1, 2], [1, 2]]);
+  const ids = transformEntities(s, [1], { kind: 'move', d: [0, 5] }, true);
+  assert.equal(s.ents.length, 4); assert.deepEqual(s.ents.find(e => e.id === ids[0]).a, [1, 7]);
+  transformEntities(s, [1], { kind: 'rotate', c: [1, 2], deg: 90 });
+  assert.deepEqual(s.ents[0].b, [1, 12], 'exact 90° rotation');
+  transformEntities(s, [2], { kind: 'scale', c: [1, 2], f: 2.5 });
+  assert.equal(s.ents[1].r, 12.5);
+  transformEntities(s, [3], { kind: 'rotate', c: [0, 0], deg: 30 });
+  assert.equal(s.ents.filter(e => e.t === 'rect').length, 0, 'rect rotated by 30° becomes lines');
+  const m = sk([{ t: 'arc', c: [5, 0], r: 2, a0: 0, a1: Math.PI / 2 }]);
+  transformEntities(m, [1], { kind: 'mirror', a: [0, -1], b: [0, 1] });
+  near(m.ents[0].c[0], -5, 1e-12); near(Math.cos(m.ents[0].a0), -0, 1e-12); near(Math.sin(m.ents[0].a0), 1, 1e-12, 'mirrored arc starts at 90°');
+});
+
+test('AutoCAD edits: offset, extend, polygon', async () => {
+  const { offsetEntity, extendLine, addPolygon } = await import('../js/sketch.js');
+  const s = sk([{ t: 'line', a: [0, 0], b: [10, 0] }, { t: 'circle', c: [0, 0], r: 5 }, { t: 'line', a: [20, -5], b: [20, 5] }]);
+  const o = offsetEntity(s, s.ents[0], 2.5, [3, -1]);
+  assert.deepEqual([o.a, o.b], [[0, -2.5], [10, -2.5]]);
+  assert.equal(offsetEntity(s, s.ents[1], 1, [0, 1]).r, 4, 'inside the circle shrinks it');
+  assert.equal(offsetEntity(s, s.ents[1], 1, [0, 9]).r, 6);
+  assert.equal(extendLine(s, s.ents[0], [9, 0]), true);
+  assert.deepEqual(s.ents[0].b, [20, 0], 'extended to the vertical boundary');
+  const ids = addPolygon(s, [0, 0], [10, 0], 6);
+  assert.equal(ids.length, 6);
+  const pg = s.ents.filter(e => ids.includes(e.id));
+  for (const e of pg) near(Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]), 10, 1e-9, 'hexagon side = circumradius');
+});
+
+test('Plasticity modifiers: push/pull, shell, mirror', async () => {
+  const { faceRegion, findRegion, pushPull, shell, mirrorMesh } = await import('../js/modifiers.js');
+  const box = makeBox(20, 20, 20);
+  const top = box.f.findIndex(f => f.every(i => box.v[i][2] === 10));
+  const reg = faceRegion(box.v, box.f, top);
+  assert.deepEqual(reg.n, [0, 0, 1]);
+  const up = pushPull(box.v, box.f, reg, 5);
+  near(meshVolume(up), 8000 + 400 * 5, 1e-9); assert.ok(watertight(up)); assert.equal(up.f.length, 6, 'still a clean box');
+  const down = pushPull(box.v, box.f, reg, -7.5);
+  near(meshVolume(down), 8000 - 400 * 7.5, 1e-9); assert.ok(watertight(down));
+  const again = findRegion(up.v, up.f, [0, 0, 1], 15, [0, 0, 15]);
+  assert.ok(again && again.faces.length >= 1, 'region re-found after the operation');
+  const hollow = shell(box.v, box.f, [reg], 2);
+  near(meshVolume(hollow), 8000 - 16 * 16 * 18, 1e-6, 'open-top shell volume'); assert.ok(watertight(hollow));
+  const closed = shell(box.v, box.f, [], 2);
+  near(meshVolume(closed), 8000 - 16 ** 3, 1e-6, 'closed hollow');
+  assert.match(shell(box.v, box.f, [], 11), /too large/);
+  // cylinder shell opened at the top keeps exact faceted walls
+  const cyl = makeCylinder(10, 20, 32);
+  const ctop = faceRegion(cyl.v, cyl.f, cyl.f.findIndex(f => f.length === 32 && cyl.v[f[0]][2] === 10));
+  const cup = shell(cyl.v, cyl.f, [ctop], 1);
+  const apo = r => r * Math.cos(Math.PI / 32); // inradius of the 32-gon
+  near(meshVolume(cup), ngonArea(10, 32) * 20 - ngonArea((apo(10) - 1) / Math.cos(Math.PI / 32), 32) * 19, 1e-6, 'cup volume'); assert.ok(watertight(cup));
+  const L = makeBox(10, 10, 10); L.v = L.v.map(p => [p[0] + 5, p[1], p[2]]);
+  const mir = mirrorMesh(L.v, L.f, [1, 0, 0], 0, true);
+  near(meshVolume(mir), 2000, 1e-9, 'mirrored across x=0 and fused'); assert.ok(watertight(mir));
+});
+
+test('AutoCAD inquiry: areas, angles, horizontal/vertical dimensions', async () => {
+  const { polygonArea, regionArea, entityArea, angleAt, setDimValue: setDim, dimValue: dv } = await import('../js/sketch.js');
+  assert.deepEqual(polygonArea([[0, 0], [4, 0], [4, 3], [0, 3]]), { area: 12, perimeter: 14 });
+  const R = regions(sk([{ t: 'rect', x: 0, y: 0, w: 20, h: 10 }, { t: 'circle', c: [10, 5], r: 3 }])).find(r => r.holes.length);
+  near(regionArea(R).area, 200 - ngonArea(3, 64), 1e-9);
+  near(entityArea({ t: 'circle', r: 2 }).area, 4 * Math.PI, 1e-12);
+  near(angleAt([0, 0], [1, 0], [1, 1]), 45, 1e-12);
+  near(angleAt([0, 0], [1, 0], [-1, 0]), 180, 1e-12);
+  const s = { ents: [{ id: 1, t: 'line', a: [0, 0], b: [10, 4] }], cons: [], nextEnt: 10 };
+  const h = { id: 2, t: 'dim', kind: 'hor', A: { e: 1, k: 'a' }, B: { e: 1, k: 'b' }, value: 10 };
+  const v = { id: 3, t: 'dim', kind: 'ver', A: { e: 1, k: 'a' }, B: { e: 1, k: 'b' }, value: 4 };
+  s.ents.push(h, v);
+  assert.equal(dv(s, h), 10); assert.equal(dv(s, v), 4);
+  setDim(s, h, 25);
+  assert.deepEqual(s.ents[0].b, [25, 4], 'horizontal dimension drives only X');
+  setDim(s, v, 7.5);
+  assert.deepEqual(s.ents[0].b, [25, 7.5], 'vertical dimension drives only Y');
+});
+
+test('CAD: revolve about an arbitrary line, sketch arrays, slice, polar body array', async () => {
+  const { arrayRect, arrayPolar } = await import('../js/sketch.js');
+  const { slice, rotateMesh } = await import('../js/modifiers.js');
+  // a 2×10 rectangle 3..5 from a vertical axis at x=10 → tube between radii 5 and 7? revolve about line x=10
+  const R = regions(sk([{ t: 'rect', x: 3, y: 0, w: 2, h: 10 }]));
+  const tube = revolveRegions(R, PLANES.XZ, { p: [10, 0], d: [0, 1] }, 360, 64);
+  assert.ok(watertight(tube));
+  near(meshVolume(tube), 20 * 2 * Math.PI * 6, 4, 'Pappus about x=10 (centroid distance 6)');
+  const s = sk([{ t: 'circle', c: [0, 0], r: 1 }]);
+  assert.equal(arrayRect(s, [1], 3, 2, 5, 4).length, 5);
+  assert.deepEqual(s.ents.at(-1).c, [10, 4]);
+  const p = sk([{ t: 'circle', c: [10, 0], r: 1 }]);
+  arrayPolar(p, [1], [0, 0], 4, 360);
+  assert.deepEqual(p.ents.map(e => e.c), [[10, 0], [0, 10], [-10, 0], [0, -10]], 'exact quarter turns');
+  const box = makeBox(20, 20, 20);
+  const { pos, neg } = slice(box.v, box.f, [0, 0, 1], 2.5);
+  near(meshVolume(pos), 400 * 7.5, 1e-6); near(meshVolume(neg), 400 * 12.5, 1e-6);
+  assert.ok(watertight(pos) && watertight(neg));
+  const r = rotateMesh([[10, 0, 0]], [0, 0, 0], [0, 0, 1], 90);
+  near(r[0][0], 0, 1e-12); near(r[0][1], 10, 1e-12);
+});
+
+test('3D: thicken a plane into a solid', async () => {
+  const { thicken } = await import('../js/modifiers.js');
+  const { makePlane } = await import('../js/mesh.js');
+  const pl = makePlane(10, 20);
+  const t = thicken(pl.v, pl.f, 2);
+  near(meshVolume(t), 400, 1e-9); assert.ok(watertight(t));
+  assert.match(thicken(makeBox(2, 2, 2).v, makeBox(2, 2, 2).f, 1), /already closed/);
+});

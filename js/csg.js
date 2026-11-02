@@ -290,7 +290,15 @@ function ccw(pts, wantCCW) {
   return (a > 0) === wantCCW ? pts.slice() : pts.slice().reverse();
 }
 // Revolve regions about a sketch axis ('x' or 'y' through origin) by angle degrees.
+// axis: 'x' | 'y' (sketch axes through the origin) or { p, d } — any line in the sketch (point + unit direction)
 export function revolveRegions(regs, pl, axis, angleDeg, segs) {
+  if (typeof axis === 'object') {
+    const { p, d } = axis, q = [-d[1], d[0]];
+    const tr = pts => pts.map(x => { const r = [x[0] - p[0], x[1] - p[1]]; return [r[0] * d[0] + r[1] * d[1], r[0] * q[0] + r[1] * q[1]]; });
+    const W = (a, b) => [0, 1, 2].map(k => a * pl.u[k] + b * pl.v[k]);
+    const pl2 = { o: [0, 1, 2].map(k => pl.o[k] + pl.u[k] * p[0] + pl.v[k] * p[1]), u: W(d[0], d[1]), v: W(q[0], q[1]), n: pl.n };
+    return revolveRegions(regs.map(r => ({ outer: tr(r.outer), holes: r.holes.map(tr) })), pl2, 'x', angleDeg, segs);
+  }
   const full = Math.abs(angleDeg) >= 360 - 1e-9;
   const ang = Math.max(-360, Math.min(360, angleDeg)) * Math.PI / 180;
   const n = Math.max(3, Math.round(segs * Math.abs(ang) / (2 * Math.PI)));

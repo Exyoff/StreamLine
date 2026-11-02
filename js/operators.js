@@ -4,13 +4,28 @@ import { S, activeObj, selectedObjs } from './state.js';
 import * as M from './mesh.js';
 import { newObject, xfFor, rotMatrix, eulerFromMatrix, cloneObj, worldVerts } from './scene.js';
 import { LEN_UNITS } from './units.js';
+import { findRegion } from './modifiers.js';
 
 const DEF_SIZE = { mm: 20, cm: 20, m: 1000, in: 25.4, ft: 304.8 };
 export const defSize = () => DEF_SIZE[S.settings.unit] || 20;
 const roundTo = (v, s) => (s > 0 ? Math.round(v / s) * s : v);
 
 // ---------- selection helpers ----------
+// Plasticity-style sub-object selection (Model: Face / Edge modes) → the vertices the gizmo moves
+export function subSelection() {
+  if (S.ed.workspace !== 'model' || S.ed.mode !== 'object' || !S.ed.pick || S.ed.pick === 'solid') return null;
+  const items = S.ed.pick === 'face' ? S.ed.faces : S.ed.edges;
+  if (!items || !items.length) return null;
+  const obj = items[0].obj, o = S.doc.objects.find(x => x.id === obj); if (!o) return null;
+  const W = worldVerts(o), idx = new Set();
+  for (const it of items.filter(q => q.obj === obj)) {
+    if (S.ed.pick === 'face') { const reg = findRegion(W, o.mesh.f, it.n, it.w, it.p); if (reg) reg.faces.forEach(fi => o.mesh.f[fi].forEach(i => idx.add(i))); }
+    else { const d = M.sub(it.b, it.a), L2 = M.dot(d, d); W.forEach((p, i) => { const t = Math.max(0, Math.min(1, M.dot(M.sub(p, it.a), d) / L2)); if (M.dist(p, M.add(it.a, M.mul(d, t))) < 1e-6) idx.add(i); }); }
+  }
+  return idx.size ? { obj, idx: [...idx], pts: [...idx].map(i => W[i]) } : null;
+}
 export function selectedWorldPoints() {
+  const sub = subSelection(); if (sub) return sub.pts;
   if (S.ed.mode === 'edit') {
     const o = activeObj(); if (!o) return [];
     const xf = xfFor(o);
@@ -24,7 +39,7 @@ export function computePivot() {
   if (S.ed.mode === 'edit') return M.centroid(pts); // median point
   return M.centroid(pts);
 }
-function hasSelection() { return S.ed.mode === 'edit' ? S.ed.editSel.size > 0 : S.ed.selected.size > 0; }
+function hasSelection() { if (subSelection()) return true; return S.ed.mode === 'edit' ? S.ed.editSel.size > 0 : S.ed.selected.size > 0; }
 const AX = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
 
 // exact rotation for multiples of 90 degrees
@@ -87,8 +102,9 @@ export const transform = {
     if (!hasSelection()) return 'Nothing selected';
     p.pivot ??= computePivot();
     p._edit = S.ed.mode === 'edit';
+    if (!p._edit && p._sub === undefined) { const sb = subSelection(); p._sub = sb ? { obj: sb.obj, idx: sb.idx } : null; }
   },
-  touch: p => (p._edit ? { ids: [S.ed.active], mesh: true } : { ids: [...S.ed.selected], mesh: false }),
+  touch: p => (p._sub ? { ids: [p._sub.obj], mesh: true } : p._edit ? { ids: [S.ed.active], mesh: true } : { ids: [...S.ed.selected], mesh: false }),
   fields(p) {
     if (p.mode === 'move') return xyz();
     if (p.mode === 'rotate') return [{ key: 'axis', label: 'Axis', kind: 'choice', options: [['x', 'X'], ['y', 'Y'], ['z', 'Z']] }, { key: 'angle', label: 'Angle', kind: 'ang' }];
@@ -101,7 +117,20 @@ export const transform = {
     if (p.mode === 'move') fn = w => [w[0] + p.x, w[1] + p.y, w[2] + p.z];
     else if (p.mode === 'rotate') { R = rotationMatrix(p.axis, p.angle); fn = w => M.add(pv, apply3(R, M.sub(w, pv))); }
     else fn = w => [pv[0] + (w[0] - pv[0]) * p.sx, pv[1] + (w[1] - pv[1]) * p.sy, pv[2] + (w[2] - pv[2]) * p.sz];
-    if (p._edit) {
+    if (p._sub) {
+      // move / rotate / scale a face or edge; the neighbouring faces stretch to follow (direct modelling)
+      const o = S.doc.objects.find(x => x.id === p._sub.obj); if (!o) return 'Body missing';
+      const xf = xfFor(o);
+      for (const i of p._sub.idx) o.mesh.v[i] = xf.toL(fn(xf.toW(o.mesh.v[i])));
+      const W = worldVerts(o);
+      const relocate = q => { // plane of the face that now contains the moved seed point
+        let best = null;
+        o.mesh.f.forEach(f => { const P = f.map(i => W[i]), n = M.faceNormal(P), d = Math.abs(M.dot(n, M.sub(q, P[0]))); const c = M.dist(M.centroid(P), q); if (d < 1e-6 && (!best || c < best.c)) best = { n, w: M.dot(n, P[0]), c }; });
+        return best;
+      };
+      if (S.ed.pick === 'face') S.ed.faces = S.ed.faces.map(f => { const p2 = fn(f.p), pl = relocate(p2); return pl ? { ...f, p: p2, n: pl.n, w: pl.w } : f; });
+      else S.ed.edges = S.ed.edges.map(e => ({ ...e, a: fn(e.a), b: fn(e.b) }));
+    } else if (p._edit) {
       const o = activeObj(); const xf = xfFor(o);
       for (const i of S.ed.editSel) if (i < o.mesh.v.length) o.mesh.v[i] = xf.toL(fn(xf.toW(o.mesh.v[i])));
     } else {

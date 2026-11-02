@@ -25,8 +25,9 @@ const cdp = await ctx.newCDPSession(p);
 const top = await p.evaluate(() => document.querySelector('#gl').getBoundingClientRect().top);
 const st = fn => p.evaluate(fn);
 const shot = async n => { await p.waitForTimeout(300); await p.screenshot({ path: OUT + n + '.png' }); };
-const tapV = async (x, y) => { await p.touchscreen.tap(x, y + top); await p.waitForTimeout(120); };
+const tapV = async (x, y) => { await p.touchscreen.tap(x, y + top); await p.waitForTimeout(460); };
 const keypad = async str => {
+  await p.waitForTimeout(460);
   const neg = str.startsWith('-'); if (neg) str = str.slice(1);
   for (const ch of str) await p.tap(`#keypad [data-k="${ch}"]`);
   if (neg) await p.tap('#keypad [data-k="±"]');
@@ -56,6 +57,8 @@ try {
   await p.tap('#draw-card .field.ax-y .val'); await keypad('30');
   const rect = (await ents()).find(e => e.t === 'rect');
   check(rect && rect.x === -20 && rect.y === -15 && rect.w === 40 && rect.h === 30, 'typed rectangle is exactly 40 × 30 at (-20, -15)');
+  // zoom out so the whole drawing sits clear of the cards and command line (as a user would pinch)
+  await p.evaluate(() => { StreamLine.view.cam.dist *= 1.5; StreamLine.view.cam.target.set(5, 8, 0); StreamLine.view.render(); }); await p.waitForTimeout(250);
 
   // --- 2D fillet (R5) and chamfer (4) on corners
   await p.tap('[data-tool=corner]');
@@ -74,23 +77,23 @@ try {
   await p.tap('[data-tool=circle]');
   await p.tap('#draw-card .field.ax-x .val'); await keypad('0');
   await p.tap('#draw-card .field.ax-y .val'); await keypad('0');
-  await p.tap('#draw-card .field .val', { timeout: 4000 }); await keypad('3');
+  await p.tap('#draw-card .field .val', { timeout: 4000 }); await keypad('7');
   await p.tap('[data-tool=dim]');
-  c = await proj([0, 3]); await tapV(c.x, c.y);
+  c = await proj([0, -7]); await tapV(c.x, c.y);
   await keypad('10');
   const circ = (await ents()).find(e => e.t === 'circle');
   check(circ && circ.r === 5, `diameter dimension drives the circle to Ø10 (r=${circ && circ.r})`);
 
   // --- constraint: a slanted line made vertical
   await p.tap('[data-tool=line]');
-  const l0 = await proj([25, -10]), l1 = await proj([28, 10]);
+  const l0 = await proj([-30, -10]), l1 = await proj([-27, 10]);
   await drag([[l0.x, l0.y], [l1.x, l1.y]]);
   await p.tap('#draw-card .btn');
-  const slant = (await ents()).find(e => e.t === 'line' && e.a[0] >= 24);
+  const slant = (await ents()).find(e => e.t === 'line' && e.a[0] <= -24);
   await p.tap('[data-tool=select]');
   c = await proj([(slant.a[0] + slant.b[0]) / 2, (slant.a[1] + slant.b[1]) / 2]); await tapV(c.x, c.y);
   check(await st(() => StreamLine.S.ed.drawSel.size) === 1, 'tapping the line selects it');
-  await p.tap('#actions .act:nth-child(2)'); // Constrain
+  await p.locator('#actions .act', { hasText: 'Constrain' }).tap();
   await p.tap('#popover .mi:nth-of-type(2)'); // Vertical
   const v = (await ents()).find(e => e.id === slant.id);
   check(Math.abs(v.a[0] - v.b[0]) < 1e-9, `vertical constraint applied (dx=${(v.a[0] - v.b[0]).toExponential(1)})`);
@@ -121,7 +124,7 @@ try {
   c = await projW([5, -15, 8]); await tapV(c.x, c.y);
   const edges = await st(() => StreamLine.S.ed.edges);
   check(edges.length === 1, `edge tool picks an edge ${JSON.stringify(edges[0] && [edges[0].a, edges[0].b])}`);
-  await p.tap('#actions .act:nth-child(3)'); // Fillet
+  await p.locator('#actions .act', { hasText: 'Fillet' }).tap();
   await p.tap('#lastop .field .val'); await keypad('2');
   const res1 = await st(() => { const o = StreamLine.S.doc.objects[0]; return { vol: StreamLine.M.meshVolume(o.mesh), last: StreamLine.getLast() && StreamLine.getLast().def.label(StreamLine.getLast().params) }; });
   check(res1.vol < vol0 && res1.vol > vol0 - 40, `edge fillet R2 removes material (${(vol0 - res1.vol).toFixed(3)} mm³) — ${res1.last}`);
@@ -131,7 +134,7 @@ try {
   const e2 = (await st(() => StreamLine.S.ed.edges))[0];
   const runLen = e2 ? Math.hypot(e2.a[0] - e2.b[0], e2.a[1] - e2.b[1], e2.a[2] - e2.b[2]) : 0;
   check(Math.abs(runLen - 6) < 1e-9, `vertical edge is 6 mm after the R2 fillet (${runLen})`);
-  await p.tap('#actions .act:nth-child(4)'); // Chamfer
+  await p.locator('#actions .act', { hasText: 'Chamfer' }).tap();
   await p.tap('#lastop .field .val'); await keypad('1.5');
   const vol2 = await st(() => StreamLine.M.meshVolume(StreamLine.S.doc.objects[0].mesh));
   check(Math.abs((res1.vol - vol2) - 1.5 * 1.5 / 2 * runLen) < 1e-6, `edge chamfer 1.5 removes exactly ${(1.5 * 1.5 / 2 * runLen).toFixed(4)} mm³ (got ${(res1.vol - vol2).toFixed(6)})`);
@@ -139,12 +142,137 @@ try {
   check(tight, 'body is still watertight after fillet + chamfer');
   await shot('2-cad');
 
+  // --- AutoCAD command line: typed coordinates, edit commands
+  await p.tap('[data-ws=draw]'); await p.waitForTimeout(300);
+  const run = async c => { await p.fill('#cmdin', c); await p.press('#cmdin', 'Enter'); await p.waitForTimeout(120); };
+  const n0 = (await ents()).length;
+  await run('L'); await run('50,0'); await run('@20<0'); await run('@20<90'); await run('');
+  const ln = (await ents()).slice(n0).filter(e => e.t === 'line');
+  check(ln.length === 2 && ln[0].b[0] === 70 && ln[0].b[1] === 0 && ln[1].b[0] === 70 && ln[1].b[1] === 20, `LINE with absolute + polar input: ${JSON.stringify(ln.map(l => [l.a, l.b]))}`);
+  check(/Command:/.test(await p.textContent('#cmdprompt')), 'prompt returns to Command:');
+  await p.evaluate(ids => { StreamLine.S.ed.drawSel = new Set(ids); }, ln.map(l => l.id));
+  await run('CO'); await run('50,0'); await run('@0,30'); await run('');
+  const copies = (await ents()).filter(e => e.t === 'line' && e.a[1] >= 30 && e.a[0] >= 50);
+  check(copies.length === 2, `COPY with @0,30 makes 2 copies (${copies.length})`);
+  await p.evaluate(ids => { StreamLine.S.ed.drawSel = new Set(ids); }, ln.map(l => l.id));
+  await run('RO'); await run('50,0'); await run('90');
+  const rot = (await ents()).find(e => e.id === ln[0].id);
+  check(rot.b[0] === 50 && rot.b[1] === 20, `ROTATE 90° about 50,0 (${JSON.stringify(rot.b)})`);
+  await run('O'); await run('2.5');
+  c = await proj([50, 10]); await tapV(c.x, c.y); // pick the rotated line
+  c = await proj([45, 10]); await tapV(c.x, c.y); // side
+  const off = (await ents()).find(e => e.t === 'line' && e.a[0] === 47.5);
+  check(!!off, 'OFFSET 2.5 to the left');
+  await run(''); // exit offset
+  await run('ORTHO');
+  check(await st(() => StreamLine.S.settings.ortho) === true && /on/.test(await p.locator('#statusbar [data-st=ortho]').getAttribute('class')), 'ORTHO toggled from the command line');
+  await run('ORTHO');
+  // inquiry: DIST, AREA (points), ID, MEASUREGEOM angle, horizontal/vertical dimension
+  const logText = () => p.textContent('#cmdlog');
+  await run('DI'); await run('0,0'); await run('3,4');
+  check(/Distance = 5\.00 mm/.test(await logText()) && /ΔX = 3\.00/.test(await logText()), `DIST prints distance and deltas: "${await logText()}"`);
+  await run('AREA'); await run('0,0'); await run('10,0'); await run('10,5'); await run('0,5'); await run('');
+  check(/Area = 50\.00 mm²/.test(await logText()) && /Perimeter = 30\.00/.test(await logText()), `AREA by points: "${await logText()}"`);
+  await run('MA'); await run('0,0'); await run('10,0'); await run('10,10');
+  check(/Angle = 45\.00°/.test(await logText()), `MEASUREGEOM angle: "${await logText()}"`);
+  await run('ID'); await run('12.5,-3');
+  check(/X = 12\.50\s+Y = -3\.00/.test(await logText()), `ID point: "${await logText()}"`);
+  await p.tap('#cmdlog');
+  check((await p.locator('#cmdhistory div').count()) >= 4, 'command history panel lists the results');
+  await p.tap('#cmdlog');
+  await run('DLI');
+  const hl = (await ents()).find(e => e.id === ln[0].id);
+  c = await proj(hl.a); await tapV(c.x, c.y); c = await proj(hl.b); await tapV(c.x, c.y);
+  await keypad('25');
+  const dl = (await ents()).find(e => e.t === 'dim' && (e.kind === 'hor' || e.kind === 'ver'));
+  check(!!dl, `DIMLINEAR creates a ${dl && dl.kind} dimension`);
+  // construction line + ARRAYPOLAR on a circle
+  const before = (await ents()).length;
+  await run('XL'); await run('80,-10'); await run('@0,40'); await run('');
+  const xl = (await ents()).slice(before).find(e => e.t === 'line');
+  check(xl && xl.construction === true, 'XLINE draws a construction line');
+  await run('C'); await run('100,0'); await run('2');
+  const cc = (await ents()).at(-1);
+  await p.evaluate(id => { StreamLine.S.ed.drawSel = new Set([id]); }, cc.id);
+  await run('ARRAYPOLAR'); await run('80,0');
+  const ring = (await ents()).filter(e => e.t === 'circle' && Math.abs(Math.hypot(e.c[0] - 80, e.c[1]) - 20) < 1e-9);
+  check(ring.length === 6, `ARRAYPOLAR makes 6 items around 80,0 (${ring.length})`);
+  check(/ArrayPolar/.test(await p.textContent('#lastop')), 'array parameters are editable in the operation card');
+  await shot('4-acad');
+
+  // --- Plasticity-style Model: face push/pull with a live handle, edge fillet, shell
+  await p.tap('[data-ws=model]'); await p.waitForTimeout(400);
+  await p.locator('.ctxseg button', { hasText: 'Face' }).tap();
+  c = await projW([0, 8, 8]); await tapV(c.x, c.y); // top face of the plate
+  check(await st(() => StreamLine.S.ed.faces.length) === 1, 'Face mode selects the top face');
+  const v0 = await st(() => StreamLine.M.meshVolume(StreamLine.S.doc.objects[0].mesh));
+  await p.locator('#actions .act', { hasText: 'Push/Pull' }).tap();
+  const pp = await st(() => StreamLine.getLast() && StreamLine.getLast().params.dist);
+  const topArea = await st(() => { const o = StreamLine.S.doc.objects[0]; return null; });
+  void topArea;
+  await p.tap('#lastop .field .val'); await keypad('3');
+  const v1 = await st(() => StreamLine.M.meshVolume(StreamLine.S.doc.objects[0].mesh));
+  check(v1 > v0, `Push/Pull +3 adds material (${(v1 - v0).toFixed(3)} mm³; default was ${pp})`);
+  // drag the live handle
+  const hd = await st(() => { const L = StreamLine.getLast(), h = L.handle; return { a: h.origin.map((c, k) => c + h.dir[k] * L.params.dist), dir: h.dir }; });
+  const ha = await projW(hd.a), hb = await projW(hd.a.map((c, k) => c + hd.dir[k] * 6));
+  await drag([[ha.x, ha.y], [hb.x, hb.y]]);
+  const dd = await st(() => StreamLine.getLast().params.dist);
+  check(Math.abs(dd - 3) > 0.5 && Number.isInteger(+dd.toFixed(9)), `dragging the handle changes the distance live, snapped (${dd})`);
+  check(/Push\/Pull/.test(await p.textContent('#lastop')) && await p.evaluate(() => getComputedStyle(document.querySelector('#lastop')).top !== 'auto'), 'Plasticity-style floating dialog');
+  await p.tap('#lastop .ib[aria-label=Done]');
+  await p.locator('.ctxseg button', { hasText: 'Edge' }).tap();
+  const bb = await st(() => { const o = StreamLine.S.doc.objects[0], W = o.mesh.v.map(v => v.map((c, k) => c + o.loc[k])); const zs = W.map(p => p[2]); return Math.max(...zs); });
+  c = await projW([0, 15, bb]); await tapV(c.x, c.y);
+  const ne = await st(() => StreamLine.S.ed.edges.length);
+  check(ne === 1, `Edge mode picks an edge (${ne})`);
+  const vb = await st(() => StreamLine.M.meshVolume(StreamLine.S.doc.objects[0].mesh));
+  await p.locator('#actions .act', { hasText: 'Fillet' }).tap();
+  const va = await st(() => StreamLine.M.meshVolume(StreamLine.S.doc.objects[0].mesh));
+  check(va < vb, `Model fillet removes material (${(vb - va).toFixed(3)})`);
+  check(await st(() => !!(StreamLine.getLast() && StreamLine.getLast().handle)), 'fillet has a live radius handle');
+  await shot('5-plasticity');
+  await p.tap('#lastop .ib[aria-label=Done]');
+  await p.locator('.ctxseg button', { hasText: 'Solid' }).tap();
+  c = await projW([0, 0, 4]); await tapV(c.x, c.y);
+  const nb = await st(() => StreamLine.S.doc.objects.length);
+  await p.locator('#actions .act', { hasText: 'Slice' }).tap();
+  await p.tap('#lastop .field .val'); await keypad('4');
+  check(await st(() => StreamLine.S.doc.objects.length) === nb + 1, 'Slice at z=4 splits the body in two');
+  const vsum = await st(() => StreamLine.S.doc.objects.slice(-2).map(o => StreamLine.M.meshVolume(o.mesh)));
+  check(vsum.every(v => v > 0), `both halves are solid (${vsum.map(v => v.toFixed(1)).join(' + ')})`);
+  await p.tap('#lastop .ib[aria-label=Done]');
+  await p.tap('#btn-undo'); await p.waitForTimeout(150);
+  // direct modelling: select a face and drag it with the Move gizmo (Plasticity-style)
+  await p.locator('.ctxseg button', { hasText: 'Face' }).tap();
+  const zTop = await st(() => { const o = StreamLine.S.doc.objects[0]; return Math.max(...o.mesh.v.map(v => v[2] + o.loc[2])); });
+  c = await projW([-8, 0, zTop]); await tapV(c.x, c.y);
+  check(await st(() => StreamLine.S.ed.faces.length) === 1, 'top face selected for direct modelling');
+  await p.tap('[data-tool=move]');
+  const vF0 = await st(() => StreamLine.M.meshVolume(StreamLine.S.doc.objects[0].mesh));
+  const piv = await st(() => StreamLine.OPS.computePivot());
+  const sz = await p.evaluate(pv => StreamLine.view.worldPerPixel(pv) * 84, piv);
+  const zA = await projW([piv[0], piv[1], piv[2] + sz * 0.8]), zB = await projW([piv[0], piv[1], piv[2] + sz * 0.8 + 4]);
+  await drag([[zA.x, zA.y], [zB.x, zB.y]]);
+  const mv = await st(() => { const L = StreamLine.getLast(); return L && [L.def.label(L.params), L.params.z]; });
+  const vF1 = await st(() => StreamLine.M.meshVolume(StreamLine.S.doc.objects[0].mesh));
+  check(mv && mv[0] === 'Move' && mv[1] > 0 && vF1 > vF0, `dragging the face up stretches the body (dz=${mv && mv[1]}, +${(vF1 - vF0).toFixed(2)} mm³)`);
+  await p.tap('[data-tool=select]');
+  // thicken a plane
+  await p.locator('.ctxseg button', { hasText: 'Solid' }).tap();
+  await p.evaluate(() => StreamLine.runOp(StreamLine.OPS.addPrim, { type: 'plane', w: 10, d: 10, x: 80, y: 0, z: 0 }));
+  await p.locator('#actions .act', { hasText: 'Thicken' }).tap();
+  await p.tap('#lastop .field .val'); await keypad('3');
+  const vt = await st(() => StreamLine.M.meshVolume(StreamLine.S.doc.objects.at(-1).mesh));
+  check(Math.abs(vt - 300) < 1e-6, `Thicken turns a 10×10 plane into a 3 mm plate (${vt.toFixed(4)} mm³)`);
+  await p.tap('#btn-undo'); await p.tap('#btn-undo'); await p.tap('#btn-undo'); await p.waitForTimeout(150);
+
   // --- Model workspace + undo
   await p.tap('[data-ws=model]'); await p.waitForTimeout(400);
   check(await st(() => StreamLine.S.ed.workspace) === 'model', 'Model workspace opens');
   await p.tap('#btn-undo'); await p.waitForTimeout(150);
   const vu = await st(() => StreamLine.M.meshVolume(StreamLine.S.doc.objects[0].mesh));
-  check(Math.abs(vu - res1.vol) < 1e-9, 'undo reverts the chamfer exactly');
+  check(Math.abs(vu - vb) < 1e-9, 'undo reverts the fillet exactly');
   await shot('3-model');
 } catch (e) {
   await p.screenshot({ path: OUT + 'crash.png' }).catch(() => {});

@@ -7,6 +7,8 @@ export const S = {
     drawSel: new Set(),    // selected sketch entity ids
     profiles: [],          // selected regions [{sk, pt:[x,y]}]
     edges: [],             // selected body edges [{obj, a, b}] (world)
+    faces: [],             // selected body faces [{obj, n, w, p}] (Model, Plasticity-style)
+    pick: 'solid',         // Model selection: 'solid' | 'face' | 'edge'
     pickFace: false,       // waiting for a tap on a face to start a sketch
     tools: { draw: 'line', cad: 'select', model: 'select' },
     mode: 'object',        // 'object' | 'edit'
@@ -29,6 +31,9 @@ export const S = {
     xray: false,
     grid: true,
     curveSegs: 64,
+    ortho: false,
+    polar: true,
+    osnap: true,
   },
 };
 

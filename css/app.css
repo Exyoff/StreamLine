@@ -62,15 +62,17 @@ input, select { font: inherit; }
 .vlabel.dim { background: rgba(79,143,247,.9); border: 0; }
 .vlabel.cons { background: #3a3d45; color: #ffd27a; font-size: 11px; padding: 3px 5px; min-width: 18px; text-align: center; border-color: rgba(255,210,122,.4); }
 .vlabel.edge { background: rgba(20,21,24,.6); font-size: 11px; padding: 3px 5px; }
+#viewport { --cmdh: 0px; }
+body.has-cmd #viewport { --cmdh: 122px; }
 #hud {
-  position: absolute; left: calc(var(--sal) + 10px); top: 8px; right: 120px; pointer-events: none;
+  position: absolute; left: calc(var(--sal) + 10px); top: 8px; right: 12px; pointer-events: none;
   font: 12px/1.45 var(--font); color: var(--muted); text-shadow: 0 1px 2px #000;
 }
 #hud b { color: var(--text); font-weight: 600; }
-#nav { position: absolute; right: calc(var(--sar) + 6px); top: 6px; touch-action: none; }
+#nav { position: absolute; right: calc(var(--sar) + 6px); bottom: calc(var(--cmdh) + 6px); touch-action: none; }
 .vcol { position: absolute; display: flex; flex-direction: column; gap: 8px; }
-#vtools-r { right: calc(var(--sar) + 10px); top: 112px; }
-#vtools-l { left: calc(var(--sal) + 10px); bottom: 12px; }
+#vtools-r { right: calc(var(--sar) + 106px); bottom: calc(var(--cmdh) + 8px); display: grid; grid-template-columns: 44px 44px; gap: 8px; }
+#vtools-l { left: calc(var(--sal) + 10px); top: 66px; }
 .fab {
   width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center;
   background: rgba(35,36,40,.88); border: 1px solid var(--line); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
@@ -84,13 +86,13 @@ input, select { font: inherit; }
   position: absolute; background: rgba(35,36,40,.95); border: 1px solid var(--line); border-radius: 14px;
   box-shadow: 0 8px 30px rgba(0,0,0,.45); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
 }
-#lastop { left: calc(var(--sal) + 64px); right: calc(var(--sar) + 64px); bottom: 12px; max-width: 420px; padding: 8px 10px 10px; }
+#lastop { left: calc(var(--sal) + 64px); right: calc(var(--sar) + 10px); top: 66px; max-width: 400px; padding: 8px 10px 10px; }
 #lastop .head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 #lastop .title { font-weight: 700; font-size: 14px; flex: 1; }
 #lastop .title small { color: var(--muted); font-weight: 500; margin-left: 6px; }
 #lastop .ib { width: 32px; height: 32px; }
 #lastop.collapsed .fields { display: none; }
-#draw-card { left: calc(var(--sal) + 64px); right: calc(var(--sar) + 64px); bottom: 12px; max-width: 420px; padding: 8px 10px 10px; }
+#draw-card { left: calc(var(--sal) + 64px); right: calc(var(--sar) + 10px); top: 66px; max-width: 400px; padding: 8px 10px 10px; }
 #draw-card .head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; min-height: 32px; }
 #draw-card .title { font-weight: 700; font-size: 14px; flex: 1; }
 #draw-card .title small { color: var(--muted); font-weight: 500; margin-left: 6px; }
@@ -99,7 +101,7 @@ input, select { font: inherit; }
 .btn { height: 38px; padding: 0 16px; border-radius: 9px; background: #34353b; font-weight: 600; font-size: 14px; }
 .btn.primary { background: var(--accent); color: var(--accent-ink); }
 .btn:active { filter: brightness(1.2); }
-#measure-card { left: calc(var(--sal) + 10px); top: 64px; padding: 10px 12px; font: 13px/1.5 var(--mono); }
+#measure-card { left: calc(var(--sal) + 64px); top: 66px; z-index: 2; padding: 10px 12px; font: 13px/1.5 var(--mono); }
 #measure-card .big { font: 700 17px/1.3 var(--mono); color: var(--accent); }
 
 /* ---------- fields ---------- */
@@ -227,14 +229,52 @@ input, select { font: inherit; }
   .act { min-width: 52px; padding-top: 4px; }
   .act span:last-child, .tool span:last-child { display: none; }
   #tools { padding: 2px 6px; }
-  #vtools-r { top: 106px; flex-direction: row; right: auto; left: calc(var(--sal) + 10px); top: auto; bottom: 12px; }
-  #vtools-l { flex-direction: row; left: auto; right: calc(var(--sar) + 10px); bottom: 12px; }
-  #measure-card { left: auto; right: calc(var(--sar) + 116px); top: 8px; }
-  #hud { right: 50%; }
-  #lastop, #draw-card { bottom: 64px; left: calc(var(--sal) + 10px); }
+  body.has-cmd #viewport { --cmdh: 88px; }
+  #statusbar { display: none; }
+  #vtools-r { grid-template-columns: repeat(4, 44px); right: calc(var(--sar) + 106px); }
+  #vtools-l { flex-direction: row; }
+  #lastop, #draw-card { right: auto; width: 340px; top: 52px; }
+  #vtools-l { top: 52px; }
 }
 @media (max-width: 380px) {
   .seg button { padding: 0 9px; }
   .seg.icons button { padding: 0 6px; }
   .ib { width: 36px; }
 }
+
+/* ---------- AutoCAD command line ---------- */
+#cmdbar {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; height: var(--cmdh);
+  background: rgba(23, 27, 33, .96); border-top: 1px solid #3b4450; padding: 4px calc(var(--sar) + 6px) 4px calc(var(--sal) + 6px);
+  display: flex; flex-direction: column; gap: 4px; font-family: var(--mono);
+}
+#cmdbar[hidden] { display: none; }
+.cmdrow { display: flex; align-items: center; gap: 6px; min-width: 0; }
+#cmdprompt { font-size: 12.5px; color: #cfd6df; white-space: nowrap; overflow-x: auto; scrollbar-width: none; min-height: 22px; }
+#cmdprompt .opt { color: #5fb0ff; background: rgba(95,176,255,.12); border: 1px solid rgba(95,176,255,.35); border-radius: 5px; padding: 1px 7px; margin-left: 6px; font: inherit; }
+#cmdprompt .hist { color: #7d8794; margin-right: 8px; }
+#cmdin { flex: 1; min-width: 0; height: 34px; border-radius: 7px; border: 1px solid #3b4450; background: #0f1216; color: #fff; padding: 0 10px; font: 16px var(--mono); text-transform: uppercase; -webkit-user-select: text; user-select: text; }
+#cmdin:focus { outline: none; border-color: #5fb0ff; }
+#cmdin::placeholder { text-transform: none; color: #6b7480; font-size: 13px; }
+.cmdbtn { height: 34px; min-width: 44px; border-radius: 7px; background: #2b323b; color: #dfe6ee; font: 600 13px var(--font); }
+#statusbar { gap: 4px; overflow-x: auto; scrollbar-width: none; }
+#statusbar button { flex: none; height: 24px; padding: 0 8px; border-radius: 5px; font: 700 10.5px var(--mono); color: #6f7a87; background: #1d232a; border: 1px solid #2c343e; letter-spacing: .03em; }
+#statusbar button.on { color: #8fd0ff; border-color: #2f6a99; background: #18324a; }
+.vlabel.osnap { background: #fefcd2; color: #222; border: 1px solid #b9b06a; font: 600 11px var(--font); padding: 3px 6px; border-radius: 3px; transform-origin: left; }
+
+/* ---------- Plasticity-style Model dialog ---------- */
+body.ws-model #lastop { top: 66px; bottom: auto; left: calc(var(--sal) + 64px); right: auto; width: 250px; padding: 6px 8px 8px; border-radius: 10px; background: rgba(30,31,35,.96); }
+body.ws-model #lastop .title { font-size: 13px; letter-spacing: .01em; }
+body.ws-model #lastop .fields { grid-template-columns: 1fr; gap: 4px; }
+body.ws-model #lastop .field { flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; }
+body.ws-model #lastop .field > label { font-size: 12px; color: #b9bdc6; text-transform: none; letter-spacing: 0; }
+body.ws-model #lastop .field .val { width: 120px; height: 32px; font-size: 13px; }
+body.ws-model #lastop .field .seg button { height: 30px; padding: 0 8px; font-size: 12px; }
+body.ws-model #lastop .field.wide { flex-direction: column; align-items: stretch; }
+
+#cmdlog { font-size: 11.5px; color: #8fe3b0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; min-height: 16px; cursor: pointer; -webkit-user-select: text; user-select: text; }
+#cmdlog.empty { color: #5d6672; }
+#cmdhistory { position: absolute; left: calc(var(--sal) + 6px); right: calc(var(--sar) + 6px); bottom: calc(var(--cmdh) + 4px); max-height: 40%; overflow-y: auto; z-index: 4;
+  background: rgba(15,18,22,.97); border: 1px solid #3b4450; border-radius: 10px; padding: 8px 10px; font: 12px/1.6 var(--mono); color: #cfe9d9; -webkit-user-select: text; user-select: text; }
+#cmdhistory[hidden] { display: none; }
+.vlabel.measure { background: #0f2a1c; color: #8fe3b0; border-color: #2f7a52; font-size: 12.5px; }

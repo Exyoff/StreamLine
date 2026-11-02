@@ -25,7 +25,7 @@ export function toast(msg, ms = 1800) {
 }
 
 // ---------- keypad ----------
-let kp = null;
+let kp = null, openedAt = 0;
 const rawNumber = (kind, v) => {
   if (kind === 'len') return trimNum(v / unitFactor());
   if (kind === 'int') return String(Math.round(v));
@@ -35,6 +35,7 @@ function trimNum(v) { let s = (+v.toPrecision(12)).toString(); if (s.includes('e
 
 export function openKeypad({ label, kind = 'len', value = 0, min = null, max = null, onCommit, anchor = null }) {
   closeKeypad(false);
+  openedAt = performance.now();
   const el = $('#keypad');
   kp = { kind, expr: rawNumber(kind, value), fresh: true, onCommit, min, max, anchor };
   anchor && anchor.classList.add('editing');
@@ -60,7 +61,7 @@ export function openKeypad({ label, kind = 'len', value = 0, min = null, max = n
     h('div', { class: 'kd' }, h('span', { class: 'kl' }, label || ''), h('div', { class: 'kexpr' })),
     h('div', { class: 'kprev' }), grid);
   el.hidden = false;
-  grid.addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; e.preventDefault(); press(b.dataset.k); });
+  grid.addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; e.preventDefault(); if (performance.now() - openedAt < 450) return; /* ghost click from the tap that opened us */ press(b.dataset.k); });
   renderKp();
 }
 function renderKp() {
