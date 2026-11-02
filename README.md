@@ -24,6 +24,18 @@ On iPhone, open the page in Safari, then Share → **Add to Home Screen**. It th
 - The Measure tool snaps to vertices, surfaces and the grid, and shows ΔX, ΔY and ΔZ. Edit mode shows the lengths of selected edges.
 - Statistics: surface area, volume and a watertight check.
 
+## Layout
+- The Draw / CAD / Model switcher, undo/redo and properties sit in the top bar. Under it is the **station bar** with the actions for the current workspace: Constrain, Modify commands, Extrude, Fillet and so on.
+- **Tools** are in a vertical rail on the left of the viewport. View controls (the axis navigator and the persp/frame/snap/x-ray buttons) are bottom-right. The AutoCAD command line runs along the bottom in Draw and CAD.
+
+## Sketching on faces
+Use **On face** (Draw or CAD) or **Sketch on face** (Model), then tap a flat face. The new sketch:
+- **projects the face's boundary**, outer edge and holes included, as purple reference geometry, the way Fusion does. Round holes come in as exact circles, and straight runs as single lines.
+- lets you snap to that geometry, dimension against it, and use it in profiles.
+- frames the camera straight onto the face and starts the Line tool.
+
+An extrude from a face sketch targets that body automatically (Join, or Cut into the face).
+
 ## AutoCAD-style drafting (Draw and CAD)
 - **Command line** (bottom of the viewport): type anywhere on a keyboard, or tap the field on a phone. **Enter** or **Space** runs the command, an empty Enter repeats the last one, and **Esc** cancels. The prompts use AutoCAD's wording and offer clickable options such as `[Close] [Undo]`.
 - **Commands and aliases:** `L` LINE, `REC` RECTANG, `C` CIRCLE, `A` ARC, `POL` POLYGON, `TR` TRIM, `EX` EXTEND, `O` OFFSET, `F` FILLET, `CHA` CHAMFER, `M` MOVE, `CO` COPY, `RO` ROTATE, `SC` SCALE, `MI` MIRROR, `E` ERASE, `X` EXPLODE, `DIM`, `GCHORIZONTAL`/`GCVERTICAL`/`GCPARALLEL`/`GCPERPENDICULAR`/`GCEQUAL`/`GCTANGENT`/`GCCONCENTRIC`/`GCFIX`, `U`/`REDO`, `Z` (zoom extents) and `DXFOUT`. The 3D commands are `EXT` EXTRUDE, `REV` REVOLVE, `UNI` UNION, `SU` SUBTRACT, `IN` INTERSECT, `FILLETEDGE`, `CHAMFEREDGE` and `PRESSPULL`.

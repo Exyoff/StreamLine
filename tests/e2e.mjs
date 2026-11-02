@@ -142,6 +142,20 @@ try {
   check(tight, 'body is still watertight after fillet + chamfer');
   await shot('2-cad');
 
+  // --- sketch on a face: the face boundary and hole are projected into the new sketch
+  if (await p.locator('#lastop .ib[aria-label=Done]').isVisible()) await p.tap('#lastop .ib[aria-label=Done]');
+  await p.locator('#actions .act', { hasText: 'On face' }).tap();
+  c = await projW([-10, 8, 8]); await tapV(c.x, c.y);
+  await p.waitForTimeout(400);
+  const fs = await st(() => { const k = StreamLine.SK.activeSketch(); return { face: !!k.face, ents: k.ents.map(e => ({ t: e.t, proj: e.proj, r: e.r })), ws: StreamLine.S.ed.workspace, tool: StreamLine.S.ed.tool, regions: StreamLine.SK.regions(k).length }; });
+  check(fs.face && fs.ws === 'draw' && fs.tool === 'line', 'tapping a face opens a sketch on it with the Line tool');
+  check(fs.ents.every(e => e.proj) && fs.ents.some(e => e.t === 'circle' && Math.abs(e.r - 5) < 1e-9) && fs.ents.filter(e => e.t === 'line').length >= 5, `face outline projected (${fs.ents.length} entities; hole as an exact Ø10 circle)`);
+  check(fs.regions >= 1, 'projected outline forms a profile');
+  await shot('3b-face-sketch');
+  await p.evaluate(() => { StreamLine.S.ed.sketch = 1; });
+  await p.tap('[data-ws=cad]'); await p.tap('[data-ws=draw]'); await p.waitForTimeout(400);
+  await p.evaluate(() => { StreamLine.view.cam.dist = 220; StreamLine.view.cam.target.set(40, 8, 0); StreamLine.view.render(); }); await p.waitForTimeout(250);
+
   // --- AutoCAD command line: typed coordinates, edit commands
   await p.tap('[data-ws=draw]'); await p.waitForTimeout(300);
   const run = async c => { await p.fill('#cmdin', c); await p.press('#cmdin', 'Enter'); await p.waitForTimeout(120); };
@@ -214,7 +228,7 @@ try {
   const tx = (await ents()).find(e => e.t === 'text');
   check(tx && tx.str === 'Part A-1 rev B' && tx.h === 5, `TEXT keeps spaces and case (${tx && JSON.stringify(tx.str)}, h=${tx && tx.h})`);
   await run('H');
-  c = await proj([-10, 8]); await tapV(c.x, c.y);
+  c = await proj([12, -8]); await tapV(c.x, c.y);
   const ht = (await ents()).find(e => e.t === 'hatch');
   check(ht && ht.pattern === 'ANSI31', 'HATCH fills the picked region');
   check(/Hatch/.test(await p.textContent('#lastop')), 'hatch pattern/scale/angle are editable');

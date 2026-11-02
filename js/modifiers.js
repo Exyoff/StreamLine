@@ -215,3 +215,19 @@ export function draft(W, faces, regs, d, z0, deg) {
   const res = polysToMesh(toPolys(V, faces));
   return res.f.length ? res : 'Draft failed';
 }
+
+
+// Boundary loops of a planar face region as world points (outer + holes), for projecting into sketches.
+export function faceLoops(W, faces, reg) {
+  const dir = new Set(), next = new Map();
+  for (const fi of reg.faces) { const f = faces[fi]; f.forEach((a, k) => dir.add(a + '>' + f[(k + 1) % f.length])); }
+  for (const fi of reg.faces) { const f = faces[fi]; f.forEach((a, k) => { const b = f[(k + 1) % f.length]; if (!dir.has(b + '>' + a)) next.set(a, b); }); }
+  const loops = [], used = new Set();
+  for (const s0 of next.keys()) {
+    if (used.has(s0)) continue;
+    const loop = []; let c = s0;
+    while (c !== undefined && !used.has(c)) { used.add(c); loop.push(W[c]); c = next.get(c); }
+    if (loop.length >= 3) loops.push(loop);
+  }
+  return loops;
+}

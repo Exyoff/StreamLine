@@ -454,3 +454,12 @@ test('3D: three fillets meeting at a box corner get a spherical corner', async (
   const corner = Math.max(...r.v.map(p => p[0] + p[1] + p[2]));
   assert.ok(corner <= 21 + 3 * Math.sqrt(3) + 1e-6 && corner > 25.5, `corner now on the sphere around (7,7,7) (max x+y+z = ${corner.toFixed(3)})`);
 });
+
+test('sketch on face: boundary projection (lines merged, holes as true circles)', async () => {
+  const { projectLoop } = await import('../js/features.js');
+  const sq = [[0, 0], [5, 0], [10, 0], [10, 10], [0, 10]];
+  const L = projectLoop(sq);
+  assert.equal(L.length, 4, 'collinear points merged'); assert.deepEqual(L[0], { t: 'line', a: [0, 0], b: [10, 0] });
+  const circ = []; for (let i = 0; i < 32; i++) circ.push([3 + 4 * Math.cos(i / 32 * 2 * Math.PI), -2 + 4 * Math.sin(i / 32 * 2 * Math.PI)]);
+  assert.deepEqual(projectLoop(circ), [{ t: 'circle', c: [3, -2], r: 4 }]);
+});
