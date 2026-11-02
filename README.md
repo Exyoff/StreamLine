@@ -51,7 +51,7 @@ On iPhone, open the page in Safari, then Share → **Add to Home Screen**. It th
 - **Loft** (`LOFT`): a solid through two or more profiles, resampled and aligned automatically. **Sweep** (`SWEEP`): a profile, holes included, along an open path (lines, arcs or a spline) in another sketch. Corners are mitred so the section stays exact. Both can create a new body or Join, Cut or Intersect with an existing one.
 
 ## Fillet, chamfer and constraints
-- **Sketch fillet and chamfer** (Draw → Fillet tool, `F` / `CHA`): tap a corner where two lines meet, or where a line meets an arc. Rectangles are split into lines automatically. A fillet arc comes with tangent constraints.
+- **Sketch fillet and chamfer** (Draw → Fillet tool, `F` / `CHA`): tap a corner where two lines meet, where a line meets an arc, or where two arcs meet. Rectangles are split into lines automatically. A fillet arc comes with tangent constraints.
 - **Edge fillet and chamfer** (CAD → Edge tool, then Fillet or Chamfer): works on straight edges between flat faces. Convex edges have material removed and concave edges have it added. A chamfer can use one distance or two (with a swap option). Several edges can be done in one operation, and the result stays editable.
 - **Constraint solver**: Horizontal, Vertical, Parallel, Perpendicular, Equal, Tangent, Concentric and Fix. Dimensions drive the geometry: point-to-point, line length, angle between lines, radius and diameter. Touching points stay joined, and the sketch origin is fixed.
   - The solver uses minimum-norm Gauss-Newton, so each edit moves the geometry as little as possible, to about 1e-12 mm.

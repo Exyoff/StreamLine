@@ -410,3 +410,14 @@ test('2D: fillet and chamfer where a line meets an arc', () => {
   const ch = cornerOp(s2, P, 0.5, 2, 'chamfer').ent;
   near(Math.hypot(ch.a[0] - P[0], ch.a[1] - P[1]), 2, 1e-9); near(Math.hypot(ch.b[0] - P[0], ch.b[1] - P[1]), 2, 1e-9, 'chamfer: both ends 2 from the corner');
 });
+
+test('2D: fillet where two arcs meet', () => {
+  // two R10 arcs meeting at the origin: centres (-10,0) and (10,0) would be tangent, so tilt them
+  const c1 = [-8, 6], c2 = [8, 6], R = 10;
+  const a1 = Math.atan2(-c1[1], -c1[0]), a2 = Math.atan2(-c2[1], -c2[0]);
+  const s = { ents: [{ id: 1, t: 'arc', c: c1, r: R, a0: a1 - 1, a1 }, { id: 2, t: 'arc', c: c2, r: R, a0: a2, a1: a2 + 1 }], cons: [], nextEnt: 10 };
+  const f = cornerOp(s, [0, 0], 0.5, 2, 'fillet').ent;
+  assert.equal(f.t, 'arc');
+  for (const c of [c1, c2]) { const d = Math.hypot(f.c[0] - c[0], f.c[1] - c[1]); assert.ok(Math.abs(d - 12) < 1e-9 || Math.abs(d - 8) < 1e-9, 'tangent to both arcs'); }
+  assert.equal(s.cons.filter(c => c.t === 'tan').length, 2);
+});
