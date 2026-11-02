@@ -487,6 +487,7 @@ export function findCorner(sk, p, tol) {
   let best = null;
   const ends = [];
   for (const e of sk.ents) if (e.t === 'line') { ends.push({ e, k: 'a', p: e.a }); ends.push({ e, k: 'b', p: e.b }); }
+  else if (e.t === 'arc') { ends.push({ e, k: 's', p: pol(e.c, e.r, e.a0) }); ends.push({ e, k: 'e', p: pol(e.c, e.r, e.a0 + sweep(e)) }); }
   for (const q of ends) {
     if (d2(q.p, p) > tol) continue;
     const mates = ends.filter(o => o.e !== q.e && d2(o.p, q.p) < 1e-7);
@@ -496,7 +497,9 @@ export function findCorner(sk, p, tol) {
 }
 export function cornerOp(sk, p, tol, r, kind) {
   const c = findCorner(sk, p, tol);
-  if (!c) return 'Tap a corner where exactly two lines meet';
+  if (!c) return 'Tap a corner where exactly two lines (or a line and an arc) meet';
+  if (c.A.e.t === 'arc' && c.B.e.t === 'arc') return 'Arc–arc corners are not supported yet';
+  if (c.A.e.t === 'arc' || c.B.e.t === 'arc') return lineArcCorner(sk, c.A.e.t === 'line' ? c.A : c.B, c.A.e.t === 'arc' ? c.A : c.B, r, kind);
   const P = c.A.p.slice();
   const other = q => (q.k === 'a' ? q.e.b : q.e.a);
   const u1 = norm2(sub2(other(c.A), P)), u2 = norm2(sub2(other(c.B), P));
@@ -692,4 +695,59 @@ export function arrayPolar(sk, ids, center, n, total = 360) {
   const made = [];
   for (let k = 1; k < n; k++) made.push(...transformEntities(sk, ids, { kind: 'rotate', c: center, deg: step * k }, true));
   return made;
+}
+
+
+// FILLET / CHAMFER where a line meets an arc (shared endpoint).
+function lineArcCorner(sk, Lq, Aq, r, kind) {
+  const L = Lq.e, Ar = Aq.e, P = Lq.p.slice();
+  const Q = Lq.k === 'a' ? L.b : L.a, Ld = d2(P, Q), u = [(Q[0] - P[0]) / Ld, (Q[1] - P[1]) / Ld];
+  const O = Ar.c, R = Ar.r, sw = sweep(Ar);
+  const angOf = q => Math.atan2(q[1] - O[1], q[0] - O[0]);
+  // where along the arc (0 at P, growing into the arc) a point lies
+  const along = q => { let a = (angOf(q) - Ar.a0); a = ((a % TAU) + TAU) % TAU; return Aq.k === 's' ? a : sw - a; };
+  const onArcSpan = q => { const a = along(q); return a > 1e-9 && a < sw - 1e-9; };
+  const nid = () => (sk.nextEnt = (sk.nextEnt || 1000) + 1);
+  if (kind === 'chamfer') {
+    const T1 = [P[0] + u[0] * r, P[1] + u[1] * r];
+    if (r >= Ld) return 'Chamfer distance is longer than the line';
+    // point on the arc at chord distance r from P
+    const half = 2 * Math.asin(Math.min(1, r / (2 * R)));
+    const aP = angOf(P), cand = [aP + half, aP - half].map(a => pol(O, R, a)).filter(onArcSpan);
+    if (!cand.length) return 'Chamfer distance is longer than the arc';
+    const T2 = cand[0];
+    Lq.k === 'a' ? (L.a = T1) : (L.b = T1);
+    const aT = angOf(T2), s0 = Ar.a0, s1 = Ar.a0 + sw;
+    if (Aq.k === 's') { Ar.a0 = aT; Ar.a1 = s1; } else { Ar.a1 = s0 + (((aT - s0) % TAU) + TAU) % TAU; }
+    const ln = { id: nid(), t: 'line', a: T1, b: T2 }; sk.ents.push(ln); return { ent: ln };
+  }
+  // fillet centre: at distance r from the line and r from the circle (inside or outside)
+  const n = [-u[1], u[0]], best = [];
+  for (const side of [1, -1]) for (const rr of [R + r, R - r]) {
+    if (rr <= 1e-12) continue;
+    // line offset: X = P + n*side*r + u*t ; |X − O| = rr
+    const B0 = [P[0] + n[0] * side * r - O[0], P[1] + n[1] * side * r - O[1]];
+    const b = B0[0] * u[0] + B0[1] * u[1], cc = B0[0] * B0[0] + B0[1] * B0[1] - rr * rr, disc = b * b - cc;
+    if (disc < 0) continue;
+    for (const t of [-b - Math.sqrt(disc), -b + Math.sqrt(disc)]) {
+      const C = [P[0] + n[0] * side * r + u[0] * t, P[1] + n[1] * side * r + u[1] * t];
+      if (t <= 1e-9 || t >= Ld - 1e-9) continue;                 // tangent point must lie on the line
+      const k = d2(C, O), T2 = [O[0] + (C[0] - O[0]) * R / k, O[1] + (C[1] - O[1]) * R / k];
+      if (!onArcSpan(T2)) continue;
+      best.push({ C, T1: [P[0] + u[0] * t, P[1] + u[1] * t], T2, d: d2(C, P) });
+    }
+  }
+  if (!best.length) return 'Radius too large for this corner';
+  const { C, T1, T2 } = best.sort((x, y) => x.d - y.d)[0];
+  Lq.k === 'a' ? (L.a = T1) : (L.b = T1);
+  const aT = angOf(T2), s0 = Ar.a0, s1 = Ar.a0 + sw;
+  if (Aq.k === 's') { Ar.a0 = aT; Ar.a1 = s1; } else { Ar.a1 = s0 + (((aT - s0) % TAU) + TAU) % TAU; }
+  const a1 = Math.atan2(T1[1] - C[1], T1[0] - C[0]), a2 = Math.atan2(T2[1] - C[1], T2[0] - C[0]);
+  const ccw = (((a2 - a1) % TAU) + TAU) % TAU;
+  const arc = ccw <= Math.PI ? { a0: a1, a1: a1 + ccw } : { a0: a2, a1: a2 + (TAU - ccw) };
+  const e = { id: nid(), t: 'arc', c: C, r, ...arc };
+  sk.ents.push(e);
+  sk.cons = sk.cons || [];
+  sk.cons.push({ id: nid(), t: 'tan', a: L.id, b: e.id }, { id: nid(), t: 'tan', a: Ar.id, b: e.id });
+  return { ent: e };
 }

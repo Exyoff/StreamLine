@@ -393,3 +393,20 @@ test('3D: draft side faces about a neutral plane', async () => {
   const s = 20 - 40 * Math.tan(th * Math.PI / 180);
   near(meshVolume(tp), 20 / 3 * (400 + s * s + 20 * s), 1e-6, 'all four sides → frustum'); assert.ok(watertight(tp));
 });
+
+test('2D: fillet and chamfer where a line meets an arc', () => {
+  const a225 = 225 * Math.PI / 180, P = [10 * Math.cos(a225), 10 + 10 * Math.sin(a225)];
+  const mk = () => ({ ents: [{ id: 1, t: 'line', a: P.slice(), b: [P[0] + 15, P[1]] }, { id: 2, t: 'arc', c: [0, 10], r: 10, a0: Math.PI, a1: a225 }], cons: [], nextEnt: 10 });
+  const s = mk();
+  const f = cornerOp(s, P, 0.5, 2, 'fillet').ent;
+  assert.equal(f.t, 'arc');
+  near(Math.abs(f.c[1] - P[1]), 2, 1e-9, 'fillet tangent to the line');
+  const dO = Math.hypot(f.c[0], f.c[1] - 10);
+  assert.ok(Math.abs(dO - 12) < 1e-9 || Math.abs(dO - 8) < 1e-9, 'fillet tangent to the arc');
+  near(s.ents[0].a[1], P[1], 1e-12); assert.ok(s.ents[0].a[0] > P[0], 'line trimmed back');
+  const end = [10 * Math.cos(s.ents[1].a1), 10 + 10 * Math.sin(s.ents[1].a1)];
+  near(Math.hypot(end[0] - f.c[0], end[1] - f.c[1]), 2, 1e-9, 'arc trimmed to the tangent point');
+  const s2 = mk();
+  const ch = cornerOp(s2, P, 0.5, 2, 'chamfer').ent;
+  near(Math.hypot(ch.a[0] - P[0], ch.a[1] - P[1]), 2, 1e-9); near(Math.hypot(ch.b[0] - P[0], ch.b[1] - P[1]), 2, 1e-9, 'chamfer: both ends 2 from the corner');
+});
