@@ -24,6 +24,22 @@ On iPhone, open the page in Safari, then Share → **Add to Home Screen**. It th
 - The Measure tool snaps to vertices, surfaces and the grid, and shows ΔX, ΔY and ΔZ. Edit mode shows the lengths of selected edges.
 - Statistics: surface area, volume and a watertight check.
 
+## AutoCAD-style drafting (Draw and CAD)
+- **Command line** (bottom of the viewport): type anywhere on a keyboard, or tap the field on a phone. **Enter** or **Space** runs the command, an empty Enter repeats the last one, and **Esc** cancels. The prompts use AutoCAD's wording and offer clickable options such as `[Close] [Undo]`.
+- **Commands and aliases:** `L` LINE, `REC` RECTANG, `C` CIRCLE, `A` ARC, `POL` POLYGON, `TR` TRIM, `EX` EXTEND, `O` OFFSET, `F` FILLET, `CHA` CHAMFER, `M` MOVE, `CO` COPY, `RO` ROTATE, `SC` SCALE, `MI` MIRROR, `E` ERASE, `X` EXPLODE, `DIM`, `GCHORIZONTAL`/`GCVERTICAL`/`GCPARALLEL`/`GCPERPENDICULAR`/`GCEQUAL`/`GCTANGENT`/`GCCONCENTRIC`/`GCFIX`, `U`/`REDO`, `Z` (zoom extents) and `DXFOUT`. The 3D commands are `EXT` EXTRUDE, `REV` REVOLVE, `UNI` UNION, `SU` SUBTRACT, `IN` INTERSECT, `FILLETEDGE`, `CHAMFEREDGE` and `PRESSPULL`.
+- **Coordinate entry:** absolute `x,y`, relative `@dx,dy`, polar `@length<angle`, or a bare number as a direct distance along the rubber band. Every value accepts units and arithmetic (`@3/8in<45`).
+- **Status bar:** GRID, SNAP, ORTHO, POLAR and OSNAP, also on F7, F9, F8, F10 and F3.
+- **Visuals:** OSNAP markers with names (□ Endpoint, △ Midpoint, ○ Center, ✕ Intersection, ◇ Quadrant), polar tracking rays, a crosshair with pickbox, blue grips and dashed selection, all on the dark model-space background.
+
+## Plasticity-style modelling (Model)
+- **Selection modes:** **Solid / Face / Edge** (keys `4` `3` `2`), plus **Mesh** for polygon editing. Face mode selects a whole planar face, not individual triangles.
+- **Modifiers:** each runs from the selection, opens a compact floating dialog with exact values, and has a **live drag handle** in the viewport.
+  - **Fillet** (`F`) and **Chamfer** (`C`) on edges.
+  - **Push/Pull** (`O`): move a face along its normal, adding or removing material.
+  - **Shell** (`H`): hollow the body, with the selected faces left open. The wall offsets are solved exactly from the face planes.
+  - **Mirror** (`M`): across YZ, XZ, XY or a selected face, optionally fused with the original.
+  - **Boolean:** union, subtract or intersect.
+
 ## Fillet, chamfer and constraints
 - **Sketch fillet and chamfer** (Draw → Fillet tool): tap a corner where two lines meet. Rectangles are split into lines automatically. A fillet arc comes with tangent constraints.
 - **Edge fillet and chamfer** (CAD → Edge tool, then Fillet or Chamfer): works on straight edges between flat faces. Convex edges have material removed and concave edges have it added. A chamfer can use one distance or two (with a swap option). Several edges can be done in one operation, and the result stays editable.
@@ -66,4 +82,4 @@ npm run test:e2e     # drives the real UI in an emulated iPhone: Draw → CAD �
 Keyboard (iPad or desktop): `Tab` `1 2 3` `G R S` `E I F X A` `⌘Z` `⇧⌘Z` `N` `.` and numpad views.
 
 ## Layout
-`js/sketch.js` 2D sketch geometry, snapping, regions, trim, DXF · `js/draw.js` Draw workspace · `js/features.js` extrude, revolve, booleans · `js/csg.js` double-precision BSP CSG and mesh clean-up · `js/mesh.js` polygon mesh and modelling ops · `js/operators.js` operator definitions · `js/ops.js` redo panel and undo · `js/viewport.js` renderer, camera, picking, gestures · `js/gizmo.js` transform handles · `js/units.js` units and expression parser · `js/ui.js` keypad and widgets · `js/io.js` STL/OBJ · `vendor/` three.js r170 (MIT).
+`js/cmdline.js` AutoCAD command line · `js/modifiers.js` push/pull, shell, mirror · `js/sketch.js` 2D sketch geometry, snapping, regions, trim, DXF · `js/draw.js` Draw workspace · `js/features.js` extrude, revolve, booleans · `js/csg.js` double-precision BSP CSG and mesh clean-up · `js/mesh.js` polygon mesh and modelling ops · `js/operators.js` operator definitions · `js/ops.js` redo panel and undo · `js/viewport.js` renderer, camera, picking, gestures · `js/gizmo.js` transform handles · `js/units.js` units and expression parser · `js/ui.js` keypad and widgets · `js/io.js` STL/OBJ · `vendor/` three.js r170 (MIT).

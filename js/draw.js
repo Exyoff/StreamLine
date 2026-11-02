@@ -16,8 +16,9 @@ import { I } from './icons.js';
 
 const D = Math.PI / 180;
 export const corner = { kind: 'fillet', size: null };
+let propsOpen = false; // compact entity card by default (AutoCAD-style quick properties)
 export const st = { start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null };
-export function resetTool() { Object.assign(st, { dimLine: null, start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null }); view.render(); emit('drawcard'); }
+export function resetTool() { Object.assign(st, { cmd: null, last: null, dimLine: null, start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null }); view.render(); emit('drawcard'); }
 const sk = () => SK.activeSketch();
 const tool = () => S.ed.tool;
 
@@ -49,7 +50,7 @@ function refPts(s) {
 function snapAt(x, y, from = st.start, exclude = null) {
   const s = sk(), raw = planePt(x, y);
   const wpp = view.worldPerPixel(SK.toW(s.plane, raw));
-  const r = SK.snapPoint(s, raw, { pxTol: 20, wpp, from, refPts: refPts(s), exclude });
+  const r = SK.snapPoint(s, raw, { pxTol: 20, wpp, from, refPts: refPts(s), exclude, osnap: S.settings.osnap !== false, polar: S.settings.polar !== false, ortho: !!S.settings.ortho });
   st.snap = r; st.preview = r.p;
   return r;
 }
@@ -100,7 +101,8 @@ export function down(x, y) {
   const s = sk(); if (!s) return false;
   const t = tool();
   if (t === 'select') return gripDown(x, y);
-  if (t === 'trim' || t === 'dim' || t === 'corner') return false; // handled as taps
+  if (t === 'trim' || t === 'dim' || t === 'corner' || t === 'extend') return false; // handled as taps
+  if (EDIT_TOOLS.has(t)) { ensureCmd(); if (!pointStage()) return false; }
   st.press = { x, y, moved: false };
   snapAt(x, y);
   view.render(); emit('drawcard');
@@ -111,19 +113,27 @@ export function move(x, y) {
   if (!st.press) return;
   if (Math.hypot(x - st.press.x, y - st.press.y) > 6) st.press.moved = true;
   if (!st.start && !(tool() === 'arc' && st.arc) && st.press.moved && !st.pressAnchor) st.pressAnchor = st.preview; // drag-to-draw from press point
-  snapAt(x, y, st.start || st.pressAnchor || (tool() === 'arc' && st.arc ? st.arc.c : null));
+  snapAt(x, y, fromPt() || st.pressAnchor);
   view.render(); emit('drawcard');
 }
 export function hover(x, y) {
-  if (S.ed.workspace !== 'draw' || !sk() || ['select', 'trim', 'dim', 'corner'].includes(tool())) return;
-  snapAt(x, y, st.start || (st.arc ? st.arc.c : null)); view.render(); emit('drawcard');
+  if (S.ed.workspace !== 'draw' || !sk() || ['select', 'trim', 'dim', 'corner', 'extend'].includes(tool())) return;
+  if (EDIT_TOOLS.has(tool()) && !pointStage()) return;
+  snapAt(x, y, fromPt()); view.render(); emit('drawcard');
 }
 export function up() {
   if (st.grip) return gripUp();
   if (!st.press) return;
-  const p = st.preview, t = tool(), anchor = st.pressAnchor;
+  const p = st.preview, anchor = st.pressAnchor;
   st.press = null; st.pressAnchor = null;
   if (!p) return;
+  commitPoint(p, anchor);
+}
+// A point from a tap, a drag release, or typed in the command line.
+export function commitPoint(p, anchor = null) {
+  const t = tool();
+  st.last = p.slice();
+  if (EDIT_TOOLS.has(t)) { cmdPoint(p); view.render(); emit('drawcard'); return; }
   if (t === 'line') {
     if (!st.start && anchor) { st.start = anchor; placeLine(anchor, p); }
     else if (!st.start) { st.start = p; }
@@ -189,6 +199,13 @@ export function tap(x, y) {
     if (e) { if (S.ed.multi) { S.ed.drawSel.has(e.id) ? S.ed.drawSel.delete(e.id) : S.ed.drawSel.add(e.id); } else S.ed.drawSel = new Set([e.id]); }
     else if (!S.ed.multi) S.ed.drawSel = new Set();
     emit('selection');
+  } else if (EDIT_TOOLS.has(t)) {
+    cmdTap(s, raw, wpp);
+  } else if (t === 'extend') {
+    const e = SK.pickEntity(s, raw, 16 * wpp);
+    if (!e) { toast('Tap a line near the end to extend'); return; }
+    const eid = e.id;
+    runOp(F.sketchOp('Extend', s.id, sk2 => { const ee = SK.entById(sk2, eid); const r = SK.extendLine(sk2, ee, raw); return r === true ? undefined : r; }));
   } else if (t === 'trim') {
     const e = SK.pickEntity(s, raw, 16 * wpp);
     if (!e) { toast('Tap the piece of a line, arc or circle to remove'); return; }
@@ -292,7 +309,11 @@ export function cardContent() {
     const ents = [...S.ed.drawSel].map(id => SK.entById(s, id)).filter(Boolean);
     if (!ents.length) return null;
     if (ents.length > 1) return h('div', {}, title(`${ents.length} entities selected`));
-    return h('div', {}, title(entTitle(ents[0])), entFields(s, ents[0]));
+    const e0 = ents[0];
+    const summary = e0.t === 'line' ? `${fmtLen(SK.d2(e0.a, e0.b))} ∠ ${fmtAng(((ang(e0.a, e0.b) / D) + 360) % 360)}` : e0.t === 'rect' ? `${fmtLen(e0.w, false)} × ${fmtLen(e0.h)}` : e0.r != null ? `R ${fmtLen(e0.r)}` : '';
+    const head = h('div', { class: 'head' }, h('div', { class: 'title' }, entTitle(e0), h('small', {}, summary)),
+      h('button', { class: 'ib', 'aria-label': propsOpen ? 'Collapse' : 'Properties', html: propsOpen ? '▴' : '▾', onclick: () => { propsOpen = !propsOpen; emit('drawcard'); } }));
+    return h('div', {}, head, propsOpen ? entFields(s, e0) : null);
   }
   if (t === 'trim') return title('Trim', 'tap pieces to remove');
   if (t === 'corner') {
@@ -385,7 +406,7 @@ function entFields(s, e) {
 
 // ---------- rendering ----------
 let sketchGroup, previewGroup, renderKey = '';
-const C = { free: new THREE.Color('#7fb2ff'), line: new THREE.Color('#e9ecf2'), dim: new THREE.Color('#9aa3b3'), sel: new THREE.Color('#ff9a1f'), other: new THREE.Color('#8d93a0'), prev: new THREE.Color('#4fd1ff') };
+const C = { fixed: new THREE.Color('#9fe39a'), line: new THREE.Color('#f2f2f2'), dim: new THREE.Color('#9aa3b3'), sel: new THREE.Color('#6fb4ff'), other: new THREE.Color('#8d93a0'), prev: new THREE.Color('#4fd1ff') };
 const matL = (col, top, op = 1) => new THREE.LineBasicMaterial({ color: col, depthTest: !top, transparent: true, opacity: op });
 export function initDraw() {
   sketchGroup = new THREE.Group(); view.scene.add(sketchGroup);
@@ -441,15 +462,18 @@ function renderSketches() {
         for (const e of s.ents) {
           if (e.t === 'dim') continue;
           const pl = SK.entPolyline(e);
-          const col = isAct ? (S.ed.drawSel.has(e.id) ? C.sel : fixedSet.has(e.id) ? C.line : C.free) : C.other;
-          sketchGroup.add(lineObj(pl.pts.map(p => SK.toW(s.plane, p)), matL(col, top, ws === 'model' ? 0.5 : 1), pl.closed));
+          const sel = isAct && S.ed.drawSel.has(e.id);
+          const col = isAct ? (sel ? C.sel : fixedSet.has(e.id) ? C.fixed : C.line) : C.other;
+          const obj = lineObj(pl.pts.map(p => SK.toW(s.plane, p)), sel ? new THREE.LineDashedMaterial({ color: col, depthTest: false, dashSize: 1, gapSize: 0.6 }) : matL(col, top, ws === 'model' ? 0.5 : 1), pl.closed);
+          if (sel) { obj.userData.dashed = true; obj.computeLineDistances(); }
+          sketchGroup.add(obj);
         }
         if (isAct) {
           // endpoints
           const pts = [];
-          for (const e of s.ents) for (const kp of SK.keyPoints(e)) if (kp.m || kp.center) pts.push(...SK.toW(s.plane, kp.p));
+          for (const e of s.ents) if (S.ed.drawSel.has(e.id)) for (const kp of SK.keyPoints(e)) if (kp.m || kp.center || kp.k === 'mid') pts.push(...SK.toW(s.plane, kp.p));
           const pg = new THREE.BufferGeometry(); pg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-          const pm = new THREE.Points(pg, new THREE.PointsMaterial({ color: 0xffffff, size: 3 * Math.min(devicePixelRatio, 2.5), sizeAttenuation: false, depthTest: false }));
+          const pm = new THREE.Points(pg, new THREE.PointsMaterial({ color: 0x2f7dff, size: 9 * Math.min(devicePixelRatio, 2.5), sizeAttenuation: false, depthTest: false }));
           pm.renderOrder = 5; sketchGroup.add(pm);
           // dims
           for (const d of s.ents) if (d.t === 'dim') { const g = dimGeom(s, d); if (g) sketchGroup.add(lineObj(g.pts.map(p => SK.toW(s.plane, p)), matL(0x4f8ff7, true, g.noLine ? 0.35 : 0.9))); }
@@ -461,6 +485,9 @@ function renderSketches() {
       }
     }
   }
+  // keep selection dashes a constant size on screen
+  const dash = act ? view.worldPerPixel(act.plane.o) * 6 : 1;
+  sketchGroup.traverse(o => { if (o.userData.dashed && Math.abs(o.material.dashSize - dash) > dash * 0.05) { o.material.dashSize = dash; o.material.gapSize = dash * 0.6; } });
   // per-frame labels for dims + preview
   st.dimLabels = [];
   if (ws === 'draw' && act) {
@@ -504,15 +531,232 @@ function drawPreview(s) {
     if (!st.arc || st.arc.r == null) { previewGroup.add(lineObj([W(c), W(p)], m)); view.label(W(p), `R ${fmtLen(SK.d2(c, p))}`, 'readout'); }
     else { let sw = ang(c, p) - st.arc.a0; sw = ((sw % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) || 2 * Math.PI; const pl = SK.entPolyline({ t: 'arc', c, r: st.arc.r, a0: st.arc.a0, a1: st.arc.a0 + sw }); previewGroup.add(lineObj(pl.pts.map(W), m)); view.label(W(p), fmtAng(sw / D), 'readout'); }
   }
-  if (st.dimA) { const q = SK.refPoint(s, st.dimA); if (q) previewGroup.add(marker(W(q), 0x4f8ff7)); }
-  if (p && st.snap && !['select', 'trim', 'dim'].includes(t)) {
-    previewGroup.add(marker(W(p), st.snap.kind && st.snap.kind !== 'Grid' ? 0xffe066 : 0x4fd1ff));
-    if (st.snap.kind && !from) view.label(W(p), st.snap.kind, '');
+  const c = st.cmd;
+  if (c && c.stage === 'second' && p && c.base && ['move', 'copy', 'rotate', 'scale', 'mirror'].includes(c.tool)) {
+    const b = c.base, ids = selIds();
+    const ghost = { ents: JSON.parse(JSON.stringify(s.ents.filter(e => ids.includes(e.id)))), cons: [], nextEnt: 1e6 };
+    const op = c.tool === 'move' || c.tool === 'copy' ? { kind: 'move', d: [p[0] - b[0], p[1] - b[1]] } : c.tool === 'rotate' ? { kind: 'rotate', c: b, deg: ang(b, p) / D } : c.tool === 'scale' ? { kind: 'scale', c: b, f: Math.max(1e-6, SK.d2(b, p)) } : { kind: 'mirror', a: b, b: p };
+    if (!(c.tool === 'mirror' && SK.d2(b, p) < 1e-9)) {
+      SK.transformEntities(ghost, ghost.ents.map(e => e.id), op);
+      for (const e of ghost.ents) { const pl = SK.entPolyline(e); if (pl) previewGroup.add(lineObj(pl.pts.map(W), m, pl.closed)); }
+    }
+    previewGroup.add(lineObj([W(b), W(p)], matL(C.prev, true, 0.5)));
+    const txt = c.tool === 'rotate' ? fmtAng(((ang(b, p) / D) + 360) % 360) : c.tool === 'scale' ? `× ${SK.d2(b, p).toFixed(4)}` : fmtLen(SK.d2(b, p));
+    view.label(W(p), txt, 'readout');
   }
-  if (st.grip && p) previewGroup.add(marker(W(p), 0xffe066));
+  if (c && c.tool === 'polygon' && c.stage === 'vertex' && p) {
+    const ghost = { ents: [], nextEnt: 1e6 }; SK.addPolygon(ghost, c.center, p, acad.polySides);
+    for (const e of ghost.ents) previewGroup.add(lineObj([W(e.a), W(e.b)], m));
+  }
+  if (st.dimA) { const q = SK.refPoint(s, st.dimA); if (q) previewGroup.add(marker(W(q), 0x4f8ff7)); }
+  if (p && st.snap && !['select', 'trim', 'dim', 'extend'].includes(t) && (!EDIT_TOOLS.has(t) || pointStage())) {
+    crosshair(s, p);
+    const k = st.snap.kind || '';
+    const f = fromPt();
+    if (/^\d/.test(k) && f) { // polar tracking ray
+      const L = view.worldPerPixel(W(p)) * 4000, d = [p[0] - f[0], p[1] - f[1]], l = Math.hypot(d[0], d[1]) || 1;
+      const ray = lineObj([W(f), W([f[0] + d[0] / l * L, f[1] + d[1] / l * L])], new THREE.LineDashedMaterial({ color: 0x8fd2ff, depthTest: false, dashSize: view.worldPerPixel(W(p)) * 5, gapSize: view.worldPerPixel(W(p)) * 4 }));
+      ray.computeLineDistances(); previewGroup.add(ray);
+    }
+    const name = OSNAP_NAME[k] || (/^\d/.test(k) && f ? `Polar: ${fmtLen(SK.d2(f, p))} < ${k}` : k === 'Ortho' ? 'Ortho' : '');
+    if (OSNAP_NAME[k]) previewGroup.add(osnapMarker(W(p), k, s));
+    if (name && (!f || OSNAP_NAME[k])) view.label(W(p), name, 'osnap');
+  }
+  if (st.grip && p) { previewGroup.add(osnapMarker(W(p), st.snap && OSNAP_NAME[st.snap.kind] ? st.snap.kind : 'End', s)); crosshair(s, p); }
+}
+const OSNAP_NAME = { End: 'Endpoint', Vertex: 'Endpoint', Mid: 'Midpoint', Center: 'Center', Int: 'Intersection', Quad: 'Quadrant', Origin: 'Origin' };
+// AutoCAD-style crosshair through the cursor, along the sketch axes
+function crosshair(s, p) {
+  const W = q => SK.toW(s.plane, q), L = view.worldPerPixel(W(p)) * 3000, b = view.worldPerPixel(W(p)) * 5;
+  const m = matL(0xffffff, true, 0.45);
+  previewGroup.add(lineObj([W([p[0] - L, p[1]]), W([p[0] + L, p[1]])], m), lineObj([W([p[0], p[1] - L]), W([p[0], p[1] + L])], m));
+  previewGroup.add(lineObj([W([p[0] - b, p[1] - b]), W([p[0] + b, p[1] - b]), W([p[0] + b, p[1] + b]), W([p[0] - b, p[1] + b])], matL(0xffffff, true, 0.9), true));
+}
+// marker glyphs: □ endpoint, △ midpoint, ○ center, ✕ intersection, ◇ quadrant
+function osnapMarker(w, kind, s) {
+  const k = view.worldPerPixel(w) * 9, u = s.plane.u, v = s.plane.v;
+  const P = (x, y) => new THREE.Vector3(w[0] + (u[0] * x + v[0] * y) * k, w[1] + (u[1] * x + v[1] * y) * k, w[2] + (u[2] * x + v[2] * y) * k);
+  let pts, segs = false;
+  if (kind === 'Mid') pts = [P(-1, -0.8), P(1, -0.8), P(0, 1)];
+  else if (kind === 'Center') { pts = []; for (let i = 0; i < 24; i++) pts.push(P(Math.cos(i / 24 * Math.PI * 2), Math.sin(i / 24 * Math.PI * 2))); }
+  else if (kind === 'Int') { pts = [P(-1, -1), P(1, 1), P(-1, 1), P(1, -1)]; segs = true; }
+  else if (kind === 'Quad') pts = [P(0, -1), P(1, 0), P(0, 1), P(-1, 0)];
+  else pts = [P(-1, -1), P(1, -1), P(1, 1), P(-1, 1)];
+  const g = new THREE.BufferGeometry().setFromPoints(pts), mat = new THREE.LineBasicMaterial({ color: 0xf2d50f, depthTest: false });
+  const o = segs ? new THREE.LineSegments(g, mat) : new THREE.LineLoop(g, mat);
+  o.renderOrder = 20; return o;
 }
 function marker(w, color) {
   const m = new THREE.Mesh(new THREE.RingGeometry(0.6, 1, 20), new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true }));
   m.position.set(...w); m.quaternion.copy(camera().quaternion); m.scale.setScalar(view.worldPerPixel(w) * 9); m.renderOrder = 20;
   return m;
+}
+
+
+// =====================================================================
+// AutoCAD-style commands: edit-command state machines, prompts, typed input
+// =====================================================================
+export const EDIT_TOOLS = new Set(['move', 'copy', 'rotate', 'scale', 'mirror', 'offset', 'erase', 'explode', 'polygon']);
+const SELECT_FIRST = new Set(['move', 'copy', 'rotate', 'scale', 'mirror', 'erase', 'explode']);
+export const acad = { offsetDist: null, polySides: 6, mirrorErase: false };
+function ensureCmd() {
+  if (st.cmd && st.cmd.tool === tool()) return st.cmd;
+  const t = tool();
+  st.cmd = { tool: t, stage: SELECT_FIRST.has(t) ? (S.ed.drawSel.size ? 'base' : 'select') : t === 'offset' ? 'distance' : t === 'polygon' ? 'sides' : 'base' };
+  if ((t === 'erase' || t === 'explode') && S.ed.drawSel.size) { runSelectionCommand(t); }
+  return st.cmd;
+}
+export function startCommand() { st.cmd = null; if (EDIT_TOOLS.has(tool())) ensureCmd(); emit('drawcard'); view.render(); }
+function pointStage() { const c = st.cmd; return c && ['base', 'second', 'center', 'vertex', 'first', 'side'].includes(c.stage); }
+function fromPt() {
+  if (st.start) return st.start;
+  if (tool() === 'arc' && st.arc) return st.arc.c;
+  const c = st.cmd; if (!c) return null;
+  if (c.stage === 'second') return c.base;
+  if (c.stage === 'vertex') return c.center;
+  return null;
+}
+export function lastPoint() { return fromPt() || st.last || [0, 0]; }
+const selIds = () => [...S.ed.drawSel];
+function xform(label, op, copy = false) {
+  const s = sk(), ids = selIds();
+  if (!ids.length) { toast('Nothing selected'); return; }
+  runOp(F.sketchOp(label, s.id, k => { const r = SK.transformEntities(k, ids, op, copy); if (typeof r === 'string') return r; if (!copy) S.ed.drawSel = new Set(r); }));
+}
+function runSelectionCommand(t) {
+  if (t === 'erase') { deleteSelected(); }
+  else {
+    const s = sk(), ids = selIds();
+    runOp(F.sketchOp('Explode', s.id, k => { let n = 0; for (const e of k.ents.filter(x => ids.includes(x.id) && x.t === 'rect')) { SK.explodeRect(k, e); n++; } if (!n) return 'Nothing to explode (rectangles become lines)'; S.ed.drawSel = new Set(); }));
+  }
+  st.cmd = null; S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection');
+}
+function cmdPoint(p) {
+  const c = ensureCmd(), t = c.tool;
+  if (t === 'polygon') {
+    if (c.stage === 'center') { c.center = p; c.stage = 'vertex'; }
+    else if (c.stage === 'vertex') {
+      const center = c.center, n = acad.polySides;
+      runOp(F.sketchOp(`Polygon (${n})`, sk().id, k => { const r = SK.addPolygon(k, center, p, n); if (typeof r === 'string') return r; }));
+      c.stage = 'center';
+    }
+    return;
+  }
+  if (t === 'offset') {
+    if (c.stage !== 'side') return;
+    const eid = c.ent, d = acad.offsetDist;
+    runOp(F.sketchOp('Offset', sk().id, k => { const e = SK.entById(k, eid); const r = SK.offsetEntity(k, e, d, p); if (typeof r === 'string') return r; }));
+    c.stage = 'pick';
+    return;
+  }
+  if (c.stage === 'base') { c.base = p; c.stage = 'second'; return; }
+  if (c.stage === 'second') {
+    const b = c.base;
+    if (t === 'move') { xform('Move', { kind: 'move', d: [p[0] - b[0], p[1] - b[1]] }); st.cmd = null; }
+    else if (t === 'copy') { xform('Copy', { kind: 'move', d: [p[0] - b[0], p[1] - b[1]] }, true); /* multiple copies until Enter */ }
+    else if (t === 'rotate') { xform('Rotate', { kind: 'rotate', c: b, deg: ang(b, p) / D }); st.cmd = null; }
+    else if (t === 'scale') { const f = SK.d2(b, p); if (f < 1e-9) return toast('Scale factor must be > 0'); xform('Scale', { kind: 'scale', c: b, f }); st.cmd = null; }
+    else if (t === 'mirror') { if (SK.d2(b, p) < 1e-9) return; xform('Mirror', { kind: 'mirror', a: b, b: p }, !acad.mirrorErase); st.cmd = null; }
+    if (!st.cmd) { S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); }
+  }
+}
+function cmdTap(s, raw, wpp) {
+  const c = ensureCmd();
+  if (c.stage === 'select') {
+    const e = SK.pickEntity(s, raw, 16 * wpp);
+    if (e) { S.ed.drawSel.has(e.id) ? S.ed.drawSel.delete(e.id) : S.ed.drawSel.add(e.id); emit('selection'); }
+    return;
+  }
+  if (c.tool === 'offset' && (c.stage === 'pick' || c.stage === 'distance')) {
+    if (acad.offsetDist == null) { toast('Type the offset distance first'); return; }
+    const e = SK.pickEntity(s, raw, 16 * wpp);
+    if (!e) return toast('Tap a line, circle, arc or rectangle');
+    c.ent = e.id; c.stage = 'side';
+    S.ed.drawSel = new Set([e.id]); emit('selection');
+  }
+}
+// Enter / Space in the command line, or the ⏎ button.
+export function enter() {
+  const t = tool(), c = st.cmd;
+  if (['line', 'rect', 'circle', 'arc', 'dim', 'trim', 'extend', 'corner'].includes(t)) { resetTool(); S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); return true; } // Enter ends the command
+  if (c && c.stage === 'select') {
+    if (!S.ed.drawSel.size) { toast('Select objects first'); return true; }
+    if (t === 'erase' || t === 'explode') { runSelectionCommand(t); return true; }
+    c.stage = 'base'; emit('drawcard'); return true;
+  }
+  if (c && (t === 'copy' || t === 'offset' || t === 'polygon') && ['second', 'pick', 'center'].includes(c.stage)) { resetTool(); S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); return true; }
+  if (st.start || st.arc || st.dimA || c) { resetTool(); return true; }
+  return false;
+}
+
+// ---------- typed input: x,y · @dx,dy · @d<a · d<a · a bare number ----------
+import { evalExpr } from './units.js';
+export function typed(raw) {
+  const str = raw.trim(); if (!str) return false;
+  const t = tool(), c = st.cmd;
+  const num = (x, kind = 'len') => evalExpr(x, kind);
+  // options
+  const up = str.toUpperCase();
+  if (t === 'line' && (up === 'C' || up === 'CLOSE') && st.chain.length > 2) { placeLine(st.start, st.chain[0]); emit('drawcard'); view.render(); return true; }
+  if (t === 'line' && (up === 'U' || up === 'UNDO') && st.chain.length > 1) { emit('undoRequest'); st.chain.pop(); st.start = st.chain[st.chain.length - 1]; if (st.chain.length < 2) st.chain = []; return true; }
+  if (t === 'mirror' && c && (up === 'Y' || up === 'N' || up === 'YES' || up === 'NO')) { acad.mirrorErase = up[0] === 'Y'; toast(`Erase source: ${acad.mirrorErase ? 'Yes' : 'No'}`); return true; }
+  if (t === 'corner' && (up === 'R' || up === 'RADIUS')) { return 'radius'; }
+  if (t === 'circle' && st.start && (up === 'D' || up === 'DIAMETER')) { st.typed.dia = true; toast('Type the diameter'); return true; }
+  try {
+    // coordinates
+    const m = str.match(/^(@)?\s*([^,<]+?)\s*([,<])\s*(.+)$/);
+    if (m) {
+      const rel = !!m[1], a = num(m[2]), base = rel ? lastPoint() : [0, 0];
+      const p = m[3] === ',' ? [base[0] + a, base[1] + num(m[4])] : [base[0] + a * ecos(num(m[4], 'ang')), base[1] + a * esin(num(m[4], 'ang'))];
+      st.preview = p; st.snap = { p, kind: '' };
+      commitPoint(p);
+      return true;
+    }
+    // a single value: meaning depends on the prompt
+    if (t === 'polygon' && c && c.stage === 'sides') { acad.polySides = Math.round(num(str, 'num')); c.stage = 'center'; emit('drawcard'); return true; }
+    if (t === 'offset' && c && (c.stage === 'distance' || c.stage === 'pick')) { acad.offsetDist = num(str); c.stage = 'pick'; emit('drawcard'); return true; }
+    if (t === 'corner') { corner.size = num(str); emit('drawcard'); return true; }
+    if (c && c.stage === 'second' && t === 'rotate') { xform('Rotate', { kind: 'rotate', c: c.base, deg: num(str, 'ang') }); st.cmd = null; S.ed.tool = 'select'; emit('selection'); return true; }
+    if (c && c.stage === 'second' && t === 'scale') { xform('Scale', { kind: 'scale', c: c.base, f: num(str, 'num') }); st.cmd = null; S.ed.tool = 'select'; emit('selection'); return true; }
+    if (t === 'circle' && st.start) { const v = num(str); placeCircle(st.start, st.typed.dia ? v / 2 : v); st.typed = {}; emit('drawcard'); view.render(); return true; }
+    if (t === 'arc' && st.arc && st.arc.r != null) { placeArc(st.arc.c, st.arc.r, st.arc.a0, num(str, 'ang')); emit('drawcard'); view.render(); return true; }
+    if (t === 'arc' && st.arc && st.arc.r == null) { st.arc.r = num(str); st.arc.a0 = st.preview ? ang(st.arc.c, st.preview) : 0; emit('drawcard'); view.render(); return true; }
+    // direct distance entry along the rubber band
+    const from = fromPt();
+    if (from) {
+      const d = num(str), pv = st.preview && SK.d2(st.preview, from) > 1e-12 ? st.preview : [from[0] + 1, from[1]];
+      const L = SK.d2(pv, from), p = [from[0] + (pv[0] - from[0]) / L * d, from[1] + (pv[1] - from[1]) / L * d];
+      const rp = [Math.round(p[0] * 1e9) / 1e9, Math.round(p[1] * 1e9) / 1e9];
+      st.preview = rp; commitPoint(rp);
+      return true;
+    }
+  } catch (err) { toast(err.message || 'Invalid input'); return true; }
+  return false;
+}
+
+// ---------- prompts (AutoCAD wording) ----------
+export function prompt() {
+  const t = tool(), c = st.cmd, o = [];
+  const name = { line: 'LINE', rect: 'RECTANG', circle: 'CIRCLE', arc: 'ARC', trim: 'TRIM', extend: 'EXTEND', dim: 'DIM', corner: corner.kind === 'fillet' ? 'FILLET' : 'CHAMFER', move: 'MOVE', copy: 'COPY', rotate: 'ROTATE', scale: 'SCALE', mirror: 'MIRROR', offset: 'OFFSET', erase: 'ERASE', explode: 'EXPLODE', polygon: 'POLYGON' }[t];
+  let txt;
+  if (!name) return { text: 'Command:', options: [] };
+  if (t === 'line') { txt = st.start ? 'Specify next point or' : 'Specify first point:'; if (st.start) { if (st.chain.length > 2) o.push(['Close', 'C']); if (st.chain.length > 1) o.push(['Undo', 'U']); } }
+  else if (t === 'rect') txt = st.start ? 'Specify other corner point (or @width,height):' : 'Specify first corner point:';
+  else if (t === 'circle') { txt = st.start ? 'Specify radius of circle or' : 'Specify center point for circle:'; if (st.start) o.push(['Diameter', 'D']); }
+  else if (t === 'arc') txt = !st.arc ? 'Specify center point of arc:' : st.arc.r == null ? 'Specify start point of arc:' : 'Specify end point of arc (CCW) or angle:';
+  else if (t === 'trim') txt = 'Select object to trim:';
+  else if (t === 'extend') txt = 'Select object to extend:';
+  else if (t === 'dim') txt = st.dimA ? 'Specify second extension line origin:' : 'Select first point, line, or circle:';
+  else if (t === 'corner') { txt = `Select corner (${corner.kind === 'fillet' ? 'radius' : 'distance'} = ${fmtLen(corner.size ?? defSize() / 10)}) or`; o.push([corner.kind === 'fillet' ? 'Radius' : 'Distance', 'R']); }
+  else {
+    const cc = c || { stage: SELECT_FIRST.has(t) ? (S.ed.drawSel.size ? 'base' : 'select') : t === 'offset' ? 'distance' : 'sides' };
+    if (cc.stage === 'select') txt = `Select objects (${S.ed.drawSel.size} found), then Enter:`;
+    else if (t === 'polygon') txt = cc.stage === 'sides' ? `Enter number of sides <${acad.polySides}>:` : cc.stage === 'center' ? 'Specify center of polygon:' : 'Specify radius (vertex point):';
+    else if (t === 'offset') txt = cc.stage === 'distance' ? `Specify offset distance${acad.offsetDist != null ? ` <${fmtLen(acad.offsetDist)}>` : ''}:` : cc.stage === 'pick' ? 'Select object to offset or Enter to exit:' : 'Specify point on side to offset:';
+    else if (t === 'mirror') { txt = cc.stage === 'base' ? 'Specify first point of mirror line:' : 'Specify second point of mirror line:'; o.push([`Erase source: ${acad.mirrorErase ? 'Yes' : 'No'}`, acad.mirrorErase ? 'N' : 'Y']); }
+    else if (cc.stage === 'base') txt = 'Specify base point:';
+    else txt = t === 'rotate' ? 'Specify rotation angle:' : t === 'scale' ? 'Specify scale factor:' : t === 'copy' ? 'Specify second point or Enter to exit:' : 'Specify second point:';
+  }
+  if (!o.length) txt = txt.replace(/ or$/, ':');
+  return { text: `${name} ${txt}`, options: o };
 }

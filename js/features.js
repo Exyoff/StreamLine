@@ -187,7 +187,8 @@ export const bodyBoolean = {
 };
 
 // ---------- 3D edge fillet / chamfer ----------
-import { edgeBlend } from './edges.js';
+import { edgeBlend, edgeFrame } from './edges.js';
+import { faceRegion, findRegion, regionCentroid, pushPull, shell, mirrorMesh } from './modifiers.js';
 export const edgeBlendOp = {
   label: p => (p.kind === 'fillet' ? 'Fillet' : 'Chamfer') + ` · ${p.edges.length} edge${p.edges.length === 1 ? '' : 's'}`,
   defaults: () => ({ kind: 'fillet', size: defSize() / 10, segs: 8 }),
@@ -198,8 +199,17 @@ export const edgeBlendOp = {
   },
   touch: p => ({ ids: p._objs, mesh: true }),
   fields: p => [lenF('size', p.kind === 'fillet' ? 'Radius' : 'Distance 1'), ...(p.kind === 'fillet' ? [{ key: 'segs', label: 'Segments / 90°', kind: 'int', min: 1, max: 64 }] : [lenF('size2', 'Distance 2'), { key: 'swap', label: 'Swap sides', kind: 'bool' }]), { key: 'kind', label: 'Type', kind: 'choice', options: [['fillet', 'Fillet'], ['chamfer', 'Chamfer']], wide: true }],
-  apply(p) {
+  apply(p, op) {
     if (!(p.size > 0)) return 'Size must be > 0';
+    // live drag handle (computed on the edge before it is rounded): from the edge midpoint, away from the corner
+    const e0 = p.edges[0], o0 = objById(e0.obj);
+    if (o0) {
+      const fr = edgeFrame(worldVerts(o0), o0.mesh.f, e0.a, e0.b);
+      if (typeof fr !== 'string') {
+        let dir = M.norm(M.add(fr.w1, fr.w2)); if (!fr.convex) dir = M.mul(dir, -1);
+        op.handle = { origin: M.mul(M.add(e0.a, e0.b), 0.5), dir: M.mul(dir, -1), key: 'size', min: 1e-6 };
+      }
+    }
     for (const id of p._objs) {
       const o = objById(id); if (!o) return 'Body missing';
       let W = worldVerts(o), faces = o.mesh.f;
@@ -219,3 +229,92 @@ export const edgeBlendOp = {
     S.ed.edges = [];
   },
 };
+
+// ---------- Plasticity-style face modifiers (Model workspace) ----------
+// face selections: [{obj, n, w, p}] — a plane and a point, re-found after every operation
+function resolveFaces(list) {
+  const out = [];
+  for (const f of list) {
+    const o = objById(f.obj); if (!o) return 'Body missing';
+    const W = worldVerts(o), reg = findRegion(W, o.mesh.f, f.n, f.w, f.p);
+    if (!reg) return 'Selected face no longer exists';
+    out.push({ o, W, reg });
+  }
+  return out;
+}
+function setBody(o, m) {
+  const xf = xfFor(o);
+  o.mesh = new M.PolyMesh(m.v.map(xf.toL), m.f);
+  if (o.scl.filter(s => s < 0).length % 2) o.mesh.f.forEach(f => f.reverse());
+}
+export const pushPullOp = {
+  label: () => 'Push/Pull',
+  defaults: () => ({ dist: defSize() / 4 }),
+  prepare(p) { p.faces ??= JSON.parse(JSON.stringify(S.ed.faces || [])); if (!p.faces.length) return 'Select a face (Face mode)'; p._objs = [...new Set(p.faces.map(f => f.obj))]; },
+  touch: p => ({ ids: p._objs, mesh: true }),
+  fields: () => [lenF('dist', 'Distance')],
+  apply(p, op) {
+    if (Math.abs(p.dist) < 1e-9) return 'Distance must not be zero';
+    const first = resolveFaces([p.faces[0]]); if (typeof first === 'string') return first;
+    const c0 = regionCentroid(first[0].W, first[0].o.mesh.f, first[0].reg);
+    for (const f of p.faces) {
+      const r = resolveFaces([f]); if (typeof r === 'string') return r;
+      const { o, W, reg } = r[0];
+      const m = pushPull(W, o.mesh.f, reg, p.dist); if (typeof m === 'string') return m;
+      setBody(o, m);
+    }
+    // keep the selection on the moved face
+    S.ed.faces = p.faces.map(f => ({ ...f, w: f.w + p.dist, p: M.add(f.p, M.mul(f.n, p.dist)) }));
+    op.handle = { origin: c0, dir: p.faces[0].n, key: 'dist' };
+  },
+};
+export const shellOp = {
+  label: () => 'Shell',
+  defaults: () => ({ t: defSize() / 20 }),
+  prepare(p) {
+    p.faces ??= JSON.parse(JSON.stringify(S.ed.faces || []));
+    p.obj ??= p.faces[0]?.obj ?? selectedObjs()[0]?.id;
+    if (p.obj == null) return 'Select a body, or the faces to open';
+    p.faces = p.faces.filter(f => f.obj === p.obj);
+  },
+  touch: p => ({ ids: [p.obj], mesh: true }),
+  fields: () => [lenF('t', 'Thickness')],
+  apply(p, op) {
+    const o = objById(p.obj); if (!o) return 'Body missing';
+    const r = resolveFaces(p.faces); if (typeof r === 'string') return r;
+    const W = worldVerts(o);
+    const c0 = r.length ? regionCentroid(r[0].W, o.mesh.f, r[0].reg) : null;
+    const m = shell(W, o.mesh.f, r.map(x => x.reg), p.t); if (typeof m === 'string') return m;
+    setBody(o, m);
+    S.ed.faces = [];
+    if (c0) op.handle = { origin: c0, dir: M.mul(p.faces[0].n, -1), key: 't', min: 1e-6 };
+  },
+};
+export const mirrorOp = {
+  label: () => 'Mirror',
+  defaults: () => ({ plane: 'x', fuse: true }),
+  prepare(p) {
+    p.obj ??= S.ed.faces[0]?.obj ?? selectedObjs()[0]?.id;
+    if (p.obj == null) return 'Select a body';
+    if (S.ed.faces.length && !p.face) { p.face = JSON.parse(JSON.stringify(S.ed.faces[0])); p.plane = 'face'; }
+    p._id ??= S.doc.nextId;
+  },
+  touch: p => ({ ids: [p.obj], mesh: true }),
+  fields: p => [{ key: 'plane', label: 'Mirror plane', kind: 'choice', options: [['x', 'YZ'], ['y', 'XZ'], ['z', 'XY'], ...(p.face ? [['face', 'Face']] : [])], wide: true }, { key: 'fuse', label: 'Union with original', kind: 'bool' }],
+  apply(p) {
+    const o = objById(p.obj); if (!o) return 'Body missing';
+    const W = worldVerts(o);
+    let n, w;
+    if (p.plane === 'face' && p.face) { n = p.face.n; w = p.face.w; }
+    else { n = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }[p.plane]; w = 0; }
+    const m = mirrorMesh(W, o.mesh.f, n, w, p.fuse); if (typeof m === 'string') return m;
+    if (p.fuse) setBody(o, m);
+    else {
+      const c = newObject(o.name, m, [0, 0, 0], p._id); c.color = o.color;
+      const anchor = M.centroid(m.v); c.loc = anchor; c.mesh.v = m.v.map(v => M.sub(v, anchor));
+      S.doc.objects.push(c); S.ed.selected = new Set([c.id]); S.ed.active = c.id;
+    }
+    S.ed.faces = [];
+  },
+};
+export { faceRegion };

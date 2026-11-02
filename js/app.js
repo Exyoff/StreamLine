@@ -14,6 +14,8 @@ import * as IO from './io.js';
 import * as SK from './sketch.js';
 import * as F from './features.js';
 import * as Draw from './draw.js';
+import * as Cmd from './cmdline.js';
+import { findRegion, faceRegion } from './modifiers.js';
 import { featureEdges, straightRun } from './edges.js';
 
 const DOC_KEY = 'streamline.doc.v1';
@@ -29,6 +31,7 @@ function boot() {
   initGizmo();
   Draw.initDraw();
   routeDrag();
+  Cmd.initCmdline({ setTool, setWorkspace, runOp, undo, redo, F, refresh: () => refresh(), zoomAll: () => view.frame(S.doc.objects.flatMap(worldVerts).concat(sketchPoints())), exportDXF: () => exportDXF() });
   initMeasureOverlay();
   buildStatic();
   if (!loadAutosave()) defaultScene();
@@ -70,8 +73,9 @@ function enterSketchView(sk, instant) {
   view.cam.lock2D = true;
   view.lookAlong(sk.plane.n, sk.plane.o);
 }
-function setWorkspace(ws) {
-  if (ws === S.ed.workspace && !(ws === 'draw' && !SK.activeSketch())) return;
+function setWorkspace(ws, pick) {
+  if (pick) { S.ed.pick = pick; S.ed.faces = []; S.ed.edges = []; }
+  if (ws === S.ed.workspace && !(ws === 'draw' && !SK.activeSketch())) { if (pick) selectionChanged(); return; }
   const prev = S.ed.workspace;
   if (S.ed.mode === 'edit') { S.ed.mode = 'object'; S.ed.editSel = new Set(); }
   S.ed.tools[prev] = S.ed.tool;
@@ -145,6 +149,18 @@ function edgeTap(x, y) {
   else S.ed.edges = [{ obj: best.o.id, a, b }];
   selectionChanged();
 }
+// Plasticity-style face pick: a tap selects the whole planar face (all coplanar connected polygons)
+function faceTap(x, y) {
+  const hit = view.pickObject(x, y);
+  if (!hit || hit.face < 0) { if (!S.ed.multi) S.ed.faces = []; return selectionChanged(); }
+  const o = objById(hit.id), W = worldVerts(o), reg = faceRegion(W, o.mesh.f, hit.face);
+  const same = q => q.obj === o.id && M.dot(q.n, reg.n) > 1 - 1e-9 && Math.abs(q.w - reg.w) < 1e-6 && (() => { const r2 = findRegion(W, o.mesh.f, q.n, q.w, q.p); return r2 && r2.faces.includes(hit.face); })();
+  const i = S.ed.faces.findIndex(same);
+  if (i >= 0) S.ed.faces.splice(i, 1);
+  else { const item = { obj: o.id, n: reg.n, w: reg.w, p: hit.point }; if (S.ed.multi) S.ed.faces.push(item); else S.ed.faces = [item]; }
+  S.ed.selected = new Set([o.id]); S.ed.active = o.id;
+  selectionChanged();
+}
 function cadTap(x, y) {
   if (S.ed.tool === 'edge') return edgeTap(x, y);
   const ray = view.ray(x, y).ray;
@@ -184,12 +200,20 @@ function scheduleSave() {
 // =====================================================================
 function selectionChanged() { clearLast(); view.markSelDirty(); refresh(); }
 
+let lastViewportTap = 0;
+// iOS fires a click ~300 ms after a tap; if a panel appeared under the finger it must not receive it
+document.addEventListener('click', e => {
+  if (performance.now() - lastViewportTap < 450 && e.target.closest && e.target.closest('#draw-card, #lastop, #measure-card, #popover, #sheet, #actions, #tools')) { e.stopPropagation(); e.preventDefault(); }
+}, true);
 function onTap(x, y) {
+  lastViewportTap = performance.now();
   if (keypadOpen()) { closeKeypad(false); return; }
   if (S.ed.pickFace) return facePickTap(x, y);
   if (S.ed.tool === 'measure') return measureTap(x, y);
   if (S.ed.workspace === 'draw') return Draw.tap(x, y);
   if (S.ed.workspace === 'cad') return cadTap(x, y);
+  if (S.ed.mode === 'object' && S.ed.pick === 'edge') return edgeTap(x, y);
+  if (S.ed.mode === 'object' && S.ed.pick === 'face') return faceTap(x, y);
   if (S.ed.mode === 'object') {
     const hit = view.pickObject(x, y);
     if (hit) {
@@ -251,6 +275,7 @@ function selectAllToggle() {
   }
   selectionChanged();
 }
+function acadTool(t) { setTool(t); Draw.startCommand(); refresh(); }
 function setTool(t) {
   S.ed.tool = t; S.ed.tools[S.ed.workspace] = t;
   Draw.resetTool();
@@ -262,10 +287,26 @@ function setTool(t) {
 // =====================================================================
 // measure tool
 // =====================================================================
-let measureGroup, measureKey = '', edgeGroup;
+let measureGroup, measureKey = '', edgeGroup, faceGroup, faceKey = '';
+function drawFaceHighlights() {
+  const key = S.ed.workspace === 'model' ? JSON.stringify(S.ed.faces) + '|' + S.doc.objects.map(o => o.mesh.f.length).join() : '';
+  if (key === faceKey && faceGroup.userData.objs === S.doc.objects) return;
+  faceKey = key; faceGroup.userData.objs = S.doc.objects;
+  faceGroup.traverse(o => o.geometry && o.geometry.dispose()); faceGroup.clear();
+  if (S.ed.workspace !== 'model') return;
+  for (const f of S.ed.faces) {
+    const o = objById(f.obj); if (!o) continue;
+    const W = worldVerts(o), reg = findRegion(W, o.mesh.f, f.n, f.w, f.p); if (!reg) continue;
+    const pos = [];
+    for (const fi of reg.faces) { const P = o.mesh.f[fi].map(i => M.add(W[i], M.mul(f.n, 0.004))); for (const t of M.triangulateFace(P)) for (const k of t) pos.push(...P[k]); }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    faceGroup.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0xffa230, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 })));
+  }
+}
 function initMeasureOverlay() {
   measureGroup = new THREE.Group(); view.overlayScene.add(measureGroup);
   edgeGroup = new THREE.Group(); view.overlayScene.add(edgeGroup);
+  faceGroup = new THREE.Group(); view.scene.add(faceGroup);
   view.renderHooks.push(drawOverlays);
 }
 function measureTap(x, y) {
@@ -309,8 +350,9 @@ function drawOverlays() {
   if (pts.length === 2) view.label(M.mul(M.add(pts[0].p, pts[1].p), 0.5), fmtLen(M.dist(pts[0].p, pts[1].p)), 'dim');
 
   // selected body edges (CAD)
+  drawFaceHighlights();
   edgeGroup.clear();
-  if (S.ed.workspace === 'cad' && S.ed.edges.length) {
+  if ((S.ed.workspace === 'cad' || S.ed.workspace === 'model') && S.ed.edges.length) {
     const mat = new THREE.LineBasicMaterial({ color: 0xff9a1f, depthTest: false });
     for (const e of S.ed.edges) {
       edgeGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...e.a), new THREE.Vector3(...e.b)]), mat));
@@ -380,7 +422,9 @@ function bindEvents() {
   on('dirty', scheduleSave);
   on('toast', m => toast(m));
   on('viewchange', () => renderViewButtons());
-  on('drawcard', () => renderDrawCard());
+  on('drawcard', () => { renderDrawCard(); Cmd.render(); });
+  on('cmd', () => refresh());
+  on('undoRequest', () => undo());
   on('selection', () => selectionChanged());
   on('change', ({ reason } = {}) => { if (reason === 'undo' || reason === 'redo') { Draw.resetTool(); if (S.ed.workspace === 'draw') view.cam.lock2D = true; } });
   on('gestureUndo', () => { undo(); toast('Undo'); });
@@ -392,6 +436,11 @@ function bindEvents() {
 let refreshQueued = false;
 function refreshSoon() { if (!refreshQueued) { refreshQueued = true; requestAnimationFrame(() => { refreshQueued = false; refresh(); }); } }
 function refresh() {
+  document.body.classList.toggle('ws-model', S.ed.workspace === 'model');
+  document.body.classList.toggle('ws-draw', S.ed.workspace === 'draw');
+  document.body.classList.toggle('ws-cad', S.ed.workspace === 'cad');
+  view.bg = S.ed.workspace === 'model' ? 0x1d1e22 : 0x212830; // Plasticity-dark vs AutoCAD model space
+  Cmd.render();
   renderTop(); renderTools(); renderActions(); renderHud(); renderDrawCard(); renderLastOp(); renderMeasureCard(); renderViewButtons();
   if (sheetOpen && !gizmoActive()) renderSheet();
   view.render();
@@ -414,15 +463,24 @@ function renderViewButtons() {
 function act(icon, label, fn, cls = '') { return h('button', { class: 'act ' + cls, onclick: fn }, h('span', { html: icon }), h('span', {}, label)); }
 function renderActions() {
   const row = $('#actions');
-  const key = S.ed.workspace + S.ed.mode + S.ed.selectMode;
+  const key = S.ed.workspace + S.ed.mode + S.ed.selectMode + S.ed.pick;
   if (row.dataset.k === key) return;
   row.dataset.k = key;
   if (S.ed.workspace === 'draw') {
     row.replaceChildren(
-      act(I.sketch, 'Sketch', e => openSketchMenu(e.currentTarget), 'primary'),
       act(I.constrain, 'Constrain', e => openConstrainMenu(e.currentTarget)),
+      act(I.sketch, 'Sketch', e => openSketchMenu(e.currentTarget)),
+      act(I.move, 'Move', () => acadTool('move')),
+      act(I.dup, 'Copy', () => acadTool('copy')),
+      act(I.rotate, 'Rotate', () => acadTool('rotate')),
+      act(I.flip, 'Mirror', () => acadTool('mirror')),
+      act(I.scale, 'Scale', () => acadTool('scale')),
+      act(I.inset, 'Offset', () => acadTool('offset')),
+      act(I.next, 'Extend', () => acadTool('extend')),
+      act(I.cube, 'Polygon', () => acadTool('polygon')),
+      act(I.array, 'Explode', () => acadTool('explode')),
+      act(I.trash, 'Erase', () => acadTool('erase'), 'danger'),
       act(I.face, 'On face', () => startFacePick()),
-      act(I.trash, 'Delete', () => Draw.deleteSelected(), 'danger'),
       act(I.save, 'DXF', () => exportDXF()),
       act(I.next, 'To CAD', () => setWorkspace('cad')),
     );
@@ -443,12 +501,19 @@ function renderActions() {
     );
     return;
   }
+  const pickNow = S.ed.mode === 'edit' ? 'mesh' : S.ed.pick || 'solid';
   const modeSeg = h('div', { class: 'ctxseg' },
-    h('div', { class: 'seg' }, ...[['object', 'Obj'], ['edit', 'Edit']].map(([m, l]) => h('button', { class: S.ed.mode === m ? 'on' : '', onclick: () => setMode(m) }, l))),
+    h('div', { class: 'seg' }, ...[['solid', 'Solid'], ['face', 'Face'], ['edge', 'Edge'], ['mesh', 'Mesh']].map(([m, l]) => h('button', { class: pickNow === m ? 'on' : '', onclick: () => setPick(m) }, l))),
     S.ed.mode === 'edit' ? h('div', { class: 'seg icons' }, ...['vert', 'edge', 'face'].map(sm => h('button', { class: S.ed.selectMode === sm ? 'on' : '', 'aria-label': sm, html: I[sm], onclick: () => setSelectMode(sm) }))) : null);
   if (S.ed.mode === 'object') {
     row.replaceChildren(modeSeg,
-      act(I.plus, 'Add', e => openAddMenu(e.currentTarget), 'primary'),
+      act(I.fillet, 'Fillet', () => modifier('fillet'), 'primary'),
+      act(I.chamfer, 'Chamfer', () => modifier('chamfer')),
+      act(I.extrude, 'Push/Pull', () => modifier('pushpull')),
+      act(I.inset, 'Shell', () => modifier('shell')),
+      act(I.flip, 'Mirror', () => modifier('mirror')),
+      act(I.union, 'Boolean', e => openBoolMenu(e.currentTarget)),
+      act(I.plus, 'Add', e => openAddMenu(e.currentTarget)),
       act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; toast('Duplicated — drag the gizmo or type an offset'); refresh(); } }),
       act(I.array, 'Array', () => runOp(OPS.arrayOp)),
       act(I.join, 'Join', () => runOp(OPS.joinObjs)),
@@ -471,6 +536,30 @@ function renderActions() {
   }
   row.scrollLeft = 0;
 }
+function setPick(m) {
+  if (m === 'mesh') { S.ed.faces = []; S.ed.edges = []; setMode('edit'); return; }
+  if (S.ed.mode === 'edit') setMode('object');
+  S.ed.pick = m; S.ed.faces = []; S.ed.edges = [];
+  if (m !== 'solid' && ['move', 'rotate', 'scale'].includes(S.ed.tool)) S.ed.tool = 'select';
+  selectionChanged();
+}
+// Plasticity-style modifiers: if the needed selection is missing, switch to that selection mode
+function modifier(kind) {
+  if (kind === 'fillet' || kind === 'chamfer') {
+    if (!S.ed.edges.length) { setPick('edge'); toast(`Tap edges, then ${kind === 'fillet' ? 'Fillet' : 'Chamfer'}`); return; }
+    return runOp(F.edgeBlendOp, { kind });
+  }
+  if (kind === 'pushpull') { if (!S.ed.faces.length) { setPick('face'); toast('Tap a face, then Push/Pull'); return; } return runOp(F.pushPullOp); }
+  if (kind === 'shell') { if (!S.ed.faces.length && !S.ed.selected.size) { setPick('face'); toast('Tap the face(s) to open, then Shell'); return; } return runOp(F.shellOp); }
+  if (kind === 'mirror') return runOp(F.mirrorOp);
+}
+function openBoolMenu(anchor) {
+  popover(anchor, h('div', {}, h('div', { class: 'mtitle' }, 'Boolean · first selected is the target'),
+    menuItem(I.union, 'Union', () => runOp(F.bodyBoolean, { kind: 'union' })),
+    menuItem(I.subtract, 'Subtract', () => runOp(F.bodyBoolean, { kind: 'subtract' })),
+    menuItem(I.intersect, 'Intersect', () => runOp(F.bodyBoolean, { kind: 'intersect' }))), { above: true });
+}
+function sketchPoints() { const sk = SK.activeSketch(); return sk && S.ed.workspace === 'draw' ? sk.ents.flatMap(e => SK.keyPoints(e).map(k => SK.toW(sk.plane, k.p))) : []; }
 function runFill() {
   const o = activeObj(); if (!o) return;
   const xf = xfFor(o), vd = view.viewDir();
@@ -493,6 +582,12 @@ function renderHud() {
     const t = selectedObjs();
     parts.push(`<b>CAD</b> · ${S.ed.profiles.length} profile${S.ed.profiles.length === 1 ? '' : 's'} · ${S.ed.edges.length} edge${S.ed.edges.length === 1 ? '' : 's'} · ${t.length ? esc(t.map(x => x.name).join(', ')) : 'no body'}`);
     parts.push(S.ed.pickFace ? '<b>Tap a face…</b>' : S.ed.tool === 'edge' ? 'Tap edges, then Fillet or Chamfer' : 'Tap regions to pick profiles, bodies to target');
+    $('#hud').innerHTML = parts.join('<br>');
+    return;
+  }
+  if (S.ed.workspace === 'model' && S.ed.mode === 'object' && S.ed.pick !== 'solid') {
+    parts.push(`<b>${S.ed.pick === 'face' ? 'Face' : 'Edge'} select</b> · ${S.ed.pick === 'face' ? S.ed.faces.length + ' face' + (S.ed.faces.length === 1 ? '' : 's') : S.ed.edges.length + ' edge' + (S.ed.edges.length === 1 ? '' : 's')}`);
+    parts.push(S.ed.pick === 'face' ? 'Push/Pull · Shell · Mirror' : 'Fillet · Chamfer');
     $('#hud').innerHTML = parts.join('<br>');
     return;
   }
@@ -863,15 +958,17 @@ function onKey(e) {
     if (n === '5') { view.toggleOrtho(); return; }
     if (n === 'Decimal') { $('#btn-frame').click(); return; }
   }
-  if (S.ed.workspace === 'draw') {
-    const dm = { q: 'select', l: 'line', r: 'rect', c: 'circle', a: 'arc', t: 'trim', d: 'dim', f: 'corner' };
-    const cm = { h: 'h', v: 'v', p: 'par', o: 'perp', e: 'eq', g: 'tan' };
-    if (e.shiftKey && cm[k]) { Draw.constrain(cm[k]); return; }
-    if (dm[k]) { setTool(dm[k]); return; }
-    if (k === 'escape' || k === 'enter') { Draw.resetTool(); return; }
-    if (k === 'delete' || k === 'backspace' || k === 'x') { Draw.deleteSelected(); return; }
+  if (S.ed.workspace === 'draw' || S.ed.workspace === 'cad') {
+    // AutoCAD: typing anywhere goes to the command line
+    if ((k === 'delete' || k === 'backspace') && S.ed.workspace === 'draw') { Draw.deleteSelected(); return; }
+    if (Cmd.key(e)) return;
   }
-  if (S.ed.workspace === 'cad' && k === 'e') { runOp(F.extrude); return; }
+  if (S.ed.workspace === 'model' && S.ed.mode === 'object') {
+    const pm = { '2': 'edge', '3': 'face', '4': 'solid' };
+    if (pm[k]) { setPick(pm[k]); return; }
+    const mm = { f: 'fillet', c: 'chamfer', o: 'pushpull', h: 'shell', m: 'mirror' };
+    if (mm[k] && !e.shiftKey) { modifier(mm[k]); return; }
+  }
   if (k === 'tab') { e.preventDefault(); if (S.ed.workspace !== 'model') setWorkspace('model'); setMode(S.ed.mode === 'edit' ? 'object' : 'edit'); return; }
   if (S.ed.mode === 'edit' && ['1', '2', '3'].includes(k)) { setSelectMode(['vert', 'edge', 'face'][+k - 1]); return; }
   if (k === 'escape') { if (getLast() && getLast().handle) clearLast(); closePopover(); toggleSheet(false); return; }
@@ -894,4 +991,4 @@ function onKey(e) {
 
 boot();
 // console/debug access
-window.StreamLine = { S, view, OPS, F, SK, Draw, runOp, undo, redo, getLast, M, serialize, setWorkspace };
+window.StreamLine = { S, view, OPS, F, SK, Draw, Cmd, runOp, undo, redo, getLast, M, serialize, setWorkspace };

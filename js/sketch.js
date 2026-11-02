@@ -112,7 +112,7 @@ function segInter(p, p2, q, q2) {
 }
 
 // ---------- exact analytic intersections ----------
-function prims(e) {
+export function prims(e) {
   if (e.t === 'line') return [{ L: 1, a: e.a, b: e.b }];
   if (e.t === 'rect') { const c = rectCorners(e); return [0, 1, 2, 3].map(i => ({ L: 1, a: c[i], b: c[(i + 1) % 4] })); }
   if (e.t === 'circle') return [{ C: 1, c: e.c, r: e.r }];
@@ -120,7 +120,7 @@ function prims(e) {
   return [];
 }
 const onArc = (q, p) => { if (q.sw == null) return true; let a = Math.atan2(p[1] - q.c[1], p[0] - q.c[0]) - q.a0; a = ((a % TAU) + TAU) % TAU; return a <= q.sw + 1e-9 || a >= TAU - 1e-9; };
-function interPrims(P, Q) {
+export function interPrims(P, Q) {
   const out = [];
   if (P.L && Q.L) { const r = segInter(P.a, P.b, Q.a, Q.b); if (r) out.push(r.p); }
   else if (P.C && Q.C) {
@@ -292,15 +292,24 @@ export function snapPoint(sk, raw, opts) {
   const tol = pxTol * wpp;
   let best = null;
   const consider = (p, kind, rank, ref) => { if (exclude && d2(p, exclude) < 1e-9) return; const d = d2(p, raw); if (d <= tol && (!best || rank < best.rank || (rank === best.rank && d < best.d))) best = { p: p.slice(), kind, rank, d, ref }; };
-  for (const e of sk.ents) {
+  const osnap = opts.osnap !== false;
+  if (osnap) for (const e of sk.ents) {
     if (e.t === 'dim') continue;
     for (const kp of keyPoints(e)) consider(kp.p, kp.center ? 'Center' : kp.k === 'mid' ? 'Mid' : kp.k[0] === 'q' ? 'Quad' : 'End', kp.k === 'mid' || kp.k[0] === 'q' ? 2 : 0, kp.m ? { e: e.id, k: kp.k } : null);
   }
-  for (const p of intersections(sk)) consider(p, 'Int', 1);
-  for (const p of refPts) consider(p, 'Vertex', 0);
-  consider([0, 0], 'Origin', 0);
+  if (osnap) {
+    for (const p of intersections(sk)) consider(p, 'Int', 1);
+    for (const p of refPts) consider(p, 'Vertex', 0);
+    consider([0, 0], 'Origin', 0);
+  }
   if (best) return best;
-  if (from) {
+  if (from && opts.ortho) {
+    const dx = raw[0] - from[0], dy = raw[1] - from[1];
+    let l = Math.abs(dx) >= Math.abs(dy) ? dx : dy;
+    if (S.settings.snap) l = Math.round(l / S.settings.snapStep) * S.settings.snapStep;
+    return Math.abs(dx) >= Math.abs(dy) ? { p: [from[0] + l, from[1]], kind: 'Ortho' } : { p: [from[0], from[1] + l], kind: 'Ortho' };
+  }
+  if (from && opts.polar !== false) {
     // polar tracking
     const dx = raw[0] - from[0], dy = raw[1] - from[1], L = Math.hypot(dx, dy);
     if (L > tol) {
@@ -457,3 +466,112 @@ export function cornerOp(sk, p, tol, r, kind) {
 }
 const sub2 = (a, b) => [a[0] - b[0], a[1] - b[1]];
 const norm2 = a => { const l = Math.hypot(a[0], a[1]) || 1; return [a[0] / l, a[1] / l]; };
+
+
+// ---------- AutoCAD-style edit commands ----------
+const isQuarter = (deg, step = 90) => { const r = ((deg % step) + step) % step; return r < 1e-9 || step - r < 1e-9; };
+const rot = (p, c, a) => { const co = ecos(a), si = esin(a), x = p[0] - c[0], y = p[1] - c[1]; return [c[0] + x * co - y * si, c[1] + x * si + y * co]; };
+const refl = (p, A, B) => {
+  const dx = B[0] - A[0], dy = B[1] - A[1], L2 = dx * dx + dy * dy, t = ((p[0] - A[0]) * dx + (p[1] - A[1]) * dy) / L2;
+  const fx = A[0] + dx * t, fy = A[1] + dy * t; return [2 * fx - p[0], 2 * fy - p[1]];
+};
+const clean = v => { const q = Math.round(v * 1e9) / 1e9; return Math.abs(v - q) < 1e-11 ? (q === 0 ? 0 : q) : v; };
+const cp = p => [clean(p[0]), clean(p[1])];
+function rectFromCorners(e, pts) {
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  e.x = clean(Math.min(...xs)); e.y = clean(Math.min(...ys)); e.w = clean(Math.max(...xs) - e.x); e.h = clean(Math.max(...ys) - e.y);
+}
+// op: {kind:'move', d} | {kind:'rotate', c, deg} | {kind:'scale', c, f} | {kind:'mirror', a, b}
+// Returns the ids of the transformed (or newly copied) entities.
+export function transformEntities(sk, ids, op, copy = false) {
+  const nid = () => (sk.nextEnt = (sk.nextEnt || 1000) + 1);
+  let targets = sk.ents.filter(e => ids.includes(e.id) && e.t !== 'dim');
+  if (op.kind === 'scale' && !(op.f > 0)) return 'Scale factor must be > 0';
+  if (copy) { targets = targets.map(e => { const c = JSON.parse(JSON.stringify(e)); c.id = nid(); sk.ents.push(c); return c; }); }
+  // rectangles that would stop being axis-aligned become lines
+  const needLines = e => e.t === 'rect' && ((op.kind === 'rotate' && !isQuarter(op.deg)) || (op.kind === 'mirror' && !isQuarter(Math.atan2(op.b[1] - op.a[1], op.b[0] - op.a[0]) * 180 / Math.PI, 45)));
+  targets = targets.flatMap(e => (needLines(e) ? explodeRect(sk, e) : [e]));
+  const P = op.kind === 'move' ? p => [p[0] + op.d[0], p[1] + op.d[1]]
+    : op.kind === 'rotate' ? p => rot(p, op.c, op.deg * Math.PI / 180)
+      : op.kind === 'scale' ? p => [op.c[0] + (p[0] - op.c[0]) * op.f, op.c[1] + (p[1] - op.c[1]) * op.f]
+        : p => refl(p, op.a, op.b);
+  for (const e of targets) {
+    if (e.t === 'line') { e.a = cp(P(e.a)); e.b = cp(P(e.b)); }
+    else if (e.t === 'rect') rectFromCorners(e, rectCorners(e).map(P));
+    else if (e.t === 'circle' || e.t === 'arc') {
+      e.c = cp(P(e.c));
+      if (op.kind === 'scale') e.r = clean(e.r * op.f);
+      if (e.t === 'arc') {
+        const sw = sweep(e);
+        if (op.kind === 'rotate') { e.a0 += op.deg * Math.PI / 180; e.a1 = e.a0 + sw; }
+        else if (op.kind === 'mirror') { const phi = Math.atan2(op.b[1] - op.a[1], op.b[0] - op.a[0]); const a0 = 2 * phi - (e.a0 + sw); e.a0 = a0; e.a1 = a0 + sw; }
+      }
+    }
+  }
+  const tid = new Set(targets.map(e => e.id));
+  if (!copy) {
+    // orientation constraints no longer hold after rotate / mirror; fixes never hold after a transform
+    sk.cons = (sk.cons || []).filter(c => !(tid.has(c.a) || tid.has(c.b)) || !(c.t === 'fix' || ((op.kind === 'rotate' || op.kind === 'mirror') && (c.t === 'h' || c.t === 'v'))));
+    // dimensions on moved geometry now measure what is drawn
+    for (const d of sk.ents) if (d.t === 'dim' && d.value != null) {
+      const touches = d.kind === 'lin' ? tid.has(d.A.e) || tid.has(d.B.e) : d.kind === 'ang' ? tid.has(d.la) || tid.has(d.lb) : tid.has(d.e);
+      if (touches) d.value = d.kind === 'ang' ? lineAngle(sk, d) : dimValue(sk, d);
+    }
+  }
+  return [...tid];
+}
+
+// AutoCAD OFFSET: a parallel copy of e at distance d on the side of point `side`.
+export function offsetEntity(sk, e, d, side) {
+  const nid = () => (sk.nextEnt = (sk.nextEnt || 1000) + 1);
+  let n = null;
+  if (e.t === 'line') {
+    const dx = e.b[0] - e.a[0], dy = e.b[1] - e.a[1], L = Math.hypot(dx, dy);
+    if (L < 1e-12) return 'Zero-length line';
+    const nx = -dy / L, ny = dx / L, s = Math.sign((side[0] - e.a[0]) * nx + (side[1] - e.a[1]) * ny) || 1;
+    n = { t: 'line', a: cp([e.a[0] + nx * d * s, e.a[1] + ny * d * s]), b: cp([e.b[0] + nx * d * s, e.b[1] + ny * d * s]) };
+  } else if (e.t === 'circle' || e.t === 'arc') {
+    const r = d2(side, e.c) < e.r ? e.r - d : e.r + d;
+    if (r <= 1e-9) return 'Offset distance is larger than the radius';
+    n = { ...JSON.parse(JSON.stringify(e)), r: clean(r) };
+  } else if (e.t === 'rect') {
+    const inside = side[0] > e.x && side[0] < e.x + e.w && side[1] > e.y && side[1] < e.y + e.h, s = inside ? -1 : 1;
+    if (e.w + 2 * s * d <= 1e-9 || e.h + 2 * s * d <= 1e-9) return 'Offset collapses the rectangle';
+    n = { t: 'rect', x: clean(e.x - s * d), y: clean(e.y - s * d), w: clean(e.w + 2 * s * d), h: clean(e.h + 2 * s * d) };
+  } else return 'Cannot offset that';
+  n.id = nid(); delete n.construction; sk.ents.push(n);
+  return n;
+}
+
+// AutoCAD EXTEND (quick mode): lengthen the end of a line nearest p to the nearest boundary.
+export function extendLine(sk, e, p) {
+  if (e.t !== 'line') return 'Extend works on lines';
+  const endB = d2(p, e.b) <= d2(p, e.a), from = endB ? e.b : e.a, other = endB ? e.a : e.b;
+  const L = d2(from, other); if (L < 1e-12) return 'Zero-length line';
+  const dir = [(from[0] - other[0]) / L, (from[1] - other[1]) / L];
+  const ray = { L: 1, a: from, b: [from[0] + dir[0] * 1e6, from[1] + dir[1] * 1e6] };
+  let best = null;
+  for (const o of sk.ents) {
+    if (o === e || o.t === 'dim') continue;
+    for (const Q of prims(o)) for (const q of interPrims(ray, Q)) {
+      const t = (q[0] - from[0]) * dir[0] + (q[1] - from[1]) * dir[1];
+      if (t > 1e-9 && (!best || t < best.t)) best = { t, q };
+    }
+  }
+  if (!best) return 'No boundary to extend to';
+  e[endB ? 'b' : 'a'] = cp(best.q);
+  return true;
+}
+
+// AutoCAD POLYGON (inscribed): n lines, first vertex at `vertex`.
+export function addPolygon(sk, c, vertex, n) {
+  n = Math.round(n);
+  if (n < 3 || n > 1024) return 'Sides must be 3–1024';
+  const R = d2(c, vertex); if (R < 1e-9) return 'Radius is zero';
+  const a0 = Math.atan2(vertex[1] - c[1], vertex[0] - c[0]);
+  const pts = []; for (let k = 0; k < n; k++) pts.push(k === 0 ? vertex.slice() : cp(rot(vertex, c, 2 * Math.PI * k / n)));
+  const ids = [];
+  for (let k = 0; k < n; k++) { const e = { id: (sk.nextEnt = (sk.nextEnt || 1000) + 1), t: 'line', a: pts[k].slice(), b: pts[(k + 1) % n].slice() }; sk.ents.push(e); ids.push(e.id); }
+  void a0;
+  return ids;
+}

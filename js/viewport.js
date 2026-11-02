@@ -434,7 +434,7 @@ function loop(now) {
   labelIdx = 0;
   for (const h of view.renderHooks) h();
   for (let i = labelIdx; i < labelPool.length; i++) labelPool[i].style.display = 'none';
-  renderer.setClearColor(0x2a2b2f, 1);
+  renderer.setClearColor(view.bg ?? 0x2a2b2f, 1);
   renderer.clear();
   renderer.render(scene, camera());
   renderer.clearDepth();

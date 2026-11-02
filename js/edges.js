@@ -104,3 +104,13 @@ export function edgeBlend(W, faces, A, B, size, kind, segs = 16, size2 = null, s
   if (!m.f.length) return 'Blend failed';
   return m;
 }
+
+// Directions into each adjacent face, perpendicular to edge AB, plus convexity (for handles).
+export function edgeFrame(W, faces, A, B) {
+  const adj = adjacentFaces(W, faces, A, B);
+  if (typeof adj === 'string') return adj;
+  const e = M.norm(M.sub(B, A));
+  const inFace = f => { let w = M.norm(M.cross(f.n, e)); if (M.dot(M.sub(f.c, A), w) < 0) w = M.mul(w, -1); return w; };
+  const w1 = inFace(adj[0]), w2 = inFace(adj[1]);
+  return { w1, w2, convex: M.dot(w2, adj[0].n) < 0 };
+}

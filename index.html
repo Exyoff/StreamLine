@@ -49,6 +49,17 @@
     <div id="lastop" class="card" hidden></div>
     <div id="draw-card" class="card" hidden></div>
     <div id="measure-card" class="card" hidden></div>
+    <div id="cmdbar" hidden>
+      <div class="cmdrow" id="cmdprompt"></div>
+      <div class="cmdrow">
+        <input id="cmdin" type="text" inputmode="text" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" enterkeyhint="go" placeholder="Type a command or value" aria-label="Command line">
+        <button class="cmdbtn" id="cmd-enter" aria-label="Enter">⏎</button>
+        <button class="cmdbtn" id="cmd-esc" aria-label="Escape">Esc</button>
+      </div>
+      <div class="cmdrow" id="statusbar">
+        <button data-st="grid">GRID</button><button data-st="snap">SNAP</button><button data-st="ortho">ORTHO</button><button data-st="polar">POLAR</button><button data-st="osnap">OSNAP</button>
+      </div>
+    </div>
   </main>
 
   <footer id="bottombar">
