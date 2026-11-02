@@ -419,7 +419,7 @@ function entFields(s, e) {
 
 // ---------- rendering ----------
 let sketchGroup, previewGroup, renderKey = '';
-const C = { constr: new THREE.Color('#d8a25a'), fixed: new THREE.Color('#9fe39a'), line: new THREE.Color('#f2f2f2'), dim: new THREE.Color('#9aa3b3'), sel: new THREE.Color('#6fb4ff'), other: new THREE.Color('#8d93a0'), prev: new THREE.Color('#4fd1ff') };
+const C = { proj: new THREE.Color('#c58cff'), constr: new THREE.Color('#d8a25a'), fixed: new THREE.Color('#9fe39a'), line: new THREE.Color('#f2f2f2'), dim: new THREE.Color('#9aa3b3'), sel: new THREE.Color('#6fb4ff'), other: new THREE.Color('#8d93a0'), prev: new THREE.Color('#4fd1ff') };
 const matL = (col, top, op = 1) => new THREE.LineBasicMaterial({ color: col, depthTest: !top, transparent: true, opacity: op });
 export function initDraw() {
   sketchGroup = new THREE.Group(); view.scene.add(sketchGroup);
@@ -498,7 +498,7 @@ function renderSketches() {
           }
           const pl = SK.entPolyline(e);
           const sel = isAct && S.ed.drawSel.has(e.id);
-          const col = isAct ? (sel ? C.sel : e.construction ? C.constr : fixedSet.has(e.id) ? C.fixed : C.line) : C.other;
+          const col = isAct ? (sel ? C.sel : e.construction ? C.constr : e.proj ? C.proj : fixedSet.has(e.id) ? C.fixed : C.line) : C.other;
           const dashed = sel || e.construction;
           const obj = lineObj(pl.pts.map(p => SK.toW(s.plane, p)), dashed ? new THREE.LineDashedMaterial({ color: col, depthTest: false, dashSize: 1, gapSize: 0.6, transparent: true, opacity: e.construction && !sel ? 0.8 : 1 }) : matL(col, top, ws === 'model' ? 0.5 : 1), pl.closed);
           if (dashed) { obj.userData.dashed = true; obj.computeLineDistances(); }

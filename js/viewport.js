@@ -177,12 +177,12 @@ function stepTween(now) {
   needsRender = true; emit('viewchange');
 }
 // Look straight at a plane (normal toward viewer), centred on target
-view.lookAlong = (n, target) => {
+view.lookAlong = (n, target, dist = null) => {
   const c = view.cam;
   const pitch = Math.asin(Math.max(-1, Math.min(1, n[2])));
   let yaw = Math.abs(Math.cos(pitch)) < 1e-6 ? -Math.PI / 2 : Math.atan2(n[1], n[0]);
   if (!c.ortho) { c.ortho = true; c.autoOrtho = true; }
-  animateTo(yaw, pitch, target ? new THREE.Vector3(...target) : null);
+  animateTo(yaw, pitch, target ? new THREE.Vector3(...target) : null, dist);
   emit('viewchange');
 };
 view.toggleOrtho = () => { view.cam.ortho = !view.cam.ortho; view.cam.autoOrtho = false; view.render(); emit('viewchange'); };

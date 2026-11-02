@@ -33,6 +33,8 @@
     <button class="ib" id="btn-props" aria-label="Properties"></button>
   </header>
 
+  <div id="stationbar"><div id="actions" class="scrollrow"></div></div>
+
   <main id="viewport">
     <div id="hud"></div>
     <canvas id="nav" aria-label="View axes"></canvas>
@@ -42,9 +44,13 @@
       <button class="fab" id="btn-snap" aria-label="Snapping"></button>
       <button class="fab" id="btn-xray" aria-label="X-ray"></button>
     </div>
-    <div class="vcol" id="vtools-l">
-      <button class="fab" id="btn-multi" aria-label="Multi-select"></button>
-      <button class="fab" id="btn-all" aria-label="Select all / none"></button>
+    <div id="toolrail">
+      <nav id="tools"></nav>
+      <div class="railsep"></div>
+      <div id="vtools-l">
+        <button class="fab" id="btn-multi" aria-label="Multi-select"></button>
+        <button class="fab" id="btn-all" aria-label="Select all / none"></button>
+      </div>
     </div>
     <div id="lastop" class="card" hidden></div>
     <div id="draw-card" class="card" hidden></div>
@@ -64,10 +70,6 @@
     </div>
   </main>
 
-  <footer id="bottombar">
-    <div id="actions" class="scrollrow"></div>
-    <nav id="tools"></nav>
-  </footer>
 
   <section id="sheet" aria-hidden="true">
     <div class="grab"></div>

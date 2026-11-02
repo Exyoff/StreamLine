@@ -20,10 +20,33 @@ export const newSketch = {
     const base = p.face ? p.face.plane : SK.PLANES[p.plane];
     const plane = { o: M.add(base.o, M.mul(base.n, p.offset)), u: base.u.slice(), v: base.v.slice(), n: base.n.slice() };
     if (p._id >= S.doc.nextId) S.doc.nextId = p._id + 1;
-    S.doc.sketches.push({ id: p._id, name: `Sketch ${p._n}`, plane, ents: [], face: p.face ? { obj: p.face.obj } : null, hidden: false, nextEnt: 1 });
+    const ents = [];
+    let nextEnt = 1;
+    if (p.face && p.face.loops) for (const L of p.face.loops) for (const e of projectLoop(L.map(w => SK.toP(plane, w)))) ents.push({ id: ++nextEnt, ...e, proj: true });
+    S.doc.sketches.push({ id: p._id, name: `Sketch ${p._n}`, plane, ents, face: p.face ? { obj: p.face.obj } : null, hidden: false, nextEnt });
     S.ed.sketch = p._id; S.ed.workspace = 'draw'; S.ed.drawSel = new Set(); S.ed.profiles = [];
   },
 };
+
+// A face boundary loop (2D) → sketch entities: one exact circle if the loop is a circle,
+// otherwise lines with collinear runs merged (Fusion-style "projected" geometry).
+export function projectLoop(P) {
+  const n = P.length;
+  if (n >= 8) {
+    const c = [P.reduce((s, q) => s + q[0], 0) / n, P.reduce((s, q) => s + q[1], 0) / n];
+    const R = SK.d2(P[0], c);
+    if (P.every(q => Math.abs(SK.d2(q, c) - R) < 1e-4 * Math.max(1, R))) {
+      // the faceted loop is inscribed; its true circle passes through the vertices
+      return [{ t: 'circle', c: c.map(v => Math.round(v * 1e9) / 1e9), r: Math.round(R * 1e9) / 1e9 }];
+    }
+  }
+  const keep = P.filter((q, i) => {
+    const a = P[(i - 1 + n) % n], b = P[(i + 1) % n];
+    return Math.abs((q[0] - a[0]) * (b[1] - q[1]) - (q[1] - a[1]) * (b[0] - q[0])) > 1e-9 * Math.max(1, SK.d2(a, b) ** 2);
+  });
+  const cl = q => q.map(v => (Math.abs(v - Math.round(v * 1e9) / 1e9) < 1e-11 ? Math.round(v * 1e9) / 1e9 : v));
+  return keep.map((q, i) => ({ t: 'line', a: cl(q), b: cl(keep[(i + 1) % keep.length]) }));
+}
 
 // generic sketch mutation (entity add / edit / delete)
 export function sketchOp(label, skId, fn, fields = null) {

@@ -15,7 +15,7 @@ import * as SK from './sketch.js';
 import * as F from './features.js';
 import * as Draw from './draw.js';
 import * as Cmd from './cmdline.js';
-import { findRegion, faceRegion } from './modifiers.js';
+import { findRegion, faceRegion, faceLoops } from './modifiers.js';
 import { featureEdges, straightRun, edgeLoop } from './edges.js';
 
 const DOC_KEY = 'streamline.doc.v1';
@@ -71,7 +71,12 @@ function routeDrag() {
 // ---------- workspaces ----------
 function enterSketchView(sk, instant) {
   view.cam.lock2D = true;
-  view.lookAlong(sk.plane.n, sk.plane.o);
+  // look straight at the sketch, framing what is drawn on it
+  const pts = sk.ents.filter(e => e.t !== 'dim').flatMap(e => SK.keyPoints(e).map(k => SK.toW(sk.plane, k.p)));
+  if (!pts.length) { view.lookAlong(sk.plane.n, sk.plane.o); return; }
+  const b = new THREE.Box3(); pts.forEach(q => b.expandByPoint(new THREE.Vector3(...q)));
+  const rad = Math.max(5, b.getSize(new THREE.Vector3()).length() / 2);
+  view.lookAlong(sk.plane.n, b.getCenter(new THREE.Vector3()).toArray(), rad * 3.2);
 }
 function setWorkspace(ws, pick) {
   if (pick) { S.ed.pick = pick; S.ed.faces = []; S.ed.edges = []; }
@@ -95,6 +100,7 @@ function setWorkspace(ws, pick) {
   selectionChanged();
 }
 function startFacePick() {
+  if (!S.doc.objects.some(o => !o.hidden)) { toast('Make a body first — then you can sketch on its faces'); return; }
   S.ed.pickFace = true;
   toast('Tap a flat face of a body to sketch on it', 2600);
   if (S.ed.workspace === 'draw') { S.ed.workspace = 'cad'; S.ed.tool = 'select'; view.cam.lock2D = false; view.setView('iso'); }
@@ -107,11 +113,19 @@ function facePickTap(x, y) {
   const o = objById(hit.id), c = view.cam;
   const plane = F.facePlane(o, hit.face, [-Math.sin(c.yaw), Math.cos(c.yaw), 0]);
   if (!plane) { toast('That face is degenerate'); return; }
+  // project the face boundary (outer edge + holes) into the sketch, like Fusion's projected geometry
+  const W = worldVerts(o), reg = faceRegion(W, o.mesh.f, hit.face), loops = faceLoops(W, o.mesh.f, reg);
   S.ed.tools[S.ed.workspace] = S.ed.tool;
-  runOp(F.newSketch, { face: { obj: o.id, plane } });
-  S.ed.tool = S.ed.tools.draw || 'line';
+  if (S.ed.mode === 'edit') { S.ed.mode = 'object'; S.ed.editSel = new Set(); }
+  runOp(F.newSketch, { face: { obj: o.id, plane, loops } });
+  S.ed.tool = S.ed.tools.draw && S.ed.tools.draw !== 'select' ? S.ed.tools.draw : 'line';
   Draw.resetTool();
-  enterSketchView(SK.activeSketch());
+  // frame the face, looking straight at it
+  const pts = loops.flat(), b = new THREE.Box3(); pts.forEach(q => b.expandByPoint(new THREE.Vector3(...q)));
+  const ctr = b.getCenter(new THREE.Vector3()).toArray(), rad = Math.max(1, b.getSize(new THREE.Vector3()).length() / 2);
+  view.cam.lock2D = true;
+  view.lookAlong(plane.n, ctr, rad * 4.2);
+  toast(`Sketching on the face · ${loops.length} edge loop${loops.length === 1 ? '' : 's'} projected`);
   refresh();
 }
 function activateSketch(id) {
@@ -522,6 +536,7 @@ function renderActions() {
     S.ed.mode === 'edit' ? h('div', { class: 'seg icons' }, ...['vert', 'edge', 'face'].map(sm => h('button', { class: S.ed.selectMode === sm ? 'on' : '', 'aria-label': sm, html: I[sm], onclick: () => setSelectMode(sm) }))) : null);
   if (S.ed.mode === 'object') {
     row.replaceChildren(modeSeg,
+      act(I.face, 'Sketch on face', () => startFacePick()),
       act(I.fillet, 'Fillet', () => modifier('fillet'), 'primary'),
       act(I.chamfer, 'Chamfer', () => modifier('chamfer')),
       act(I.extrude, 'Push/Pull', () => modifier('pushpull')),
@@ -603,6 +618,7 @@ function renderHud() {
     $('#hud').innerHTML = parts.join('<br>');
     return;
   }
+  if (S.ed.pickFace) { $('#hud').innerHTML = '<b>Sketch on face</b><br>Tap a flat face of a body'; return; }
   if (S.ed.workspace === 'model' && S.ed.mode === 'object' && S.ed.pick !== 'solid') {
     parts.push(`<b>${S.ed.pick === 'face' ? 'Face' : 'Edge'} select</b> · ${S.ed.pick === 'face' ? S.ed.faces.length + ' face' + (S.ed.faces.length === 1 ? '' : 's') : S.ed.edges.length + ' edge' + (S.ed.edges.length === 1 ? '' : 's')}`);
     parts.push(S.ed.pick === 'face' ? 'Push/Pull · Shell · Mirror · Move/Rotate/Scale the face' : 'Fillet · Chamfer · Move the edge');
