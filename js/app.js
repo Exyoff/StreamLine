@@ -479,6 +479,8 @@ function renderActions() {
       act(I.inset, 'Offset', () => acadTool('offset')),
       act(I.next, 'Extend', () => acadTool('extend')),
       act(I.cube, 'Polygon', () => acadTool('polygon')),
+      act(I.array, 'Array', () => acadTool('arrayrect')),
+      act(I.revolve, 'Polar array', () => acadTool('arraypolar')),
       act(I.array, 'Explode', () => acadTool('explode')),
       act(I.trash, 'Erase', () => acadTool('erase'), 'danger'),
       act(I.face, 'On face', () => startFacePick()),
@@ -496,6 +498,8 @@ function renderActions() {
       act(I.union, 'Union', () => runOp(F.bodyBoolean, { kind: 'union' })),
       act(I.subtract, 'Subtract', () => runOp(F.bodyBoolean, { kind: 'subtract' })),
       act(I.intersect, 'Intersect', () => runOp(F.bodyBoolean, { kind: 'intersect' })),
+      act(I.subdiv, 'Slice', () => runOp(F.sliceOp)),
+      act(I.revolve, 'Pattern', () => runOp(F.polarPattern)),
       act(I.face, 'On face', () => startFacePick()),
       act(I.sketch, 'Sketch', e => openSketchMenu(e.currentTarget)),
       act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'),
@@ -514,6 +518,8 @@ function renderActions() {
       act(I.inset, 'Shell', () => modifier('shell')),
       act(I.flip, 'Mirror', () => modifier('mirror')),
       act(I.union, 'Boolean', e => openBoolMenu(e.currentTarget)),
+      act(I.subdiv, 'Slice', () => runOp(F.sliceOp)),
+      act(I.revolve, 'Pattern', () => runOp(F.polarPattern)),
       act(I.plus, 'Add', e => openAddMenu(e.currentTarget)),
       act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; toast('Duplicated — drag the gizmo or type an offset'); refresh(); } }),
       act(I.array, 'Array', () => runOp(OPS.arrayOp)),
@@ -622,6 +628,8 @@ function openConstrainMenu(anchor) {
   const C = [['h', 'Horizontal', 'H'], ['v', 'Vertical', 'V'], ['par', 'Parallel', '∥'], ['perp', 'Perpendicular', '⊥'], ['eq', 'Equal', '='], ['tan', 'Tangent', 'T'], ['conc', 'Concentric', '◎'], ['fix', 'Fix', '⚓']];
   popover(anchor, h('div', {}, h('div', { class: 'mtitle' }, `Constrain selection · ${S.ed.drawSel.size}`),
     ...C.map(([t, l, g]) => menuItem('', l, () => Draw.constrain(t), g)),
+    h('div', { class: 'msep' }),
+    menuItem('', 'Construction (toggle)', () => Draw.toggleConstruction(), 'CONS'),
     h('div', { class: 'msep' }),
     h('div', { class: 'note', style: 'padding:6px 12px 8px;max-width:260px' }, 'Touching points stay joined automatically. Tap a glyph (Select tool) to remove a constraint.')), { above: true });
 }

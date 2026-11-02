@@ -19,7 +19,7 @@ const DRAW_TOOLS = {
   SC: 'scale', SCALE: 'scale', MI: 'mirror', MIRROR: 'mirror', E: 'erase', ERASE: 'erase', X: 'explode', EXPLODE: 'explode',
   DI: 'dist', DIST: 'dist', ID: 'id', AA: 'area', AREA: 'area', LI: 'list', LS: 'list', LIST: 'list', MEA: 'dist', MEASUREGEOM: 'dist', MD: 'dist', MR: 'radius', MA: 'angle', MAR: 'area',
   DIM: 'dim', DLI: 'dim', DIMLINEAR: 'dim', DAL: 'dim', DIMALIGNED: 'dim', DRA: 'dim', DIMRADIUS: 'dim', DDI: 'dim', DIMDIAMETER: 'dim', DAN: 'dim', DIMANGULAR: 'dim',
-  SELECT: 'select',
+  SELECT: 'select', AR: 'arrayrect', ARRAY: 'arrayrect', ARRAYRECT: 'arrayrect', ARRAYPOLAR: 'arraypolar', XL: 'line', XLINE: 'line', CONSTRUCTIONLINE: 'line',
 };
 const CONSTRAINTS = { GCHORIZONTAL: 'h', GCH: 'h', GCVERTICAL: 'v', GCV: 'v', GCPARALLEL: 'par', GCPA: 'par', GCPERPENDICULAR: 'perp', GCPE: 'perp', GCEQUAL: 'eq', GCE: 'eq', GCTANGENT: 'tan', GCT: 'tan', GCCONCENTRIC: 'conc', GCCO: 'conc', GCFIX: 'fix', GCF: 'fix' };
 const TOGGLES = { GRID: 'grid', SNAP: 'snap', ORTHO: 'ortho', POLAR: 'polar', OSNAP: 'osnap' };
@@ -90,10 +90,11 @@ export function exec(raw) {
   if (DRAW_TOOLS[up] || up === 'F' || up === 'FILLET' || up === 'CHA' || up === 'CHAMFER') {
     if (S.ed.workspace !== 'draw') ctx.setWorkspace('draw');
     last = up;
-    if (DRAW_TOOLS[up]) { if (DRAW_TOOLS[up] === 'dim') Draw.dimOpts.mode = up === 'DLI' || up === 'DIMLINEAR' ? 'linear' : 'aligned'; ctx.setTool(DRAW_TOOLS[up]); Draw.startCommand(); }
+    if (DRAW_TOOLS[up]) { Draw.lineOpts.construction = /^X|^CONSTRUCTIONLINE/.test(up); if (DRAW_TOOLS[up] === 'dim') Draw.dimOpts.mode = up === 'DLI' || up === 'DIMLINEAR' ? 'linear' : 'aligned'; ctx.setTool(DRAW_TOOLS[up]); Draw.startCommand(); }
     else { Draw.corner.kind = up.startsWith('F') ? 'fillet' : 'chamfer'; ctx.setTool('corner'); }
     emit('cmd'); return;
   }
+  if (up === 'CONSTRUCTION' || up === 'CONS') { Draw.toggleConstruction(); return; }
   if (CONSTRAINTS[up]) { if (S.ed.workspace !== 'draw') ctx.setWorkspace('draw'); Draw.constrain(CONSTRAINTS[up]); return; }
   const three = threeD(up);
   if (three) { last = up; if (S.ed.workspace !== 'cad') ctx.setWorkspace('cad'); three(); emit('cmd'); return; }
@@ -117,8 +118,10 @@ function threeD(up) {
     FILLETEDGE: need('FILLETEDGE', 'Select edges, then Enter:', edges, () => ctx.runOp(F.edgeBlendOp, { kind: 'fillet' }), 'edge'),
     CHAMFEREDGE: need('CHAMFEREDGE', 'Select edges, then Enter:', edges, () => ctx.runOp(F.edgeBlendOp, { kind: 'chamfer' }), 'edge'),
     PRESSPULL: () => ctx.setWorkspace('model', 'face'),
+    SLICE: need('SLICE', 'Select a body, then Enter:', bodies(1), () => ctx.runOp(F.sliceOp), 'select'),
+    '3DARRAY': need('3DARRAY', 'Select bodies, then Enter:', bodies(1), () => ctx.runOp(F.polarPattern), 'select'),
   };
-  const alias = { EXT: 'EXTRUDE', REV: 'REVOLVE', UNI: 'UNION', SU: 'SUBTRACT', IN: 'INTERSECT', FE: 'FILLETEDGE', CHAE: 'CHAMFEREDGE', PP: 'PRESSPULL' };
+  const alias = { SL: 'SLICE', '3A': '3DARRAY', EXT: 'EXTRUDE', REV: 'REVOLVE', UNI: 'UNION', SU: 'SUBTRACT', IN: 'INTERSECT', FE: 'FILLETEDGE', CHAE: 'CHAMFEREDGE', PP: 'PRESSPULL' };
   return map[alias[up] || up] || null;
 }
 

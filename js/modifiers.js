@@ -128,3 +128,29 @@ export function mirrorMesh(W, faces, n, w, fuse) {
   const res = polysToMesh(boolean('union', toPolys(W, faces), toPolys(R, F)));
   return res.f.length ? res : 'Mirror failed';
 }
+
+
+// Slice a body with the plane n·x = w. Returns { pos, neg } meshes (either may be empty).
+export function slice(W, faces, n, w) {
+  let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const p of W) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p[k]); hi[k] = Math.max(hi[k], p[k]); }
+  const R = M.dist(lo, hi) * 2 + 10, c0 = M.mul(M.add(lo, hi), 0.5);
+  // a big box on the positive side of the plane
+  const u = M.norm(Math.abs(n[0]) < 0.9 ? M.cross(n, [1, 0, 0]) : M.cross(n, [0, 1, 0])), v = M.cross(n, u);
+  const o = M.add(c0, M.mul(n, w - M.dot(n, c0)));
+  const P = (a, b, h) => M.add(M.add(o, M.mul(u, a * R)), M.add(M.mul(v, b * R), M.mul(n, h * R)));
+  const V = [P(-1, -1, 0), P(1, -1, 0), P(1, 1, 0), P(-1, 1, 0), P(-1, -1, 1), P(1, -1, 1), P(1, 1, 1), P(-1, 1, 1)];
+  const F = [[0, 3, 2, 1], [4, 5, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]];
+  const A = toPolys(W, faces), H = toPolys(V, F);
+  return { pos: polysToMesh(boolean('intersect', A, H)), neg: polysToMesh(boolean('subtract', A, H)) };
+}
+
+// Rotate copies of a mesh about an axis (point c, unit direction a) — polar array helper.
+export function rotateMesh(W, c, a, deg) {
+  const t = deg * Math.PI / 180, co = Math.cos(t), si = Math.sin(t);
+  return W.map(p => {
+    const v = M.sub(p, c), d = M.dot(a, v);
+    const r = M.add(M.add(M.mul(v, co), M.mul(M.cross(a, v), si)), M.mul(a, d * (1 - co)));
+    return M.add(c, r);
+  });
+}

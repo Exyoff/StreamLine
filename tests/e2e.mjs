@@ -186,6 +186,18 @@ try {
   await keypad('25');
   const dl = (await ents()).find(e => e.t === 'dim' && (e.kind === 'hor' || e.kind === 'ver'));
   check(!!dl, `DIMLINEAR creates a ${dl && dl.kind} dimension`);
+  // construction line + ARRAYPOLAR on a circle
+  const before = (await ents()).length;
+  await run('XL'); await run('80,-10'); await run('@0,40'); await run('');
+  const xl = (await ents()).slice(before).find(e => e.t === 'line');
+  check(xl && xl.construction === true, 'XLINE draws a construction line');
+  await run('C'); await run('100,0'); await run('2');
+  const cc = (await ents()).at(-1);
+  await p.evaluate(id => { StreamLine.S.ed.drawSel = new Set([id]); }, cc.id);
+  await run('ARRAYPOLAR'); await run('80,0');
+  const ring = (await ents()).filter(e => e.t === 'circle' && Math.abs(Math.hypot(e.c[0] - 80, e.c[1]) - 20) < 1e-9);
+  check(ring.length === 6, `ARRAYPOLAR makes 6 items around 80,0 (${ring.length})`);
+  check(/ArrayPolar/.test(await p.textContent('#lastop')), 'array parameters are editable in the operation card');
   await shot('4-acad');
 
   // --- Plasticity-style Model: face push/pull with a live handle, edge fillet, shell
@@ -220,6 +232,17 @@ try {
   check(va < vb, `Model fillet removes material (${(vb - va).toFixed(3)})`);
   check(await st(() => !!(StreamLine.getLast() && StreamLine.getLast().handle)), 'fillet has a live radius handle');
   await shot('5-plasticity');
+  await p.tap('#lastop .ib[aria-label=Done]');
+  await p.locator('.ctxseg button', { hasText: 'Solid' }).tap();
+  c = await projW([0, 0, 4]); await tapV(c.x, c.y);
+  const nb = await st(() => StreamLine.S.doc.objects.length);
+  await p.locator('#actions .act', { hasText: 'Slice' }).tap();
+  await p.tap('#lastop .field .val'); await keypad('4');
+  check(await st(() => StreamLine.S.doc.objects.length) === nb + 1, 'Slice at z=4 splits the body in two');
+  const vsum = await st(() => StreamLine.S.doc.objects.slice(-2).map(o => StreamLine.M.meshVolume(o.mesh)));
+  check(vsum.every(v => v > 0), `both halves are solid (${vsum.map(v => v.toFixed(1)).join(' + ')})`);
+  await p.tap('#lastop .ib[aria-label=Done]');
+  await p.tap('#btn-undo'); await p.waitForTimeout(150);
 
   // --- Model workspace + undo
   await p.tap('[data-ws=model]'); await p.waitForTimeout(400);

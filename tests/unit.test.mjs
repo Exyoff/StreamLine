@@ -271,3 +271,25 @@ test('AutoCAD inquiry: areas, angles, horizontal/vertical dimensions', async () 
   setDim(s, v, 7.5);
   assert.deepEqual(s.ents[0].b, [25, 7.5], 'vertical dimension drives only Y');
 });
+
+test('CAD: revolve about an arbitrary line, sketch arrays, slice, polar body array', async () => {
+  const { arrayRect, arrayPolar } = await import('../js/sketch.js');
+  const { slice, rotateMesh } = await import('../js/modifiers.js');
+  // a 2×10 rectangle 3..5 from a vertical axis at x=10 → tube between radii 5 and 7? revolve about line x=10
+  const R = regions(sk([{ t: 'rect', x: 3, y: 0, w: 2, h: 10 }]));
+  const tube = revolveRegions(R, PLANES.XZ, { p: [10, 0], d: [0, 1] }, 360, 64);
+  assert.ok(watertight(tube));
+  near(meshVolume(tube), 20 * 2 * Math.PI * 6, 4, 'Pappus about x=10 (centroid distance 6)');
+  const s = sk([{ t: 'circle', c: [0, 0], r: 1 }]);
+  assert.equal(arrayRect(s, [1], 3, 2, 5, 4).length, 5);
+  assert.deepEqual(s.ents.at(-1).c, [10, 4]);
+  const p = sk([{ t: 'circle', c: [10, 0], r: 1 }]);
+  arrayPolar(p, [1], [0, 0], 4, 360);
+  assert.deepEqual(p.ents.map(e => e.c), [[10, 0], [0, 10], [-10, 0], [0, -10]], 'exact quarter turns');
+  const box = makeBox(20, 20, 20);
+  const { pos, neg } = slice(box.v, box.f, [0, 0, 1], 2.5);
+  near(meshVolume(pos), 400 * 7.5, 1e-6); near(meshVolume(neg), 400 * 12.5, 1e-6);
+  assert.ok(watertight(pos) && watertight(neg));
+  const r = rotateMesh([[10, 0, 0]], [0, 0, 0], [0, 0, 1], 90);
+  near(r[0][0], 0, 1e-12); near(r[0][1], 10, 1e-12);
+});

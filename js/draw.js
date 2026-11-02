@@ -18,7 +18,7 @@ const D = Math.PI / 180;
 export const corner = { kind: 'fillet', size: null };
 let propsOpen = false; // compact entity card by default (AutoCAD-style quick properties)
 export const st = { start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null };
-export function resetTool() { result = null; Object.assign(st, { cmd: null, last: null, dimLine: null, start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null }); view.render(); emit('drawcard'); }
+export function resetTool() { result = null; if (tool() !== 'line') lineOpts.construction = false; Object.assign(st, { cmd: null, last: null, dimLine: null, start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null }); view.render(); emit('drawcard'); }
 const sk = () => SK.activeSketch();
 const tool = () => S.ed.tool;
 
@@ -70,7 +70,7 @@ const autoHV = (s, e) => {
 };
 function placeLine(a, b) {
   if (SK.d2(a, b) < 1e-9) return;
-  add('Line', { t: 'line', a, b }, autoHV);
+  add(lineOpts.construction ? 'Construction line' : 'Line', { t: 'line', a, b, ...(lineOpts.construction ? { construction: true } : {}) }, autoHV);
   if (!st.chain.length) st.chain.push(a);
   st.chain.push(b);
   // closed the loop?
@@ -287,6 +287,12 @@ export function dofText() {
   return dofCache.v === 0 ? 'fully constrained' : `${dofCache.v} DOF free`;
 }
 
+export function toggleConstruction() {
+  const s = sk(), ids = selIds();
+  if (!ids.length) { toast('Select sketch entities first'); return; }
+  runOp(F.sketchOp('Construction', s.id, k => { const on = !ids.every(id => SK.entById(k, id)?.construction); for (const id of ids) { const e = SK.entById(k, id); if (e && e.t !== 'dim') { if (on) e.construction = true; else delete e.construction; } } }));
+}
+
 export function deleteSelected() {
   const s = sk(); if (!s || !S.ed.drawSel.size) { toast('Select sketch entities first'); return; }
   const ids = new Set(S.ed.drawSel);
@@ -409,7 +415,7 @@ function entFields(s, e) {
 
 // ---------- rendering ----------
 let sketchGroup, previewGroup, renderKey = '';
-const C = { fixed: new THREE.Color('#9fe39a'), line: new THREE.Color('#f2f2f2'), dim: new THREE.Color('#9aa3b3'), sel: new THREE.Color('#6fb4ff'), other: new THREE.Color('#8d93a0'), prev: new THREE.Color('#4fd1ff') };
+const C = { constr: new THREE.Color('#d8a25a'), fixed: new THREE.Color('#9fe39a'), line: new THREE.Color('#f2f2f2'), dim: new THREE.Color('#9aa3b3'), sel: new THREE.Color('#6fb4ff'), other: new THREE.Color('#8d93a0'), prev: new THREE.Color('#4fd1ff') };
 const matL = (col, top, op = 1) => new THREE.LineBasicMaterial({ color: col, depthTest: !top, transparent: true, opacity: op });
 export function initDraw() {
   sketchGroup = new THREE.Group(); view.scene.add(sketchGroup);
@@ -471,9 +477,10 @@ function renderSketches() {
           if (e.t === 'dim') continue;
           const pl = SK.entPolyline(e);
           const sel = isAct && S.ed.drawSel.has(e.id);
-          const col = isAct ? (sel ? C.sel : fixedSet.has(e.id) ? C.fixed : C.line) : C.other;
-          const obj = lineObj(pl.pts.map(p => SK.toW(s.plane, p)), sel ? new THREE.LineDashedMaterial({ color: col, depthTest: false, dashSize: 1, gapSize: 0.6 }) : matL(col, top, ws === 'model' ? 0.5 : 1), pl.closed);
-          if (sel) { obj.userData.dashed = true; obj.computeLineDistances(); }
+          const col = isAct ? (sel ? C.sel : e.construction ? C.constr : fixedSet.has(e.id) ? C.fixed : C.line) : C.other;
+          const dashed = sel || e.construction;
+          const obj = lineObj(pl.pts.map(p => SK.toW(s.plane, p)), dashed ? new THREE.LineDashedMaterial({ color: col, depthTest: false, dashSize: 1, gapSize: 0.6, transparent: true, opacity: e.construction && !sel ? 0.8 : 1 }) : matL(col, top, ws === 'model' ? 0.5 : 1), pl.closed);
+          if (dashed) { obj.userData.dashed = true; obj.computeLineDistances(); }
           sketchGroup.add(obj);
         }
         if (isAct) {
@@ -611,17 +618,18 @@ function marker(w, color) {
 // =====================================================================
 // AutoCAD-style commands: edit-command state machines, prompts, typed input
 // =====================================================================
-export const EDIT_TOOLS = new Set(['move', 'copy', 'rotate', 'scale', 'mirror', 'offset', 'erase', 'explode', 'polygon', 'dist', 'id', 'angle', 'area', 'radius', 'list']);
+export const EDIT_TOOLS = new Set(['move', 'copy', 'rotate', 'scale', 'mirror', 'offset', 'erase', 'explode', 'polygon', 'arrayrect', 'arraypolar', 'dist', 'id', 'angle', 'area', 'radius', 'list']);
 const INQUIRY = new Set(['dist', 'id', 'angle', 'area', 'radius', 'list']);
+export const lineOpts = { construction: false };
 export const dimOpts = { mode: 'aligned' };
 let result = null; // last measurement drawn in the viewport
-const SELECT_FIRST = new Set(['move', 'copy', 'rotate', 'scale', 'mirror', 'erase', 'explode', 'list']);
+const SELECT_FIRST = new Set(['move', 'copy', 'rotate', 'scale', 'mirror', 'erase', 'explode', 'list', 'arrayrect', 'arraypolar']);
 export const acad = { offsetDist: null, polySides: 6, mirrorErase: false };
 function ensureCmd() {
   if (st.cmd && st.cmd.tool === tool()) return st.cmd;
   const t = tool();
   st.cmd = { tool: t, pts: [], stage: SELECT_FIRST.has(t) ? (S.ed.drawSel.size ? 'base' : 'select') : t === 'offset' ? 'distance' : t === 'polygon' ? 'sides' : t === 'area' ? 'collect' : t === 'radius' ? 'pick' : 'base' };
-  if ((t === 'erase' || t === 'explode' || t === 'list') && S.ed.drawSel.size) { runSelectionCommand(t); }
+  if ((t === 'erase' || t === 'explode' || t === 'list' || t === 'arrayrect') && S.ed.drawSel.size) { runSelectionCommand(t); }
   return st.cmd;
 }
 export function startCommand() { st.cmd = null; if (EDIT_TOOLS.has(tool())) ensureCmd(); emit('drawcard'); view.render(); }
@@ -644,6 +652,17 @@ function xform(label, op, copy = false) {
   runOp(F.sketchOp(label, s.id, k => { const r = SK.transformEntities(k, ids, op, copy); if (typeof r === 'string') return r; if (!copy) S.ed.drawSel = new Set(r); }));
 }
 function runSelectionCommand(t) {
+  if (t === 'arrayrect') {
+    const s = sk(), ids = selIds();
+    const bb = ids.flatMap(id => SK.keyPoints(SK.entById(s, id)).map(k => k.p));
+    const w = Math.max(...bb.map(p => p[0])) - Math.min(...bb.map(p => p[0])), hh = Math.max(...bb.map(p => p[1])) - Math.min(...bb.map(p => p[1]));
+    const st0 = S.settings.snapStep, dx = Math.ceil((w * 1.5 || 10) / st0) * st0, dy = Math.ceil((hh * 1.5 || 10) / st0) * st0;
+    S.ed.drawSel = new Set();
+    runOp(F.sketchOp('ArrayRect', s.id, (k, p) => { const r = SK.arrayRect(k, ids, p.cols, p.rows, p.dx, p.dy); if (typeof r === 'string') return r; },
+      [{ key: 'cols', label: 'Columns', kind: 'int', min: 1, max: 200 }, { key: 'rows', label: 'Rows', kind: 'int', min: 1, max: 200 }, { key: 'dx', label: 'Column spacing', kind: 'len' }, { key: 'dy', label: 'Row spacing', kind: 'len' }]),
+    { cols: 3, rows: 2, dx, dy });
+    st.cmd = null; S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('cmd'); return;
+  }
   if (t === 'list') { listSelection(); st.cmd = null; S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); return; }
   if (t === 'erase') { deleteSelected(); }
   else {
@@ -670,6 +689,14 @@ function cmdPoint(p) {
     runOp(F.sketchOp('Offset', sk().id, k => { const e = SK.entById(k, eid); const r = SK.offsetEntity(k, e, d, p); if (typeof r === 'string') return r; }));
     c.stage = 'pick';
     return;
+  }
+  if (t === 'arraypolar' && c.stage === 'base') {
+    const s = sk(), ids = selIds();
+    S.ed.drawSel = new Set();
+    runOp(F.sketchOp('ArrayPolar', s.id, (k, q) => { const r = SK.arrayPolar(k, ids, [q.cx, q.cy], q.count, q.angle); if (typeof r === 'string') return r; },
+      [{ key: 'count', label: 'Items', kind: 'int', min: 2, max: 2000 }, { key: 'angle', label: 'Angle to fill', kind: 'ang' }, { key: 'cx', label: 'Centre X', kind: 'len' }, { key: 'cy', label: 'Centre Y', kind: 'len' }]),
+    { count: 6, angle: 360, cx: p[0], cy: p[1] });
+    st.cmd = null; S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('cmd'); return;
   }
   if (c.stage === 'base') { c.base = p; c.stage = 'second'; return; }
   if (c.stage === 'second') {
@@ -762,7 +789,7 @@ export function typed(raw) {
 // ---------- prompts (AutoCAD wording) ----------
 export function prompt() {
   const t = tool(), c = st.cmd, o = [];
-  const name = { dist: 'DIST', id: 'ID', angle: 'MEASUREGEOM', area: 'AREA', radius: 'MEASUREGEOM', list: 'LIST', line: 'LINE', rect: 'RECTANG', circle: 'CIRCLE', arc: 'ARC', trim: 'TRIM', extend: 'EXTEND', dim: dimOpts.mode === 'linear' ? 'DIMLINEAR' : 'DIM', corner: corner.kind === 'fillet' ? 'FILLET' : 'CHAMFER', move: 'MOVE', copy: 'COPY', rotate: 'ROTATE', scale: 'SCALE', mirror: 'MIRROR', offset: 'OFFSET', erase: 'ERASE', explode: 'EXPLODE', polygon: 'POLYGON' }[t];
+  const name = { arrayrect: 'ARRAYRECT', arraypolar: 'ARRAYPOLAR', dist: 'DIST', id: 'ID', angle: 'MEASUREGEOM', area: 'AREA', radius: 'MEASUREGEOM', list: 'LIST', line: 'LINE', rect: 'RECTANG', circle: 'CIRCLE', arc: 'ARC', trim: 'TRIM', extend: 'EXTEND', dim: dimOpts.mode === 'linear' ? 'DIMLINEAR' : 'DIM', corner: corner.kind === 'fillet' ? 'FILLET' : 'CHAMFER', move: 'MOVE', copy: 'COPY', rotate: 'ROTATE', scale: 'SCALE', mirror: 'MIRROR', offset: 'OFFSET', erase: 'ERASE', explode: 'EXPLODE', polygon: 'POLYGON' }[t];
   let txt;
   if (!name) return { text: 'Command:', options: [] };
   if (t === 'line') { txt = st.start ? 'Specify next point or' : 'Specify first point:'; if (st.start) { if (st.chain.length > 2) o.push(['Close', 'C']); if (st.chain.length > 1) o.push(['Undo', 'U']); } }
@@ -790,6 +817,7 @@ export function prompt() {
     else if (t === 'polygon') txt = cc.stage === 'sides' ? `Enter number of sides <${acad.polySides}>:` : cc.stage === 'center' ? 'Specify center of polygon:' : 'Specify radius (vertex point):';
     else if (t === 'offset') txt = cc.stage === 'distance' ? `Specify offset distance${acad.offsetDist != null ? ` <${fmtLen(acad.offsetDist)}>` : ''}:` : cc.stage === 'pick' ? 'Select object to offset or Enter to exit:' : 'Specify point on side to offset:';
     else if (t === 'mirror') { txt = cc.stage === 'base' ? 'Specify first point of mirror line:' : 'Specify second point of mirror line:'; o.push([`Erase source: ${acad.mirrorErase ? 'Yes' : 'No'}`, acad.mirrorErase ? 'N' : 'Y']); }
+    else if (t === 'arraypolar' && cc.stage === 'base') txt = 'Specify center point of array:';
     else if (cc.stage === 'base') txt = 'Specify base point:';
     else txt = t === 'rotate' ? 'Specify rotation angle:' : t === 'scale' ? 'Specify scale factor:' : t === 'copy' ? 'Specify second point or Enter to exit:' : 'Specify second point:';
   }

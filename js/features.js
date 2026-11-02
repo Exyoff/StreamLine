@@ -144,19 +144,34 @@ export const extrude = {
 
 export const revolve = {
   label: p => `Revolve${targetLabel(p)}`,
-  defaults: () => ({ axis: 'y', angle: 360, segs: S.settings.curveSegs || 64 }),
-  prepare: prepFeature,
+  defaults: () => ({ angle: 360, segs: S.settings.curveSegs || 64 }),
+  prepare(p) {
+    const e = prepFeature(p); if (e) return e;
+    const sk = SK.sketchById(p.pts[0].sk);
+    const lines = sk ? sk.ents.filter(x => x.t === 'line').sort((a, b) => (b.construction ? 1 : 0) - (a.construction ? 1 : 0)).slice(0, 8) : [];
+    p._lines = lines.map((l, i) => ({ v: 'l:' + l.id, label: `${l.construction ? 'Constr.' : 'Line'} ${i + 1}` }));
+    p.axis ??= lines.find(l => l.construction) ? 'l:' + lines.find(l => l.construction).id : 'y';
+  },
   touch: touchFeature,
-  fields: () => [{ key: 'axis', label: 'Axis (sketch)', kind: 'choice', options: [['x', 'X axis'], ['y', 'Y axis']] }, { key: 'angle', label: 'Angle', kind: 'ang' }, { key: 'segs', label: 'Segments', kind: 'int', min: 3, max: 512 }, { key: 'mode', label: 'Operation', kind: 'choice', options: MODES, wide: true }],
+  fields: p => [{ key: 'axis', label: 'Axis', kind: 'choice', options: [['x', 'Sketch X'], ['y', 'Sketch Y'], ...(p._lines || []).map(l => [l.v, l.label])], wide: true }, { key: 'angle', label: 'Angle', kind: 'ang' }, { key: 'segs', label: 'Segments', kind: 'int', min: 3, max: 512 }, { key: 'mode', label: 'Operation', kind: 'choice', options: MODES, wide: true }],
   apply(p) {
     if (Math.abs(p.angle) < 1e-6) return 'Angle must not be zero';
     const groups = profileGroups(p.pts);
     if (!groups.length) return 'Profiles no longer exist';
-    for (const g of groups) for (const r of g.regs) {
-      const vals = r.outer.map(q => (p.axis === 'x' ? q[1] : q[0]));
-      if (Math.min(...vals) < -1e-9 && Math.max(...vals) > 1e-9) return `Profile crosses the sketch ${p.axis.toUpperCase()} axis`;
+    const axisOf = sk => {
+      if (p.axis === 'x') return { p: [0, 0], d: [1, 0] };
+      if (p.axis === 'y') return { p: [0, 0], d: [0, 1] };
+      const l = SK.entById(sk, +String(p.axis).slice(2)); if (!l || l.t !== 'line') return null;
+      const L = SK.d2(l.a, l.b); return L > 1e-12 ? { p: l.a, d: [(l.b[0] - l.a[0]) / L, (l.b[1] - l.a[1]) / L] } : null;
+    };
+    for (const g of groups) {
+      const ax = axisOf(g.sk); if (!ax) return 'Axis line missing';
+      for (const r of g.regs) {
+        const vals = r.outer.map(q => (q[0] - ax.p[0]) * -ax.d[1] + (q[1] - ax.p[1]) * ax.d[0]);
+        if (Math.min(...vals) < -1e-9 && Math.max(...vals) > 1e-9) return 'Profile crosses the revolve axis';
+      }
     }
-    const meshes = groups.map(g => revolveRegions(g.regs, g.sk.plane, p.axis, p.angle, p.segs));
+    const meshes = groups.map(g => revolveRegions(g.regs, g.sk.plane, p.axis === 'x' || p.axis === 'y' ? p.axis : axisOf(g.sk), p.angle, p.segs));
     const tool = meshes.length > 1 ? unionAll(meshes) : meshes[0];
     const anchor = groups[0].sk.plane.o.slice();
     return applyBody(p, tool, 'Revolve', anchor);
@@ -318,3 +333,57 @@ export const mirrorOp = {
   },
 };
 export { faceRegion };
+
+// ---------- body pattern (polar) and slice ----------
+import { slice as sliceMesh, rotateMesh } from './modifiers.js';
+export const polarPattern = {
+  label: () => 'Polar Pattern',
+  defaults: () => ({ count: 6, angle: 360, axis: 'z', cx: 0, cy: 0, cz: 0 }),
+  prepare(p) { if (!S.ed.selected.size) return 'Select a body'; p.ids ??= [...S.ed.selected]; p._base ??= S.doc.nextId; },
+  touch: () => ({ ids: [] }),
+  fields: () => [{ key: 'count', label: 'Count', kind: 'int', min: 2, max: 360 }, { key: 'angle', label: 'Total angle', kind: 'ang' }, { key: 'axis', label: 'Axis', kind: 'choice', options: [['x', 'X'], ['y', 'Y'], ['z', 'Z']], wide: true }, lenF('cx', 'Centre X'), lenF('cy', 'Centre Y'), lenF('cz', 'Centre Z')],
+  apply(p) {
+    const n = Math.max(2, Math.min(360, Math.round(p.count)));
+    const full = Math.abs(Math.abs(p.angle) - 360) < 1e-9, step = full ? p.angle / n : p.angle / (n - 1);
+    const a = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }[p.axis], c = [p.cx, p.cy, p.cz];
+    let id = p._base; const made = [...p.ids];
+    for (let k = 1; k < n; k++) for (const oid of p.ids) {
+      const o = objById(oid); if (!o) continue;
+      const W = rotateMesh(worldVerts(o), c, a, step * k);
+      const anchor = M.centroid(W);
+      const q = newObject(o.name, new M.PolyMesh(W.map(w => M.sub(w, anchor)), o.mesh.f.map(f => f.slice())), anchor, id++);
+      q.color = o.color; S.doc.objects.push(q); made.push(q.id);
+    }
+    S.ed.selected = new Set(made);
+  },
+};
+export const sliceOp = {
+  label: () => 'Slice',
+  defaults: () => ({ plane: 'z' }),
+  prepare(p) {
+    p.obj ??= S.ed.faces[0]?.obj ?? selectedObjs()[0]?.id;
+    if (p.obj == null) return 'Select a body';
+    if (S.ed.faces.length && !p.face) { p.face = JSON.parse(JSON.stringify(S.ed.faces[0])); p.plane = 'face'; p.offset ??= -1; }
+    if (p.offset == null) { // default: through the middle of the body
+      const W = worldVerts(objById(p.obj)), k = 'xyz'.indexOf(p.plane), lo = Math.min(...W.map(q => q[k])), hi = Math.max(...W.map(q => q[k]));
+      const st = S.settings.snapStep; p.offset = Math.round((lo + hi) / 2 / st) * st;
+    }
+    p._id ??= S.doc.nextId;
+  },
+  touch: p => ({ ids: [p.obj], mesh: true }),
+  fields: p => [{ key: 'plane', label: 'Plane', kind: 'choice', options: [['x', 'YZ'], ['y', 'XZ'], ['z', 'XY'], ...(p.face ? [['face', 'Face']] : [])], wide: true }, lenF('offset', p.plane === 'face' ? 'Offset from face' : 'Position')],
+  apply(p) {
+    const o = objById(p.obj); if (!o) return 'Body missing';
+    let n, w;
+    if (p.plane === 'face' && p.face) { n = p.face.n; w = p.face.w + p.offset; }
+    else { n = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }[p.plane]; w = p.offset; }
+    const { pos, neg } = sliceMesh(worldVerts(o), o.mesh.f, n, w);
+    if (!pos.f.length || !neg.f.length) return 'The plane does not cut this body';
+    const xf = xfFor(o);
+    o.mesh = new M.PolyMesh(neg.v.map(xf.toL), neg.f);
+    const anchor = M.centroid(pos.v);
+    const q = newObject(o.name, new M.PolyMesh(pos.v.map(v => M.sub(v, anchor)), pos.f), anchor, p._id);
+    q.color = o.color; S.doc.objects.push(q);
+    S.ed.selected = new Set([o.id, q.id]); S.ed.active = q.id; S.ed.faces = [];
+  },
+};

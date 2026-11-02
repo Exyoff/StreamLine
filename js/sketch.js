@@ -602,3 +602,25 @@ export function angleAt(v, p1, p2) {
   const a = [p1[0] - v[0], p1[1] - v[1]], b = [p2[0] - v[0], p2[1] - v[1]];
   return Math.atan2(Math.abs(a[0] * b[1] - a[1] * b[0]), a[0] * b[0] + a[1] * b[1]) * 180 / Math.PI;
 }
+
+
+// ---------- AutoCAD ARRAYRECT / ARRAYPOLAR (copies) ----------
+export function arrayRect(sk, ids, cols, rows, dx, dy) {
+  cols = Math.max(1, Math.round(cols)); rows = Math.max(1, Math.round(rows));
+  if (cols * rows < 2) return 'Need at least 2 items';
+  if (cols * rows > 2000) return 'Too many items';
+  const made = [];
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    if (!r && !c) continue;
+    made.push(...transformEntities(sk, ids, { kind: 'move', d: [c * dx, r * dy] }, true));
+  }
+  return made;
+}
+export function arrayPolar(sk, ids, center, n, total = 360) {
+  n = Math.round(n);
+  if (n < 2 || n > 2000) return 'Items must be 2–2000';
+  const full = Math.abs(Math.abs(total) - 360) < 1e-9, step = full ? total / n : total / (n - 1);
+  const made = [];
+  for (let k = 1; k < n; k++) made.push(...transformEntities(sk, ids, { kind: 'rotate', c: center, deg: step * k }, true));
+  return made;
+}
