@@ -216,6 +216,29 @@ export function trimAt(sk, e, p) {
     sk.ents.splice(sk.ents.indexOf(e), 1, { id: nid(), t: 'arc', c: e.c.slice(), r: e.r, a0: end, a1: start });
     return true;
   }
+  if (e.t === 'ellipse' || e.t === 'spline') {
+    const pl = entPolyline(e), P = pl.pts, n = P.length, segN = pl.closed ? n : n - 1;
+    const S = [0]; for (let i = 0; i < segN; i++) S.push(S[i] + d2(P[i], P[(i + 1) % n]));
+    const total = S[segN];
+    const param = q => { let best = null; for (let i = 0; i < segN; i++) { const A = P[i], B = P[(i + 1) % n], dx = B[0] - A[0], dy = B[1] - A[1], L2 = dx * dx + dy * dy; let t = L2 ? ((q[0] - A[0]) * dx + (q[1] - A[1]) * dy) / L2 : 0; t = Math.max(0, Math.min(1, t)); const dd = Math.hypot(A[0] + dx * t - q[0], A[1] + dy * t - q[1]); if (!best || dd < best.d) best = { d: dd, s: S[i] + t * Math.sqrt(L2) }; } return best.s; };
+    const at = sv => { let i = 0; while (i < segN - 1 && S[i + 1] < sv) i++; const A = P[i], B = P[(i + 1) % n], t = (sv - S[i]) / ((S[i + 1] - S[i]) || 1); return [A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t]; };
+    const piece = (s0, s1) => { const pts = [at(s0)]; for (let i = 0; i <= segN; i++) if (S[i] > s0 + 1e-9 && S[i] < s1 - 1e-9) pts.push(P[i % n].slice()); pts.push(at(s1)); return pts.length >= 2 ? { id: nid(), t: 'spline', pts } : null; };
+    const ss = uniq(cuts.map(param).filter(v => v > 1e-9 && v < total - 1e-9)), sp = param(p);
+    const keep = [];
+    if (pl.closed) {
+      if (ss.length < 2) { remove(); return true; }
+      let i = ss.findIndex(v => v > sp); if (i < 0) i = 0;
+      const end = ss[i], start = ss[(i - 1 + ss.length) % ss.length]; // removed piece: start → end
+      if (end > start) { const a1 = piece(end, total), a2 = piece(0, start); if (a1 && a2) { a1.pts = a1.pts.concat(a2.pts.slice(1)); keep.push(a1); } }
+      else { const k = piece(end, start); if (k) keep.push(k); }
+    } else {
+      const lo = Math.max(0, ...ss.filter(v => v < sp)), hi = Math.min(total, ...ss.filter(v => v > sp));
+      if (lo > 1e-9) { const k = piece(0, lo); if (k) keep.push(k); }
+      if (hi < total - 1e-9) { const k = piece(hi, total); if (k) keep.push(k); }
+    }
+    sk.ents.splice(sk.ents.indexOf(e), 1, ...keep);
+    return true;
+  }
   if (e.t === 'arc') {
     const sw = sweep(e), off = q => { let a = ang(q) - e.a0; return ((a % TAU) + TAU) % TAU; };
     const ts = uniq(cuts.map(off).filter(t => t > 1e-9 && t < sw - 1e-9));
@@ -609,6 +632,22 @@ export function offsetEntity(sk, e, d, side) {
     const inside = side[0] > e.x && side[0] < e.x + e.w && side[1] > e.y && side[1] < e.y + e.h, s = inside ? -1 : 1;
     if (e.w + 2 * s * d <= 1e-9 || e.h + 2 * s * d <= 1e-9) return 'Offset collapses the rectangle';
     n = { t: 'rect', x: clean(e.x - s * d), y: clean(e.y - s * d), w: clean(e.w + 2 * s * d), h: clean(e.h + 2 * s * d) };
+  } else if (e.t === 'ellipse' || e.t === 'spline') {
+    // offset curve of an ellipse/spline is a spline through offset sample points (as AutoCAD does)
+    const pl = entPolyline(e), P = pl.pts, n = P.length, N = [];
+    for (let i = 0; i < n; i++) {
+      const a = P[(i - 1 + n) % n], b = P[(i + 1) % n];
+      const t = pl.closed ? [b[0] - a[0], b[1] - a[1]] : i === 0 ? [P[1][0] - P[0][0], P[1][1] - P[0][1]] : i === n - 1 ? [P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]] : [b[0] - a[0], b[1] - a[1]];
+      const L = Math.hypot(t[0], t[1]) || 1; N.push([-t[1] / L, t[0] / L]);
+    }
+    let bi = 0; P.forEach((q, i) => { if (d2(q, side) < d2(P[bi], side)) bi = i; });
+    const sgn = Math.sign((side[0] - P[bi][0]) * N[bi][0] + (side[1] - P[bi][1]) * N[bi][1]) || 1;
+    if (e.t === 'ellipse' && pointInPoly(side, P) && d >= Math.min(e.rx, e.ry)) return 'Offset distance is larger than the ellipse';
+    const step = Math.max(1, Math.floor(n / 48));
+    const pts = []; for (let i = 0; i < n; i += step) pts.push(cp([P[i][0] + N[i][0] * d * sgn, P[i][1] + N[i][1] * d * sgn]));
+    if (!pl.closed) pts.push(cp([P[n - 1][0] + N[n - 1][0] * d * sgn, P[n - 1][1] + N[n - 1][1] * d * sgn]));
+    const sp = { t: 'spline', pts, ...(pl.closed ? { closed: true } : {}) };
+    sp.id = nid(); sk.ents.push(sp); return sp;
   } else return 'Cannot offset that';
   n.id = nid(); delete n.construction; sk.ents.push(n);
   return n;
