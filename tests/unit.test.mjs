@@ -334,3 +334,30 @@ test('2D: associative hatch and text', async () => {
   assert.deepEqual(textBox(t)[0], [0, 0]);
   transformEntities(s, [4], { kind: 'move', d: [5, 5] }); assert.deepEqual(s.ents.at(-1).p, [5, 5]);
 });
+
+test('3D: fillet and chamfer round edges (boss rim, hole rim)', async () => {
+  const { edgeLoop, circleBlend, featureEdges } = await import('../js/edges.js');
+  const cyl = makeCylinder(10, 20, 32);
+  const fe = featureEdges(cyl.v, cyl.f);
+  const rim = fe.find(e => cyl.v[e.a][2] === 10 && cyl.v[e.b][2] === 10);
+  const circ = edgeLoop(cyl.v, fe, rim.a, rim.b);
+  assert.ok(circ && circ.loop.length === 32 && Math.abs(circ.R - 10) < 1e-9, 'top rim recognised as a 32-segment circle');
+  const f = circleBlend(cyl.v, cyl.f, circ, 2, 'fillet', 16);
+  assert.ok(typeof f === 'object' && watertight(f), 'filleted boss is watertight');
+  // a faceted revolution (n segments) of a region sweeps n·sin(2π/n)·area·(centroid radius)
+  const K = 32 * Math.sin(2 * Math.PI / 32);
+  const removed = meshVolume(cyl) - meshVolume(f);
+  assert.ok(removed > K * 4 * (1 - Math.PI / 4) * 9 && removed < K * 4 * (1 - Math.PI / 4) * 10, `fillet removes the swept corner (${removed.toFixed(3)})`);
+  const ch = circleBlend(cyl.v, cyl.f, circ, 2, 'chamfer');
+  near(meshVolume(cyl) - meshVolume(ch), K * 2 * (10 - 2 / 3), 1e-6, 'chamfer volume (Pappus, faceted)');
+  assert.ok(watertight(ch), 'chamfered boss watertight');
+  // hole rim in a plate
+  const plate = makeBox(40, 40, 10), hole = makeCylinder(6, 30, 32);
+  const P = polysToMesh(boolean('subtract', toPolys(plate.v, plate.f), toPolys(hole.v, hole.f)));
+  const fe2 = featureEdges(P.v, P.f);
+  const hr = fe2.find(e => [P.v[e.a], P.v[e.b]].every(q => q[2] === 5 && Math.abs(Math.hypot(q[0], q[1]) - 6) < 1e-6));
+  const hc = edgeLoop(P.v, fe2, hr.a, hr.b);
+  assert.ok(hc && Math.abs(hc.R - 6) < 1e-6, 'hole rim recognised');
+  const hf = circleBlend(P.v, P.f, hc, 1.5, 'chamfer');
+  assert.ok(typeof hf === 'object' && watertight(hf) && meshVolume(hf) < meshVolume(P), 'countersunk hole (chamfered rim) is watertight');
+});

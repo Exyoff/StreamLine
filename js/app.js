@@ -16,7 +16,7 @@ import * as F from './features.js';
 import * as Draw from './draw.js';
 import * as Cmd from './cmdline.js';
 import { findRegion, faceRegion } from './modifiers.js';
-import { featureEdges, straightRun } from './edges.js';
+import { featureEdges, straightRun, edgeLoop } from './edges.js';
 
 const DOC_KEY = 'streamline.doc.v1';
 const AXC = ['ax-x', 'ax-y', 'ax-z'];
@@ -141,12 +141,15 @@ function edgeTap(x, y) {
     }
   }
   if (!best) { if (!S.ed.multi) S.ed.edges = []; return selectionChanged(); }
-  const [a, b] = straightRun(best.W, best.fe, best.e.a, best.e.b);
-  const same = q => q.obj === best.o.id && ((M.dist(q.a, a) < 1e-6 && M.dist(q.b, b) < 1e-6) || (M.dist(q.a, b) < 1e-6 && M.dist(q.b, a) < 1e-6));
+  // a round edge (rim of a hole or boss) is picked as one circular loop
+  const circ = edgeLoop(best.W, best.fe, best.e.a, best.e.b);
+  const [a, b] = circ ? [circ.loop[0], circ.loop[1]] : straightRun(best.W, best.fe, best.e.a, best.e.b);
+  const same = q => q.obj === best.o.id && (circ ? q.circle && M.dist(q.circle.c, circ.c) < 1e-6 && Math.abs(q.circle.R - circ.R) < 1e-6 : !q.circle && ((M.dist(q.a, a) < 1e-6 && M.dist(q.b, b) < 1e-6) || (M.dist(q.a, b) < 1e-6 && M.dist(q.b, a) < 1e-6)));
+  const item = circ ? { obj: best.o.id, a, b, circle: circ } : { obj: best.o.id, a, b };
   const i = S.ed.edges.findIndex(same);
   if (i >= 0) S.ed.edges.splice(i, 1);
-  else if (S.ed.multi || (S.ed.edges.length && S.ed.edges.every(q => q.obj === best.o.id))) S.ed.edges.push({ obj: best.o.id, a, b });
-  else S.ed.edges = [{ obj: best.o.id, a, b }];
+  else if (S.ed.multi || (S.ed.edges.length && S.ed.edges.every(q => q.obj === best.o.id))) S.ed.edges.push(item);
+  else S.ed.edges = [item];
   selectionChanged();
 }
 // Plasticity-style face pick: a tap selects the whole planar face (all coplanar connected polygons)
@@ -355,11 +358,12 @@ function drawOverlays() {
   if ((S.ed.workspace === 'cad' || S.ed.workspace === 'model') && S.ed.edges.length) {
     const mat = new THREE.LineBasicMaterial({ color: 0xff9a1f, depthTest: false });
     for (const e of S.ed.edges) {
-      edgeGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...e.a), new THREE.Vector3(...e.b)]), mat));
+      const pts = e.circle ? e.circle.loop : [e.a, e.b];
+      edgeGroup.add(new (e.circle ? THREE.LineLoop : THREE.Line)(new THREE.BufferGeometry().setFromPoints(pts.map(q => new THREE.Vector3(...q))), mat));
       const mk = new THREE.Mesh(new THREE.RingGeometry(0.5, 1, 16), new THREE.MeshBasicMaterial({ color: 0xff9a1f, depthTest: false }));
-      const mid = M.mul(M.add(e.a, e.b), 0.5);
+      const mid = e.circle ? e.circle.loop[0] : M.mul(M.add(e.a, e.b), 0.5);
       mk.position.set(...mid); mk.quaternion.copy(camera().quaternion); mk.scale.setScalar(view.worldPerPixel(mid) * 6); edgeGroup.add(mk);
-      view.label(mid, fmtLen(M.dist(e.a, e.b)), 'edge');
+      view.label(mid, e.circle ? `Ø ${fmtLen(2 * e.circle.R)}` : fmtLen(M.dist(e.a, e.b)), 'edge');
     }
   }
   // edge lengths of selected edges (edit mode)

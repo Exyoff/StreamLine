@@ -1,5 +1,5 @@
 // Offline support: cache the app shell, serve cache-first and refresh in the background.
-const CACHE = 'streamline-v9';
+const CACHE = 'streamline-v10';
 const ASSETS = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/state.js', 'js/units.js', 'js/mesh.js', 'js/scene.js', 'js/ops.js', 'js/operators.js',

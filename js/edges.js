@@ -114,3 +114,58 @@ export function edgeFrame(W, faces, A, B) {
   const w1 = inFace(adj[0]), w2 = inFace(adj[1]);
   return { w1, w2, convex: M.dot(w2, adj[0].n) < 0 };
 }
+
+// ---------- round edges (circular loops: rims of bosses and holes) ----------
+// From a picked segment, follow feature edges that turn gently in one plane; if they close into a
+// circle, return { loop: [points], c, n, R }.
+export function edgeLoop(W, fedges, a, b) {
+  const adj = new Map();
+  for (const e of fedges) { (adj.get(e.a) || adj.set(e.a, []).get(e.a)).push(e.b); (adj.get(e.b) || adj.set(e.b, []).get(e.b)).push(e.a); }
+  const loop = [a, b];
+  for (let guard = 0; guard < 4096; guard++) {
+    const prev = loop[loop.length - 2], cur = loop[loop.length - 1];
+    const d0 = M.norm(M.sub(W[cur], W[prev]));
+    const nx = (adj.get(cur) || []).filter(n => n !== prev).map(n => ({ n, cos: M.dot(d0, M.norm(M.sub(W[n], W[cur]))) })).filter(q => q.cos > Math.cos(Math.PI / 4));
+    if (nx.length !== 1) return null;
+    if (nx[0].n === loop[0]) break;
+    loop.push(nx[0].n);
+  }
+  if (loop.length < 6) return null;
+  const P = loop.map(i => W[i]), c = M.centroid(P), n = M.norm(M.newell(P));
+  const R = M.dist(P[0], c);
+  if (P.some(p => Math.abs(M.dist(p, c) - R) > 1e-4 * Math.max(1, R) || Math.abs(M.dot(M.sub(p, c), n)) > 1e-5)) return null;
+  return { loop: P, c, n, R };
+}
+
+// Fillet / chamfer a circular edge between a flat cap and a cylindrical wall, by revolving
+// the corner profile about the cylinder axis (aligned with the body's facets).
+import { revolveRegions } from './csg.js';
+export function circleBlend(W, faces, circ, size, kind, segs90 = 8) {
+  const A = circ.loop[0], B = circ.loop[1];
+  const fr = edgeFrame(W, faces, A, B);
+  if (typeof fr === 'string') return fr;
+  // which adjacent face is the cap (normal ∥ axis)?
+  const capIsFirst = Math.abs(M.dot(fr.w1, circ.n)) < 1e-6;
+  const wCap = capIsFirst ? fr.w1 : fr.w2, wWall = capIsFirst ? fr.w2 : fr.w1;
+  if (Math.abs(M.dot(wCap, circ.n)) > 1e-6 || Math.abs(Math.abs(M.dot(wWall, circ.n)) - 1) > 1e-3) return 'Only edges between a flat face and a cylindrical wall can be rounded';
+  const u = M.norm(M.sub(A, circ.c));
+  const s1 = Math.sign(M.dot(wCap, u)) || 1;         // along the cap: +1 away from the axis, −1 toward it
+  const s2 = Math.sign(M.dot(wWall, circ.n)) || 1;   // along the wall: +1 / −1 along the axis
+  const R = circ.R, r = size;
+  if (s1 < 0 && r >= R) return 'Radius too large for this edge';
+  const Ap = [R, 0], T1 = [R + s1 * r, 0], T2 = [R, s2 * r];
+  let sec;
+  if (kind === 'chamfer') sec = [Ap, T1, T2];
+  else {
+    const C = [R + s1 * r, s2 * r], k = Math.max(2, Math.round(segs90));
+    sec = [Ap, T1];
+    const a1 = Math.atan2(T1[1] - C[1], T1[0] - C[0]), a2 = Math.atan2(T2[1] - C[1], T2[0] - C[0]);
+    let d = a2 - a1; d = Math.atan2(Math.sin(d), Math.cos(d));
+    for (let i = 1; i < k; i++) sec.push([C[0] + r * Math.cos(a1 + d * i / k), C[1] + r * Math.sin(a1 + d * i / k)]);
+    sec.push(T2);
+  }
+  const pl = { o: circ.c, u, v: circ.n, n: M.cross(u, circ.n) };
+  const tool = revolveRegions([{ outer: sec, holes: [] }], pl, 'y', 360, circ.loop.length);
+  const res = polysToMesh(boolean(fr.convex ? 'subtract' : 'union', toPolys(W, faces), toPolys(tool.v, tool.f)));
+  return res.f.length ? res : 'Blend failed';
+}

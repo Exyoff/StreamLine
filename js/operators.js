@@ -20,6 +20,7 @@ export function subSelection() {
   const W = worldVerts(o), idx = new Set();
   for (const it of items.filter(q => q.obj === obj)) {
     if (S.ed.pick === 'face') { const reg = findRegion(W, o.mesh.f, it.n, it.w, it.p); if (reg) reg.faces.forEach(fi => o.mesh.f[fi].forEach(i => idx.add(i))); }
+    else if (it.circle) { const L = it.circle.loop; W.forEach((p, i) => { if (L.some(q => M.dist(p, q) < 1e-6)) idx.add(i); }); }
     else { const d = M.sub(it.b, it.a), L2 = M.dot(d, d); W.forEach((p, i) => { const t = Math.max(0, Math.min(1, M.dot(M.sub(p, it.a), d) / L2)); if (M.dist(p, M.add(it.a, M.mul(d, t))) < 1e-6) idx.add(i); }); }
   }
   return idx.size ? { obj, idx: [...idx], pts: [...idx].map(i => W[i]) } : null;
@@ -129,7 +130,7 @@ export const transform = {
         return best;
       };
       if (S.ed.pick === 'face') S.ed.faces = S.ed.faces.map(f => { const p2 = fn(f.p), pl = relocate(p2); return pl ? { ...f, p: p2, n: pl.n, w: pl.w } : f; });
-      else S.ed.edges = S.ed.edges.map(e => ({ ...e, a: fn(e.a), b: fn(e.b) }));
+      else S.ed.edges = S.ed.edges.map(e => ({ ...e, a: fn(e.a), b: fn(e.b), ...(e.circle ? { circle: { ...e.circle, loop: e.circle.loop.map(fn), c: fn(e.circle.c) } } : {}) }));
     } else if (p._edit) {
       const o = activeObj(); const xf = xfFor(o);
       for (const i of S.ed.editSel) if (i < o.mesh.v.length) o.mesh.v[i] = xf.toL(fn(xf.toW(o.mesh.v[i])));

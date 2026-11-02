@@ -37,7 +37,7 @@ On iPhone, open the page in Safari, then Share → **Add to Home Screen**. It th
 ## Plasticity-style modelling (Model)
 - **Selection modes:** **Solid / Face / Edge** (keys `4` `3` `2`), plus **Mesh** for polygon editing. Face mode selects a whole planar face, not individual triangles.
 - **Modifiers:** each runs from the selection, opens a compact floating dialog with exact values, and has a **live drag handle** in the viewport.
-  - **Fillet** (`F`) and **Chamfer** (`C`) on edges.
+  - **Fillet** (`F`) and **Chamfer** (`C`) on straight edges and on **round edges**: tapping the rim of a hole or boss selects the whole circle, so a chamfered hole rim gives a countersink.
   - **Push/Pull** (`O`): move a face along its normal, adding or removing material.
   - **Shell** (`H`): hollow the body, with the selected faces left open. The wall offsets are solved exactly from the face planes.
   - **Mirror** (`M`): across YZ, XZ, XY or a selected face, optionally fused with the original.

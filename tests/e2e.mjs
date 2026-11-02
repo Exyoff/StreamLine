@@ -251,6 +251,18 @@ try {
   const va = await st(() => StreamLine.M.meshVolume(StreamLine.S.doc.objects[0].mesh));
   check(va < vb, `Model fillet removes material (${(vb - va).toFixed(3)})`);
   check(await st(() => !!(StreamLine.getLast() && StreamLine.getLast().handle)), 'fillet has a live radius handle');
+  // round edge: the hole rim (Ø10 hole through the plate) → fillet the whole circle
+  await p.tap('#lastop .ib[aria-label=Done]');
+  const zt = await st(() => { const o = StreamLine.S.doc.objects[0]; return Math.max(...o.mesh.v.map(v => v[2] + o.loc[2])); });
+  const holeR = await st(() => StreamLine.SK.sketchById(1).ents.find(e => e.t === 'circle').r);
+  c = await projW([0, -holeR, zt]); await tapV(c.x, c.y);
+  const rimSel = await st(() => StreamLine.S.ed.edges.at(-1));
+  check(rimSel && rimSel.circle && Math.abs(rimSel.circle.R - holeR) < 1e-6, `tapping the hole rim selects the whole circle (R=${rimSel && rimSel.circle && rimSel.circle.R})`);
+  await p.evaluate(() => { const L = StreamLine.S.ed.edges.at(-1); StreamLine.S.ed.edges = [L]; });
+  const vr0 = await st(() => StreamLine.M.meshVolume(StreamLine.S.doc.objects[0].mesh));
+  await p.locator('#actions .act', { hasText: 'Chamfer' }).tap();
+  const vr1 = await st(() => StreamLine.M.meshVolume(StreamLine.S.doc.objects[0].mesh));
+  check(vr1 < vr0, `round-edge chamfer (countersink) removes material (${(vr0 - vr1).toFixed(3)})`);
   await shot('5-plasticity');
   await p.tap('#lastop .ib[aria-label=Done]');
   await p.locator('.ctxseg button', { hasText: 'Solid' }).tap();
@@ -292,7 +304,7 @@ try {
   check(await st(() => StreamLine.S.ed.workspace) === 'model', 'Model workspace opens');
   await p.tap('#btn-undo'); await p.waitForTimeout(150);
   const vu = await st(() => StreamLine.M.meshVolume(StreamLine.S.doc.objects[0].mesh));
-  check(Math.abs(vu - vb) < 1e-9, 'undo reverts the fillet exactly');
+  check(Math.abs(vu - vr0) < 1e-9, 'undo reverts the last operation (the countersink) exactly');
   await shot('3-model');
 } catch (e) {
   await p.screenshot({ path: OUT + 'crash.png' }).catch(() => {});
