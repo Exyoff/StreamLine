@@ -319,3 +319,18 @@ test('2D: ellipse and spline entities', async () => {
   const cl = { ents: [{ id: 1, t: 'spline', pts: [[0, 0], [10, 0], [10, 10], [0, 10]], closed: true }], cons: [] };
   assert.equal(regions(cl).length, 1, 'closed spline forms a region');
 });
+
+test('2D: associative hatch and text', async () => {
+  const { hatchLines, toDXF, transformEntities, textBox } = await import('../js/sketch.js');
+  const s = { ents: [{ id: 1, t: 'rect', x: 0, y: 0, w: 20, h: 10 }, { id: 2, t: 'circle', c: [10, 5], r: 3 }, { id: 3, t: 'hatch', seed: [2, 2], pattern: 'LINE', scale: 1, angle: 0 }], cons: [], nextEnt: 10 };
+  const hl = hatchLines(s, s.ents[2]);
+  assert.ok(hl.lines.length > 0);
+  for (const [a, b] of hl.lines) { assert.ok(a[1] === b[1], 'horizontal lines'); const mid = [(a[0] + b[0]) / 2, a[1]]; assert.ok(Math.hypot(mid[0] - 10, mid[1] - 5) > 2.9 || Math.abs(a[0] - b[0]) < 20, 'gaps over the hole'); }
+  assert.ok(hl.lines.some(([a, b]) => Math.abs(a[1] - 6.35) < 1e-9 && Math.abs(b[0] - a[0]) < 20), 'scanline through the hole is split');
+  s.ents[0].w = 40; s.ents = [...s.ents];
+  assert.ok(hatchLines(s, s.ents[2]).lines.some(([, b]) => b[0] > 39), 'associative: follows the boundary');
+  const t = { id: 4, t: 'text', p: [0, 0], h: 2.5, str: 'A-1', rot: 0 }; s.ents.push(t);
+  assert.match(toDXF(s), /TEXT[\s\S]*A-1/);
+  assert.deepEqual(textBox(t)[0], [0, 0]);
+  transformEntities(s, [4], { kind: 'move', d: [5, 5] }); assert.deepEqual(s.ents.at(-1).p, [5, 5]);
+});

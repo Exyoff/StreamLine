@@ -36,6 +36,7 @@ export function keyPoints(e) {
     case 'rect': return [...rectCorners(e).map((p, i) => ({ k: 'p' + i, p, m: 1 })), { k: 'ctr', p: [e.x + e.w / 2, e.y + e.h / 2], center: 1 }];
     case 'ellipse': return [{ k: 'c', p: e.c, m: 1, center: 1 }, ...[0, 1, 2, 3].map(i => ({ k: 'q' + i, p: ellPt(e, i * Math.PI / 2) }))];
     case 'spline': return e.pts.map((p, i) => ({ k: 'p' + i, p, m: 1 }));
+    case 'text': return [{ k: 'p', p: e.p, m: 1 }];
     default: return [];
   }
 }
@@ -66,6 +67,7 @@ export function movePointNaive(sk, ref, np) {
 }
 function setKey(e, k, p) {
   if (e.t === 'line') e[k] = p.slice();
+  else if (e.t === 'text') e.p = p.slice();
   else if (e.t === 'spline') e.pts[+k.slice(1)] = p.slice();
   else if (e.t === 'ellipse' && k === 'c') e.c = p.slice();
   else if ((e.t === 'circle' || e.t === 'arc') && k === 'c') e.c = p.slice();
@@ -357,13 +359,42 @@ export function pickEntity(sk, p, tol) {
   for (const e of sk.ents) {
     let d;
     if (e.t === 'dim') continue;
+    if (e.t === 'text') { const box = textBox(e); if (pointInPoly(p, box) || box.some((q, i) => segDist(p, q, box[(i + 1) % 4]) <= tol)) { if (!best || tol * 0.5 < best.d) best = { e, d: tol * 0.5 }; } continue; }
+    if (e.t === 'hatch') continue;
     const pl = entPolyline(e);
     d = Infinity;
     const n = pl.pts.length;
     for (let i = 0; i < (pl.closed ? n : n - 1); i++) d = Math.min(d, segDist(p, pl.pts[i], pl.pts[(i + 1) % n]));
     if (d <= tol && (!best || d < best.d)) best = { e, d };
   }
+  if (!best) for (const e of sk.ents) if (e.t === 'hatch') { const r = regionAt(sk, e.seed); if (r && pointInPoly(p, r.outer) && !r.holes.some(hh => pointInPoly(p, hh))) return e; }
   return best ? best.e : null;
+}
+// approximate text extents (0.6 em per character) for picking and DXF
+export function textBox(e) {
+  const w = e.h * 0.62 * Math.max(1, e.str.length), a = (e.rot || 0) * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+  return [[0, 0], [w, 0], [w, e.h], [0, e.h]].map(([x, y]) => [e.p[0] + x * c - y * s, e.p[1] + x * s + y * c]);
+}
+// ---------- HATCH: pattern lines clipped to the region around the seed point ----------
+export const HATCH_PATTERNS = { ANSI31: [{ ang: 45, sp: 3.175 }], ANSI37: [{ ang: 45, sp: 3.175 }, { ang: 135, sp: 3.175 }], NET: [{ ang: 0, sp: 3.175 }, { ang: 90, sp: 3.175 }], LINE: [{ ang: 0, sp: 3.175 }], SOLID: [] };
+export function hatchLines(sk, e) {
+  const r = regionAt(sk, e.seed); if (!r) return null;
+  const loops = [r.outer, ...r.holes], out = [];
+  for (const fam of HATCH_PATTERNS[e.pattern] || []) {
+    const a = (fam.ang + (e.angle || 0)) * Math.PI / 180, u = [Math.cos(a), Math.sin(a)], v = [-u[1], u[0]], sp = fam.sp * (e.scale || 1);
+    const ts = loops.flat().map(q => q[0] * v[0] + q[1] * v[1]), t0 = Math.min(...ts), t1 = Math.max(...ts);
+    if ((t1 - t0) / sp > 4000) continue;
+    for (let t = Math.ceil(t0 / sp) * sp; t <= t1; t += sp) {
+      const xs = [];
+      for (const L of loops) for (let i = 0; i < L.length; i++) {
+        const A = L[i], B = L[(i + 1) % L.length], ta = A[0] * v[0] + A[1] * v[1] - t, tb = B[0] * v[0] + B[1] * v[1] - t;
+        if ((ta < 0) !== (tb < 0)) { const k = ta / (ta - tb), P = [A[0] + (B[0] - A[0]) * k, A[1] + (B[1] - A[1]) * k]; xs.push(P[0] * u[0] + P[1] * u[1]); }
+      }
+      xs.sort((x, y) => x - y);
+      for (let i = 0; i + 1 < xs.length; i += 2) out.push([[u[0] * xs[i] + v[0] * t, u[1] * xs[i] + v[1] * t], [u[0] * xs[i + 1] + v[0] * t, u[1] * xs[i + 1] + v[1] * t]]);
+    }
+  }
+  return { region: r, lines: out };
 }
 export function segDist(p, a, b) {
   const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
@@ -425,6 +456,8 @@ export function toDXF(sk) {
     else if (e.t === 'circle') L.push('0', 'CIRCLE', '8', '0', '10', f(e.c[0]), '20', f(e.c[1]), '30', '0', '40', f(e.r));
     else if (e.t === 'ellipse') L.push('0', 'ELLIPSE', '8', '0', '10', f(e.c[0]), '20', f(e.c[1]), '30', '0', '11', f(e.rx * Math.cos(e.rot)), '21', f(e.rx * Math.sin(e.rot)), '31', '0', '40', f(e.ry / e.rx), '41', '0', '42', f(TAU));
     else if (e.t === 'spline') { const pl = entPolyline(e), n = pl.pts.length; for (let i = 0; i < (pl.closed ? n : n - 1); i++) line(pl.pts[i], pl.pts[(i + 1) % n]); }
+    else if (e.t === 'text') L.push('0', 'TEXT', '8', '0', '10', f(e.p[0]), '20', f(e.p[1]), '30', '0', '40', f(e.h), '50', f(e.rot || 0), '1', e.str.replace(/[\r\n]/g, ' '));
+    else if (e.t === 'hatch') { const hl = hatchLines(sk, e); if (hl) for (const [a, b] of hl.lines) line(a, b); }
     else if (e.t === 'arc') L.push('0', 'ARC', '8', '0', '10', f(e.c[0]), '20', f(e.c[1]), '30', '0', '40', f(e.r), '50', f(e.a0 * 180 / Math.PI), '51', f((e.a0 + sweep(e)) * 180 / Math.PI));
   }
   L.push('0', 'ENDSEC', '0', 'EOF');
@@ -525,6 +558,8 @@ export function transformEntities(sk, ids, op, copy = false) {
     if (e.t === 'line') { e.a = cp(P(e.a)); e.b = cp(P(e.b)); }
     else if (e.t === 'rect') rectFromCorners(e, rectCorners(e).map(P));
     else if (e.t === 'spline') e.pts = e.pts.map(q => cp(P(q)));
+    else if (e.t === 'text') { e.p = cp(P(e.p)); if (op.kind === 'scale') e.h = clean(e.h * op.f); if (op.kind === 'rotate') e.rot = (e.rot || 0) + op.deg; }
+    else if (e.t === 'hatch') { e.seed = cp(P(e.seed)); if (op.kind === 'scale') e.scale = clean(e.scale * op.f); if (op.kind === 'rotate') e.angle = (e.angle || 0) + op.deg; if (op.kind === 'mirror') e.angle = 2 * Math.atan2(op.b[1] - op.a[1], op.b[0] - op.a[0]) * 180 / Math.PI - (e.angle || 0); }
     else if (e.t === 'ellipse') {
       e.c = cp(P(e.c));
       if (op.kind === 'scale') { e.rx = clean(e.rx * op.f); e.ry = clean(e.ry * op.f); }

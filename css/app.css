@@ -278,3 +278,5 @@ body.ws-model #lastop .field.wide { flex-direction: column; align-items: stretch
   background: rgba(15,18,22,.97); border: 1px solid #3b4450; border-radius: 10px; padding: 8px 10px; font: 12px/1.6 var(--mono); color: #cfe9d9; -webkit-user-select: text; user-select: text; }
 #cmdhistory[hidden] { display: none; }
 .vlabel.measure { background: #0f2a1c; color: #8fe3b0; border-color: #2f7a52; font-size: 12.5px; }
+
+#cmdin.free { text-transform: none; }

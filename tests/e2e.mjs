@@ -208,6 +208,16 @@ try {
   await run('PL'); await run('150,0'); await run('@10,0'); await run('A'); await run('@0,10'); await run('L'); await run('@-10,0'); await run('');
   const ar = (await ents()).filter(e => e.t === 'arc').at(-1);
   check(ar && Math.abs(ar.r - 5) < 1e-9 && Math.abs(ar.c[0] - 160) < 1e-9 && Math.abs(ar.c[1] - 5) < 1e-9, `PLINE tangent arc R5 centred 160,5 (${ar && JSON.stringify([ar.c, ar.r])})`);
+  // TEXT and HATCH
+  await run('TEXT'); await run('-60,-20'); await run('5');
+  await p.fill('#cmdin', 'Part A-1 rev B'); await p.press('#cmdin', 'Enter'); await p.waitForTimeout(150);
+  const tx = (await ents()).find(e => e.t === 'text');
+  check(tx && tx.str === 'Part A-1 rev B' && tx.h === 5, `TEXT keeps spaces and case (${tx && JSON.stringify(tx.str)}, h=${tx && tx.h})`);
+  await run('H');
+  c = await proj([-10, 8]); await tapV(c.x, c.y);
+  const ht = (await ents()).find(e => e.t === 'hatch');
+  check(ht && ht.pattern === 'ANSI31', 'HATCH fills the picked region');
+  check(/Hatch/.test(await p.textContent('#lastop')), 'hatch pattern/scale/angle are editable');
   await shot('4-acad');
 
   // --- Plasticity-style Model: face push/pull with a live handle, edge fillet, shell

@@ -477,6 +477,14 @@ function renderSketches() {
         const fixedSet = isAct ? constrainedEntities(s) : null;
         for (const e of s.ents) {
           if (e.t === 'dim') continue;
+          if (e.t === 'text') { sketchGroup.add(textMesh(s, e, isAct && S.ed.drawSel.has(e.id) ? '#6fb4ff' : isAct ? '#f2f2f2' : '#8d93a0')); continue; }
+          if (e.t === 'hatch') {
+            const hl = SK.hatchLines(s, e); if (!hl) continue;
+            const col = isAct && S.ed.drawSel.has(e.id) ? C.sel : isAct ? new THREE.Color('#b9c3cf') : C.other;
+            if (e.pattern === 'SOLID') sketchGroup.add(fillObj(s, hl.region, col, 0.75));
+            else if (hl.lines.length) { const pos = hl.lines.flatMap(([a, b]) => [...SK.toW(s.plane, a), ...SK.toW(s.plane, b)]); const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); sketchGroup.add(new THREE.LineSegments(g, matL(col, top, 0.7))); }
+            continue;
+          }
           const pl = SK.entPolyline(e);
           const sel = isAct && S.ed.drawSel.has(e.id);
           const col = isAct ? (sel ? C.sel : e.construction ? C.constr : fixedSet.has(e.id) ? C.fixed : C.line) : C.other;
@@ -632,17 +640,18 @@ function marker(w, color) {
 // =====================================================================
 // AutoCAD-style commands: edit-command state machines, prompts, typed input
 // =====================================================================
-export const EDIT_TOOLS = new Set(['ellipse', 'spline', 'move', 'copy', 'rotate', 'scale', 'mirror', 'offset', 'erase', 'explode', 'polygon', 'arrayrect', 'arraypolar', 'dist', 'id', 'angle', 'area', 'radius', 'list']);
+export const EDIT_TOOLS = new Set(['text', 'hatch', 'ellipse', 'spline', 'move', 'copy', 'rotate', 'scale', 'mirror', 'offset', 'erase', 'explode', 'polygon', 'arrayrect', 'arraypolar', 'dist', 'id', 'angle', 'area', 'radius', 'list']);
 const INQUIRY = new Set(['dist', 'id', 'angle', 'area', 'radius', 'list']);
 export const lineOpts = { construction: false };
 export const dimOpts = { mode: 'aligned' };
 let result = null; // last measurement drawn in the viewport
 const SELECT_FIRST = new Set(['move', 'copy', 'rotate', 'scale', 'mirror', 'erase', 'explode', 'list', 'arrayrect', 'arraypolar']);
-export const acad = { offsetDist: null, polySides: 6, mirrorErase: false };
+export const acad = { offsetDist: null, polySides: 6, mirrorErase: false, textH: null, hatch: { pattern: 'ANSI31', scale: 1, angle: 0 } };
+export const acceptsSpaces = () => st.cmd && st.cmd.tool === 'text' && st.cmd.stage === 'string';
 function ensureCmd() {
   if (st.cmd && st.cmd.tool === tool()) return st.cmd;
   const t = tool();
-  st.cmd = { tool: t, pts: [], stage: SELECT_FIRST.has(t) ? (S.ed.drawSel.size ? 'base' : 'select') : t === 'offset' ? 'distance' : t === 'polygon' ? 'sides' : t === 'area' || t === 'spline' ? 'collect' : t === 'radius' ? 'pick' : t === 'ellipse' ? 'center' : 'base' };
+  st.cmd = { tool: t, pts: [], stage: SELECT_FIRST.has(t) ? (S.ed.drawSel.size ? 'base' : 'select') : t === 'offset' ? 'distance' : t === 'polygon' ? 'sides' : t === 'area' || t === 'spline' ? 'collect' : t === 'radius' || t === 'hatch' ? 'pick' : t === 'ellipse' ? 'center' : 'base' };
   if ((t === 'erase' || t === 'explode' || t === 'list' || t === 'arrayrect') && S.ed.drawSel.size) { runSelectionCommand(t); }
   return st.cmd;
 }
@@ -688,6 +697,11 @@ function runSelectionCommand(t) {
 function cmdPoint(p) {
   const c = ensureCmd(), t = c.tool;
   if (INQUIRY.has(t)) return inquiryPoint(c, p);
+  if (t === 'text') {
+    if (c.stage === 'base') { c.base = p; c.stage = 'height'; return; }
+    if (c.stage === 'height') { acad.textH = Math.max(1e-6, SK.d2(c.base, p)); c.stage = 'string'; return; }
+    return;
+  }
   if (t === 'ellipse') {
     if (c.stage === 'center') { c.center = p; c.stage = 'axis'; return; }
     if (c.stage === 'axis') { if (SK.d2(p, c.center) < 1e-9) return; c.axis = p; c.stage = 'other'; return; }
@@ -735,6 +749,14 @@ function cmdPoint(p) {
 function cmdTap(s, raw, wpp) {
   const c = ensureCmd();
   if (c.tool === 'radius' || (c.tool === 'area' && c.stage === 'object')) return inquiryTap(c, s, raw, wpp);
+  if (c.tool === 'hatch') {
+    if (!SK.regionAt(s, raw)) return toast('Tap inside a closed area');
+    const seed = raw.slice(), h = acad.hatch;
+    runOp(F.sketchOp('Hatch', s.id, (k, q) => { Object.assign(acad.hatch, { pattern: q.pattern, scale: q.scale, angle: q.angle }); F.addEntity(k, { t: 'hatch', seed, pattern: q.pattern, scale: q.scale, angle: q.angle }); },
+      [{ key: 'pattern', label: 'Pattern', kind: 'choice', options: [['ANSI31', 'ANSI31'], ['ANSI37', 'ANSI37'], ['NET', 'NET'], ['SOLID', 'SOLID']] }, { key: 'scale', label: 'Scale', kind: 'num' }, { key: 'angle', label: 'Angle', kind: 'ang' }]),
+    { pattern: h.pattern, scale: h.scale, angle: h.angle });
+    st.cmd = null; S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('cmd'); return;
+  }
   if (c.stage === 'select') {
     const e = SK.pickEntity(s, raw, 16 * wpp);
     if (e) { S.ed.drawSel.has(e.id) ? S.ed.drawSel.delete(e.id) : S.ed.drawSel.add(e.id); emit('selection'); }
@@ -754,6 +776,7 @@ export function enter() {
   if (['line', 'rect', 'circle', 'arc', 'dim', 'trim', 'extend', 'corner'].includes(t)) { resetTool(); S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); return true; } // Enter ends the command
   if (c && c.tool === 'area' && c.stage === 'collect' && c.pts.length >= 3) { reportArea(c.pts); endInquiry(); return true; }
   if (c && c.tool === 'spline' && c.pts.length >= 2) { placeSpline(c, false); return true; }
+  if (c && c.tool === 'text' && c.stage === 'height') { acad.textH ??= defSize() / 8; c.stage = 'string'; emit('drawcard'); return true; }
   if (c && c.stage === 'select') {
     if (!S.ed.drawSel.size) { toast('Select objects first'); return true; }
     if (t === 'erase' || t === 'explode') { runSelectionCommand(t); return true; }
@@ -776,6 +799,13 @@ export function typed(raw) {
   if (t === 'line' && st.start && (up === 'A' || up === 'ARC')) { st.arcMode = true; emit('drawcard'); return true; }
   if (t === 'line' && st.start && (up === 'L' || up === 'LINE') && st.arcMode) { st.arcMode = false; emit('drawcard'); return true; }
   if (t === 'spline' && c && (up === 'C' || up === 'CLOSE') && c.pts.length >= 3) { placeSpline(c, true); return true; }
+  if (t === 'text' && c && c.stage === 'string') {
+    const base = c.base, h = acad.textH ?? defSize() / 8;
+    add('Text', { t: 'text', p: base, h, str: raw.trim(), rot: 0 });
+    st.cmd = null; S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); return true;
+  }
+  if (t === 'text' && c && c.stage === 'height' && /^[\d.(]/.test(str)) { try { acad.textH = num(str); c.stage = 'string'; emit('drawcard'); } catch (err) { toast(err.message); } return true; }
+  if (t === 'hatch' && ['ANSI31', 'ANSI37', 'NET', 'SOLID'].includes(up)) { acad.hatch.pattern = up; emit('drawcard'); return true; }
   if (t === 'ellipse' && c && c.stage === 'other' && /^[\d.(]/.test(str)) { try { placeEllipse(c, num(str)); } catch (err) { toast(err.message); } return true; }
   if (t === 'line' && (up === 'U' || up === 'UNDO') && st.chain.length > 1) { emit('undoRequest'); st.chain.pop(); st.start = st.chain[st.chain.length - 1]; if (st.chain.length < 2) st.chain = []; return true; }
   if (t === 'mirror' && c && (up === 'Y' || up === 'N' || up === 'YES' || up === 'NO')) { acad.mirrorErase = up[0] === 'Y'; toast(`Erase source: ${acad.mirrorErase ? 'Yes' : 'No'}`); return true; }
@@ -817,10 +847,12 @@ export function typed(raw) {
 // ---------- prompts (AutoCAD wording) ----------
 export function prompt() {
   const t = tool(), c = st.cmd, o = [];
-  const name = { ellipse: 'ELLIPSE', spline: 'SPLINE', arrayrect: 'ARRAYRECT', arraypolar: 'ARRAYPOLAR', dist: 'DIST', id: 'ID', angle: 'MEASUREGEOM', area: 'AREA', radius: 'MEASUREGEOM', list: 'LIST', line: 'LINE', rect: 'RECTANG', circle: 'CIRCLE', arc: 'ARC', trim: 'TRIM', extend: 'EXTEND', dim: dimOpts.mode === 'linear' ? 'DIMLINEAR' : 'DIM', corner: corner.kind === 'fillet' ? 'FILLET' : 'CHAMFER', move: 'MOVE', copy: 'COPY', rotate: 'ROTATE', scale: 'SCALE', mirror: 'MIRROR', offset: 'OFFSET', erase: 'ERASE', explode: 'EXPLODE', polygon: 'POLYGON' }[t];
+  const name = { text: 'TEXT', hatch: 'HATCH', ellipse: 'ELLIPSE', spline: 'SPLINE', arrayrect: 'ARRAYRECT', arraypolar: 'ARRAYPOLAR', dist: 'DIST', id: 'ID', angle: 'MEASUREGEOM', area: 'AREA', radius: 'MEASUREGEOM', list: 'LIST', line: 'LINE', rect: 'RECTANG', circle: 'CIRCLE', arc: 'ARC', trim: 'TRIM', extend: 'EXTEND', dim: dimOpts.mode === 'linear' ? 'DIMLINEAR' : 'DIM', corner: corner.kind === 'fillet' ? 'FILLET' : 'CHAMFER', move: 'MOVE', copy: 'COPY', rotate: 'ROTATE', scale: 'SCALE', mirror: 'MIRROR', offset: 'OFFSET', erase: 'ERASE', explode: 'EXPLODE', polygon: 'POLYGON' }[t];
   let txt;
   if (!name) return { text: 'Command:', options: [] };
   if (t === 'line') { txt = st.start ? (st.arcMode ? 'Specify end point of arc (tangent) or' : 'Specify next point or') : 'Specify first point:'; if (st.start) { o.push(st.arcMode ? ['Line', 'L'] : ['Arc', 'A']); if (st.chain.length > 2) o.push(['Close', 'C']); if (st.chain.length > 1) o.push(['Undo', 'U']); } }
+  else if (t === 'text') { const cc = c || { stage: 'base' }; txt = cc.stage === 'base' ? 'Specify start point of text:' : cc.stage === 'height' ? `Specify height <${fmtLen(acad.textH ?? defSize() / 8)}>:` : 'Enter text, then Enter:'; }
+  else if (t === 'hatch') { txt = `Pick internal point (pattern ${acad.hatch.pattern}) or`; for (const p of ['ANSI31', 'ANSI37', 'NET', 'SOLID']) if (p !== acad.hatch.pattern) o.push([p, p]); }
   else if (t === 'ellipse') { const cc = c || { stage: 'center' }; txt = cc.stage === 'center' ? 'Specify center of ellipse:' : cc.stage === 'axis' ? 'Specify endpoint of axis:' : 'Specify distance to other axis:'; }
   else if (t === 'spline') { const n = c ? c.pts.length : 0; txt = n ? 'Enter next point or Enter to finish, or' : 'Specify first point:'; if (n >= 3) o.push(['Close', 'C']); }
   else if (t === 'rect') txt = st.start ? 'Specify other corner point (or @width,height):' : 'Specify first corner point:';
@@ -964,4 +996,24 @@ function placeTangentArc(a, b) {
   st.lastDir = ccw ? [-v[1] / L, v[0] / L] : [v[1] / L, -v[0] / L];
   if (!st.chain.length) st.chain.push(a);
   st.chain.push(b); st.start = b; st.typed = {};
+}
+
+
+// text rendered as a textured quad in the sketch plane (scales with the drawing, like AutoCAD text)
+function textMesh(s, e, color) {
+  const cv = document.createElement('canvas'), ctx = cv.getContext('2d'), fs = 96;
+  ctx.font = `${fs}px ui-monospace, Menlo, monospace`;
+  const w = Math.max(8, Math.ceil(ctx.measureText(e.str || ' ').width));
+  cv.width = w; cv.height = Math.ceil(fs * 1.25);
+  ctx.font = `${fs}px ui-monospace, Menlo, monospace`; ctx.fillStyle = color; ctx.textBaseline = 'alphabetic';
+  ctx.fillText(e.str, 0, fs);
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+  const H = e.h * 1.25 / 0.72, Wd = H * cv.width / cv.height; // cap height ≈ 0.72 em
+  const a = (e.rot || 0) * Math.PI / 180, u = [Math.cos(a), Math.sin(a)], v = [-u[1], u[0]], down = e.h * (fs * 1.25 - fs) / (fs * 0.72);
+  const P = (x, y) => SK.toW(s.plane, [e.p[0] + u[0] * x + v[0] * (y - down), e.p[1] + u[1] * x + v[1] * (y - down)]);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute([...P(0, 0), ...P(Wd, 0), ...P(Wd, H), ...P(0, H)], 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
+  g.setIndex([0, 1, 2, 0, 2, 3]);
+  return new THREE.Mesh(g, new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, side: THREE.DoubleSide }));
 }
