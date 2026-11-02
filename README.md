@@ -24,6 +24,22 @@ On iPhone, open the page in Safari, then Share → **Add to Home Screen**. It th
 - The Measure tool snaps to vertices, surfaces and the grid, and shows ΔX, ΔY and ΔZ. Edit mode shows the lengths of selected edges.
 - Statistics: surface area, volume and a watertight check.
 
+## Fillet, chamfer and constraints
+- **Sketch fillet and chamfer** (Draw → Fillet tool): tap a corner where two lines meet. Rectangles are split into lines automatically. A fillet arc comes with tangent constraints.
+- **Edge fillet and chamfer** (CAD → Edge tool, then Fillet or Chamfer): works on straight edges between flat faces. Convex edges have material removed and concave edges have it added. A chamfer can use one distance or two (with a swap option). Several edges can be done in one operation, and the result stays editable.
+- **Constraint solver**: Horizontal, Vertical, Parallel, Perpendicular, Equal, Tangent, Concentric and Fix. Dimensions drive the geometry: point-to-point, line length, angle between lines, radius and diameter. Touching points stay joined, and the sketch origin is fixed.
+  - The solver uses minimum-norm Gauss-Newton, so each edit moves the geometry as little as possible, to about 1e-12 mm.
+  - Values you type are held exactly. When you drag to a position the constraints forbid, the point lands on the closest valid position.
+  - The HUD shows the remaining degrees of freedom. Fully-constrained geometry turns white and free geometry stays blue.
+  - Tap a constraint glyph to remove it.
+
+## Tests
+```sh
+npm install          # three (dev) + playwright (optional, for e2e)
+npm test             # geometry core: sketch, CSG, extrude/revolve, fillet/chamfer, constraint solver
+npm run test:e2e     # drives the real UI in an emulated iPhone: Draw → CAD → Model with fillet/chamfer/constraints
+```
+
 ## Pipeline details
 - Sketch geometry is analytic: circles and arcs are exact, and intersections are solved in closed form (line–line, line–circle, circle–circle). Quarter-turn angles produce exact coordinates.
 - Region detection builds a full planar arrangement, so overlapping shapes, split regions and nested holes all work.

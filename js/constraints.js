@@ -73,6 +73,13 @@ function residuals(sk, ctx) {
   for (const d of sk.ents) {
     if (d.t !== 'dim' || d.value == null) continue;
     if (d.kind === 'lin') { const p = pt(sk, d.A), q = pt(sk, d.B); if (p && q) r.push(d2(p, q) - d.value); }
+    else if (d.kind === 'ang') {
+      const a = ent(sk, d.la), b = ent(sk, d.lb); if (!a || !b) continue;
+      const da = lineDir(a), db = lineDir(b);
+      let x = Math.atan2(db[1], db[0]) - Math.atan2(da[1], da[0]) - d.value * Math.PI / 180;
+      x = Math.atan2(Math.sin(x), Math.cos(x));
+      r.push(x * Math.max(1, Math.min(Math.hypot(...da), Math.hypot(...db))));
+    }
     else { const e = ent(sk, d.e); if (e) r.push((d.kind === 'dia' ? 2 * e.r : e.r) - d.value); }
   }
   for (const pin of ctx.pins) {
@@ -167,6 +174,39 @@ export function dof(sk) {
   const r = residuals(sk, ctx);
   if (!r.length) return S.length;
   return S.length - rank(jacobian(sk, ctx, S, r), 1e-7);
+}
+
+// Entities whose every parameter is pinned down by the constraints (null-space test on the Jacobian).
+export function constrainedEntities(sk) {
+  const S = slots(sk), out = new Set();
+  if (!S.length) return out;
+  const ctx = { coin: coincidences(sk), pins: [] };
+  const r = residuals(sk, ctx);
+  const free = new Set(S.map((_, j) => j));
+  if (r.length) {
+    const A = jacobian(sk, ctx, S, r).map(row => row.slice());
+    const m = A.length, n = S.length, piv = [];
+    let row = 0;
+    for (let c = 0; c < n && row < m; c++) {
+      let p = row; for (let i = row + 1; i < m; i++) if (Math.abs(A[i][c]) > Math.abs(A[p][c])) p = i;
+      if (Math.abs(A[p][c]) < 1e-7) continue;
+      [A[row], A[p]] = [A[p], A[row]];
+      const d = A[row][c]; for (let k = c; k < n; k++) A[row][k] /= d;
+      for (let i = 0; i < m; i++) if (i !== row && A[i][c]) { const f = A[i][c]; for (let k = c; k < n; k++) A[i][k] -= f * A[row][k]; }
+      piv.push(c); row++;
+    }
+    const pivSet = new Set(piv), freeCols = S.map((_, j) => j).filter(j => !pivSet.has(j));
+    // a variable is determined iff it has zero component in every null-space vector
+    free.clear();
+    for (const fcol of freeCols) {
+      free.add(fcol);
+      piv.forEach((pc, i) => { if (Math.abs(A[i][fcol]) > 1e-7) free.add(pc); });
+    }
+  }
+  const byEnt = new Map();
+  S.forEach((s, j) => { const k = s.e.id; if (!byEnt.has(k)) byEnt.set(k, true); if (free.has(j)) byEnt.set(k, false); });
+  for (const [id, ok] of byEnt) if (ok) out.add(id);
+  return out;
 }
 
 // Snapshot of an entity's params for a 'fix' constraint.

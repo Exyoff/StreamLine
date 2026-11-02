@@ -95,6 +95,13 @@ try {
   const v = (await ents()).find(e => e.id === slant.id);
   check(Math.abs(v.a[0] - v.b[0]) < 1e-9, `vertical constraint applied (dx=${(v.a[0] - v.b[0]).toExponential(1)})`);
   check(/DOF|constrained/.test(await p.textContent('#hud')), 'HUD reports degrees of freedom');
+  // tap the same line twice with the Dim tool → length dimension, drive it to 15
+  await p.tap('[data-tool=dim]');
+  c = await proj([v.a[0], (v.a[1] + v.b[1]) / 2]); await tapV(c.x, c.y); await tapV(c.x, c.y);
+  await keypad('15');
+  const v2 = (await ents()).find(e => e.id === slant.id);
+  check(Math.abs(Math.hypot(v2.b[0] - v2.a[0], v2.b[1] - v2.a[1]) - 15) < 1e-9 && Math.abs(v2.a[0] - v2.b[0]) < 1e-9, 'line-length dimension drives it to 15 and it stays vertical');
+  await p.tap('[data-tool=select]');
   await shot('1-draw');
 
   // --- CAD: extrude the plate (tap inside, away from the hole)

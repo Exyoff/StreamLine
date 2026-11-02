@@ -67,18 +67,20 @@ function prism(section, e, L) {
 
 // Apply a fillet (radius) or chamfer (distance) to straight edge AB of a world-space body.
 // Returns new world-space PolyMesh, or an error string.
-export function edgeBlend(W, faces, A, B, size, kind, segs = 16) {
+export function edgeBlend(W, faces, A, B, size, kind, segs = 16, size2 = null, swap = false) {
   const adj = adjacentFaces(W, faces, A, B);
   if (typeof adj === 'string') return adj;
   const e = M.norm(M.sub(B, A)), L = M.dist(A, B);
   // in-face directions perpendicular to the edge, pointing away from it into each face
   const inFace = f => { let w = M.norm(M.cross(f.n, e)); if (M.dot(M.sub(f.c, A), w) < 0) w = M.mul(w, -1); return w; };
-  const w1 = inFace(adj[0]), w2 = inFace(adj[1]);
-  const convex = M.dot(w2, adj[0].n) < 0;
+  let w1 = inFace(adj[0]), w2 = inFace(adj[1]);
+  const n1 = adj[0].n;
+  if (swap) [w1, w2] = [w2, w1];
+  const convex = M.dot(swap ? w1 : w2, n1) < 0;
   const phi = Math.acos(Math.max(-1, Math.min(1, M.dot(w1, w2))));
   if (phi < 1e-6 || Math.PI - phi < 1e-6) return 'Faces are tangent — nothing to blend';
   let sec;
-  if (kind === 'chamfer') sec = [A, M.add(A, M.mul(w1, size)), M.add(A, M.mul(w2, size))];
+  if (kind === 'chamfer') sec = [A, M.add(A, M.mul(w1, size)), M.add(A, M.mul(w2, size2 ?? size))];
   else {
     const t = size / Math.tan(phi / 2);
     const bis = M.norm(M.add(w1, w2)), C = M.add(A, M.mul(bis, size / Math.sin(phi / 2)));

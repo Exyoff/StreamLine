@@ -10,14 +10,14 @@ import { runOp, updateOp, commit, cancelOp, getLast } from './ops.js';
 import { fmtLen, fmtAng } from './units.js';
 import { h, field, toast, openKeypad, $ } from './ui.js';
 import { xfFor } from './scene.js';
-import { editAndSolve, dof as sketchDof } from './constraints.js';
+import { editAndSolve, dof as sketchDof, constrainedEntities } from './constraints.js';
 import { defSize } from './operators.js';
 import { I } from './icons.js';
 
 const D = Math.PI / 180;
 export const corner = { kind: 'fillet', size: null };
 export const st = { start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null };
-export function resetTool() { Object.assign(st, { start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null }); view.render(); emit('drawcard'); }
+export function resetTool() { Object.assign(st, { dimLine: null, start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null }); view.render(); emit('drawcard'); }
 const sk = () => SK.activeSketch();
 const tool = () => S.ed.tool;
 
@@ -206,7 +206,18 @@ export function tap(x, y) {
       if (d) editDim(d);
       return;
     }
-    const r = SK.snapPoint(s, raw, { pxTol: 22, wpp, refPts: [] });
+    const r = SK.snapPoint(s, raw, { pxTol: 14, wpp, refPts: [] });
+    const onLine = !st.dimA && !(r.ref && r.kind !== 'Mid') && onCurve && onCurve.t === 'line' ? onCurve : null;
+    if (onLine) {
+      if (!st.dimLine) { st.dimLine = onLine.id; toast('Tap the same line for its length, or another line for the angle'); view.render(); emit('drawcard'); return; }
+      const first = SK.entById(s, st.dimLine); st.dimLine = null;
+      if (!first) return;
+      let d;
+      if (first.id === onLine.id) d = add('Dimension', { t: 'dim', kind: 'lin', A: { e: onLine.id, k: 'a' }, B: { e: onLine.id, k: 'b' }, value: SK.d2(onLine.a, onLine.b) });
+      else { const tmp = { la: first.id, lb: onLine.id }; const ang = SK.lineAngle(s, tmp); if (Math.abs(Math.sin(ang * Math.PI / 180)) < 1e-9) { toast('Lines are parallel — no angle'); return; } d = add('Dimension', { t: 'dim', kind: 'ang', la: first.id, lb: onLine.id, value: ang }); }
+      if (d) editDim(d);
+      return;
+    }
     if (r.ref && r.kind !== 'Mid') {
       if (!st.dimA) { st.dimA = r.ref; toast('Tap the second point'); view.render(); return; }
       if (st.dimA.e === r.ref.e && st.dimA.k === r.ref.k) return;
@@ -227,8 +238,9 @@ function editDim(d) {
   const s = sk(), skId = s.id, did = d.id;
   const v = SK.dimValue(s, d);
   if (v == null) return;
-  openKeypad({ label: d.kind === 'dia' ? 'Diameter' : d.kind === 'rad' ? 'Radius' : 'Distance', kind: 'len', value: v, min: 1e-9,
-    onCommit: nv => runOp(F.sketchOp('Set dimension', skId, (sk2, p) => SK.setDimValue(sk2, SK.entById(sk2, did), p.value), [{ key: 'value', label: 'Value', kind: 'len' }]), { value: nv }) });
+  const kind = d.kind === 'ang' ? 'ang' : 'len';
+  openKeypad({ label: d.kind === 'dia' ? 'Diameter' : d.kind === 'rad' ? 'Radius' : d.kind === 'ang' ? 'Angle' : 'Distance', kind, value: v, min: 1e-9, max: d.kind === 'ang' ? 180 : null,
+    onCommit: nv => runOp(F.sketchOp('Set dimension', skId, (sk2, p) => SK.setDimValue(sk2, SK.entById(sk2, did), p.value), [{ key: 'value', label: 'Value', kind }]), { value: nv }) });
 }
 
 // ---------- constraints ----------
@@ -290,7 +302,7 @@ export function cardContent() {
         h('div', { class: 'field' }, h('label', {}, 'Type'), h('div', { class: 'seg' }, ...[['fillet', 'Fillet'], ['chamfer', 'Chamfer']].map(([k, l]) => h('button', { class: corner.kind === k ? 'on' : '', onclick: () => { corner.kind = k; emit('drawcard'); } }, l)))),
         field({ label: corner.kind === 'fillet' ? 'Radius' : 'Distance', kind: 'len', value: size, min: 1e-6, onCommit: v => { corner.size = v; emit('drawcard'); } })));
   }
-  if (t === 'dim') return title('Dimension', st.dimA ? 'tap the second point' : 'tap two points, or a circle/arc');
+  if (t === 'dim') return title('Dimension', st.dimA ? 'tap the second point' : st.dimLine ? 'same line → length · other line → angle' : 'points, a line, two lines, or a circle');
   if (t === 'line') {
     if (!st.start) return h('div', {}, title('Line', 'tap or drag · or type the start'), xyFields('Start', (p, k) => setStart(p, k)));
     const L = pv() ? SK.d2(st.start, pv()) : 0, A = st.typed.ang ?? (pv() && L > 1e-9 ? ang(st.start, pv()) / D : 0);
@@ -373,7 +385,7 @@ function entFields(s, e) {
 
 // ---------- rendering ----------
 let sketchGroup, previewGroup, renderKey = '';
-const C = { line: new THREE.Color('#e9ecf2'), dim: new THREE.Color('#9aa3b3'), sel: new THREE.Color('#ff9a1f'), other: new THREE.Color('#8d93a0'), prev: new THREE.Color('#4fd1ff') };
+const C = { free: new THREE.Color('#7fb2ff'), line: new THREE.Color('#e9ecf2'), dim: new THREE.Color('#9aa3b3'), sel: new THREE.Color('#ff9a1f'), other: new THREE.Color('#8d93a0'), prev: new THREE.Color('#4fd1ff') };
 const matL = (col, top, op = 1) => new THREE.LineBasicMaterial({ color: col, depthTest: !top, transparent: true, opacity: op });
 export function initDraw() {
   sketchGroup = new THREE.Group(); view.scene.add(sketchGroup);
@@ -394,6 +406,11 @@ function fillObj(s, r, color, opacity) {
   return new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 }));
 }
 function dimGeom(s, d) {
+  if (d.kind === 'ang') {
+    const a = SK.entById(s, d.la), b = SK.entById(s, d.lb); if (!a || !b) return null;
+    const ma = [(a.a[0] + a.b[0]) / 2, (a.a[1] + a.b[1]) / 2], mb = [(b.a[0] + b.b[0]) / 2, (b.a[1] + b.b[1]) / 2];
+    return { pts: [ma, mb], mid: [(ma[0] + mb[0]) / 2, (ma[1] + mb[1]) / 2], text: fmtAng(Math.abs(SK.lineAngle(s, d))), noLine: true };
+  }
   if (d.kind === 'lin') {
     const A = SK.refPoint(s, d.A), B = SK.refPoint(s, d.B); if (!A || !B) return null;
     return { pts: [A, B], mid: [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2], text: fmtLen(SK.d2(A, B)) };
@@ -420,10 +437,11 @@ function renderSketches() {
         const isAct = ws === 'draw' && s.id === S.ed.sketch;
         if (ws === 'model' && S.settings.showSketches === false) continue;
         const top = isAct;
+        const fixedSet = isAct ? constrainedEntities(s) : null;
         for (const e of s.ents) {
           if (e.t === 'dim') continue;
           const pl = SK.entPolyline(e);
-          const col = isAct ? (S.ed.drawSel.has(e.id) ? C.sel : C.line) : C.other;
+          const col = isAct ? (S.ed.drawSel.has(e.id) ? C.sel : fixedSet.has(e.id) ? C.line : C.free) : C.other;
           sketchGroup.add(lineObj(pl.pts.map(p => SK.toW(s.plane, p)), matL(col, top, ws === 'model' ? 0.5 : 1), pl.closed));
         }
         if (isAct) {
@@ -434,7 +452,7 @@ function renderSketches() {
           const pm = new THREE.Points(pg, new THREE.PointsMaterial({ color: 0xffffff, size: 3 * Math.min(devicePixelRatio, 2.5), sizeAttenuation: false, depthTest: false }));
           pm.renderOrder = 5; sketchGroup.add(pm);
           // dims
-          for (const d of s.ents) if (d.t === 'dim') { const g = dimGeom(s, d); if (g) sketchGroup.add(lineObj(g.pts.map(p => SK.toW(s.plane, p)), matL(0x4f8ff7, true, 0.9))); }
+          for (const d of s.ents) if (d.t === 'dim') { const g = dimGeom(s, d); if (g) sketchGroup.add(lineObj(g.pts.map(p => SK.toW(s.plane, p)), matL(0x4f8ff7, true, g.noLine ? 0.35 : 0.9))); }
         }
         if (ws === 'draw' && isAct || ws === 'cad') {
           const selRegs = new Set(S.ed.profiles.filter(q => q.sk === s.id).map(q => SK.regionAt(s, q.pt)).filter(Boolean));

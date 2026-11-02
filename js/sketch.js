@@ -340,16 +340,35 @@ export function segDist(p, a, b) {
 }
 
 // ---------- dimensions ----------
+export function lineAngle(sk, d) {
+  const a = entById(sk, d.la), b = entById(sk, d.lb); if (!a || !b) return null;
+  let x = Math.atan2(b.b[1] - b.a[1], b.b[0] - b.a[0]) - Math.atan2(a.b[1] - a.a[1], a.b[0] - a.a[0]);
+  x = Math.atan2(Math.sin(x), Math.cos(x));
+  return x * 180 / Math.PI;
+}
 export function dimValue(sk, d) {
+  if (d.kind === 'ang') { const v = lineAngle(sk, d); return v == null ? null : Math.abs(v); }
   if (d.kind === 'lin') { const A = refPoint(sk, d.A), B = refPoint(sk, d.B); return A && B ? d2(A, B) : null; }
   const e = entById(sk, d.e); if (!e) return null;
   return d.kind === 'dia' ? 2 * e.r : e.r;
 }
 export function setDimValue(sk, d, v) {
   if (sk.cons && sk.cons.length || sk.ents.some(x => x.t === 'dim' && x.value != null)) {
-    const err = editAndSolve(sk, () => { d.value = v; }, { heavyRefs: d.kind === 'lin' ? [d.A] : [] });
+    const err = editAndSolve(sk, () => {
+      d.value = d.kind === 'ang' ? Math.sign(d.value || 1) * v : v;
+      if (d.kind === 'ang') { // rotate the second line about its start so its length is kept
+        const a = entById(sk, d.la), b = entById(sk, d.lb);
+        if (a && b) { const base = Math.atan2(a.b[1] - a.a[1], a.b[0] - a.a[0]) + d.value * Math.PI / 180, L = d2(b.a, b.b); b.b = [b.a[0] + L * Math.cos(base), b.a[1] + L * Math.sin(base)]; }
+      }
+    }, { heavyRefs: d.kind === 'lin' ? [d.A] : d.kind === 'ang' ? [{ e: d.la, k: 'a' }, { e: d.la, k: 'b' }] : [] });
     if (!err) return;
     d.value = null; // fall back to a direct edit below
+  }
+  if (d.kind === 'ang') {
+    const a = entById(sk, d.la), b = entById(sk, d.lb); if (!a || !b) return 'Missing line';
+    const sgn = Math.sign(lineAngle(sk, d) || 1), base = Math.atan2(a.b[1] - a.a[1], a.b[0] - a.a[0]) + sgn * v * Math.PI / 180;
+    const L = d2(b.a, b.b); b.b = [b.a[0] + L * Math.cos(base), b.a[1] + L * Math.sin(base)];
+    d.value = sgn * v; return;
   }
   if (d.value !== undefined) d.value = v;
   if (d.kind === 'lin') {
@@ -381,7 +400,7 @@ export function toDXF(sk) {
 export function pruneCons(sk) {
   const ids = new Set(sk.ents.map(e => e.id));
   sk.cons = (sk.cons || []).filter(c => ids.has(c.a) && (c.b == null || ids.has(c.b)) && (!c.p || ids.has(c.p.e)));
-  sk.ents = sk.ents.filter(d => d.t !== 'dim' || (d.kind === 'lin' ? ids.has(d.A.e) && ids.has(d.B.e) && refPoint(sk, d.A) && refPoint(sk, d.B) : ids.has(d.e)));
+  sk.ents = sk.ents.filter(d => d.t !== 'dim' || (d.kind === 'lin' ? ids.has(d.A.e) && ids.has(d.B.e) && refPoint(sk, d.A) && refPoint(sk, d.B) : d.kind === 'ang' ? ids.has(d.la) && ids.has(d.lb) : ids.has(d.e)));
 }
 export const CONS_LABEL = { h: 'H', v: 'V', par: '∥', perp: '⊥', eq: '=', tan: 'T', conc: '◎', fix: '⚓', mid: 'M' };
 

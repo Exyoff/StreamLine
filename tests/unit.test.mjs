@@ -160,3 +160,34 @@ test('regression: chamfer after fillet on a holed, chamfered plate stays waterti
   assert.ok(watertight(c), 'after chamfer');
   near(meshVolume(f) - meshVolume(c), 1.5 * 1.5 / 2 * 6, 1e-6, 'chamfer volume');
 });
+
+test('constraints: angle dimension drives the angle between two lines', async () => {
+  const { setDimValue: setDim, lineAngle } = await import('../js/sketch.js');
+  const s = { ents: [{ id: 1, t: 'line', a: [0, 0], b: [10, 0] }, { id: 2, t: 'line', a: [0, 0], b: [5, 7] }], cons: [{ t: 'h', a: 1 }], nextEnt: 10 };
+  const d = { id: 3, t: 'dim', kind: 'ang', la: 1, lb: 2, value: lineAngle(s, { la: 1, lb: 2 }) };
+  s.ents.push(d);
+  setDim(s, d, 30);
+  near(lineAngle(s, d), 30, 1e-9, 'angle');
+  near(s.ents[0].b[1], 0, 1e-12, 'reference line stays horizontal');
+  near(Math.hypot(...s.ents[1].b), Math.hypot(5, 7), 1e-6, 'driven line keeps its length');
+});
+
+test('constraints: fully-constrained detection', async () => {
+  const { constrainedEntities } = await import('../js/constraints.js');
+  const s = { ents: [{ id: 1, t: 'line', a: [0, 0], b: [10, 0] }, { id: 2, t: 'line', a: [10, 0], b: [10, 5] }], cons: [{ t: 'h', a: 1 }], nextEnt: 10 };
+  assert.deepEqual([...constrainedEntities(s)], [], 'nothing fully fixed yet');
+  s.ents.push({ id: 3, t: 'dim', kind: 'lin', A: { e: 1, k: 'a' }, B: { e: 1, k: 'b' }, value: 10 });
+  assert.deepEqual([...constrainedEntities(s)], [1], 'origin + H + length fix line 1 only');
+  s.cons.push({ t: 'v', a: 2 }); s.ents.push({ id: 4, t: 'dim', kind: 'lin', A: { e: 2, k: 'a' }, B: { e: 2, k: 'b' }, value: 5 });
+  assert.deepEqual([...constrainedEntities(s)].sort(), [1, 2]);
+  assert.equal(dof(s), 0);
+});
+
+test('3D two-distance chamfer', () => {
+  const box = makeBox(20, 20, 20);
+  const c = edgeBlend(box.v, box.f, [-10, -10, 10], [10, -10, 10], 2, 'chamfer', 16, 5);
+  near(meshVolume(c), 8000 - 20 * (2 * 5 / 2), 1e-9); assert.ok(watertight(c));
+  const s = edgeBlend(box.v, box.f, [-10, -10, 10], [10, -10, 10], 2, 'chamfer', 16, 5, true);
+  near(meshVolume(s), 8000 - 20 * 5, 1e-9, 'swap keeps the same volume');
+  assert.notDeepEqual(c.v.map(p => p.join()).sort(), s.v.map(p => p.join()).sort(), 'but mirrors the bevel');
+});

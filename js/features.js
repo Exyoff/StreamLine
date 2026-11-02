@@ -197,14 +197,18 @@ export const edgeBlendOp = {
     p._objs = [...new Set(p.edges.map(e => e.obj))];
   },
   touch: p => ({ ids: p._objs, mesh: true }),
-  fields: p => [lenF('size', p.kind === 'fillet' ? 'Radius' : 'Distance'), ...(p.kind === 'fillet' ? [{ key: 'segs', label: 'Segments / 90°', kind: 'int', min: 1, max: 64 }] : []), { key: 'kind', label: 'Type', kind: 'choice', options: [['fillet', 'Fillet'], ['chamfer', 'Chamfer']], wide: true }],
+  fields: p => [lenF('size', p.kind === 'fillet' ? 'Radius' : 'Distance 1'), ...(p.kind === 'fillet' ? [{ key: 'segs', label: 'Segments / 90°', kind: 'int', min: 1, max: 64 }] : [lenF('size2', 'Distance 2'), { key: 'swap', label: 'Swap sides', kind: 'bool' }]), { key: 'kind', label: 'Type', kind: 'choice', options: [['fillet', 'Fillet'], ['chamfer', 'Chamfer']], wide: true }],
   apply(p) {
     if (!(p.size > 0)) return 'Size must be > 0';
     for (const id of p._objs) {
       const o = objById(id); if (!o) return 'Body missing';
       let W = worldVerts(o), faces = o.mesh.f;
       for (const e of p.edges.filter(x => x.obj === id)) {
-        const r = edgeBlend(W, faces, e.a, e.b, p.size, p.kind, Math.max(1, Math.round(p.segs)));
+        // Distance 2 follows Distance 1 until it is edited on its own
+        if (p.size2 == null || p.size2 === p._size1) p.size2 = p.size;
+        p._size1 = p.size;
+        if (p.kind === 'chamfer' && !(p.size2 > 0)) return 'Distance 2 must be > 0';
+        const r = edgeBlend(W, faces, e.a, e.b, p.size, p.kind, Math.max(1, Math.round(p.segs)), p.kind === 'chamfer' ? p.size2 : null, !!p.swap);
         if (typeof r === 'string') return r;
         W = r.v; faces = r.f;
       }
