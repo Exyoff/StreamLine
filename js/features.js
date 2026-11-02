@@ -402,3 +402,55 @@ export const thickenOp = {
     const xf = xfFor(o); o.mesh = new M.PolyMesh(r.v.map(xf.toL), r.f);
   },
 };
+
+// ---------- LOFT and SWEEP ----------
+import { loftSections, sweepRegion, pathFrames, sketchPath } from './sweep.js';
+export const loftOp = {
+  label: p => `Loft${targetLabel(p)}`,
+  defaults: () => ({ segs: 64 }),
+  prepare(p) {
+    p.pts ??= JSON.parse(JSON.stringify(S.ed.profiles));
+    if (p.pts.length < 2) return 'Select 2 or more profiles (multi-select on), in loft order';
+    p.mode ??= 'new'; p.target ??= selectedObjs()[0]?.id ?? null; p._id ??= S.doc.nextId;
+  },
+  touch: touchFeature,
+  fields: () => [{ key: 'segs', label: 'Points per section', kind: 'int', min: 8, max: 512 }, { key: 'mode', label: 'Operation', kind: 'choice', options: MODES, wide: true }],
+  apply(p) {
+    const secs = [];
+    for (const it of p.pts) {
+      const sk = SK.sketchById(it.sk), r = sk && SK.regionAt(sk, it.pt);
+      if (!r) return 'A profile no longer exists';
+      secs.push(r.outer.map(q => SK.toW(sk.plane, q)));
+    }
+    const m = loftSections(secs, Math.max(8, Math.round(p.segs))); if (typeof m === 'string') return m;
+    return applyBody(p, m, 'Loft', M.centroid(m.v));
+  },
+};
+export const sweepOp = {
+  label: p => `Sweep${targetLabel(p)}`,
+  prepare(p) {
+    p.pts ??= JSON.parse(JSON.stringify(S.ed.profiles.slice(0, 1)));
+    if (!p.pts.length) return 'Select the profile to sweep';
+    const prof = SK.sketchById(p.pts[0].sk);
+    const others = (S.doc.sketches || []).filter(s => s.id !== prof.id && sketchPath(s));
+    if (!others.length) return 'Draw the path (lines / arcs / spline) in another sketch first';
+    p._paths = others.map(s => [s.id, s.name]);
+    p.path ??= others[others.length - 1].id;
+    p.mode ??= 'new'; p.target ??= selectedObjs()[0]?.id ?? null; p._id ??= S.doc.nextId;
+  },
+  touch: touchFeature,
+  fields: p => [{ key: 'path', label: 'Path sketch', kind: 'choice', options: p._paths || [], wide: true }, { key: 'mode', label: 'Operation', kind: 'choice', options: MODES, wide: true }],
+  apply(p) {
+    const sk = SK.sketchById(p.pts[0].sk), r = sk && SK.regionAt(sk, p.pts[0].pt);
+    if (!r) return 'Profile no longer exists';
+    const ps = SK.sketchById(p.path); if (!ps) return 'Path sketch missing';
+    const c = M.centroid(r.outer.map(q => SK.toW(sk.plane, q)));
+    const path = sketchPath(ps, c); if (!path) return 'No open path in that sketch';
+    const S0 = path[0], pl = sk.plane;
+    const loc = q => { const w = M.sub(SK.toW(pl, q), S0); return [M.dot(w, pl.u), M.dot(w, pl.v)]; };
+    const frames = pathFrames(path, { u: pl.u, v: pl.v }); if (!frames) return 'Path too short';
+    const m = sweepRegion({ outer: r.outer.map(loc), holes: r.holes.map(h => h.map(loc)) }, frames);
+    if (!m.f.length) return 'Sweep failed';
+    return applyBody(p, m, 'Sweep', M.centroid(m.v));
+  },
+};

@@ -299,6 +299,32 @@ try {
   check(Math.abs(vt - 300) < 1e-6, `Thicken turns a 10×10 plane into a 3 mm plate (${vt.toFixed(4)} mm³)`);
   await p.tap('#btn-undo'); await p.tap('#btn-undo'); await p.tap('#btn-undo'); await p.waitForTimeout(150);
 
+  // --- LOFT and SWEEP (sketches built through the API, operations through the UI)
+  await p.tap('[data-ws=cad]'); await p.waitForTimeout(300);
+  const ids = await p.evaluate(() => {
+    const { runOp, F, S } = StreamLine;
+    const mk = (plane, offset, ents) => { runOp(F.newSketch, { plane, offset }); const id = S.ed.sketch; runOp(F.sketchOp('t', id, k => { for (const e of ents) F.addEntity(k, e); })); return id; };
+    const a = mk('XY', 40, [{ t: 'rect', x: 100, y: -5, w: 10, h: 10 }]);
+    const b = mk('XY', 50, [{ t: 'rect', x: 102.5, y: -2.5, w: 5, h: 5 }]);
+    const pr = mk('XY', 70, [{ t: 'rect', x: 129, y: -1, w: 2, h: 2 }]);
+    const path = mk('XZ', 0, [{ t: 'line', a: [130, 70], b: [130, 90] }, { t: 'line', a: [130, 90], b: [150, 90] }]);
+    return { a, b, pr, path };
+  });
+  await p.tap('[data-ws=cad]'); await p.waitForTimeout(300);
+  await p.evaluate(({ a, b }) => { StreamLine.S.ed.profiles = [{ sk: a, pt: [105, 0] }, { sk: b, pt: [105, 0] }]; StreamLine.S.ed.selected = new Set(); }, ids);
+  const nObj = await st(() => StreamLine.S.doc.objects.length);
+  await p.locator('#actions .act', { hasText: 'Loft' }).tap();
+  const lv = await st(() => StreamLine.M.meshVolume(StreamLine.S.doc.objects.at(-1).mesh));
+  check(await st(() => StreamLine.S.doc.objects.length) === nObj + 1 && Math.abs(lv - 10 / 3 * (100 + 25 + 50)) < 1e-6, `LOFT square → smaller square is an exact frustum (${lv.toFixed(4)})`);
+  await p.tap('#lastop .ib[aria-label=Done]');
+  await p.evaluate(({ pr }) => { StreamLine.S.ed.profiles = [{ sk: pr, pt: [130, 0] }]; StreamLine.S.ed.selected = new Set(); }, ids);
+  await p.locator('#actions .act', { hasText: 'Sweep' }).tap();
+  const sv = await st(() => StreamLine.M.meshVolume(StreamLine.S.doc.objects.at(-1).mesh));
+  check(Math.abs(sv - 4 * 40) < 1e-6, `SWEEP a 2×2 section along a 20+20 L-path = 160 mm³ (${sv.toFixed(4)})`);
+  await p.tap('#lastop .ib[aria-label=Done]');
+  for (let i = 0; i < 10; i++) await p.tap('#btn-undo'); // sweep, loft and the 4 sketches (2 ops each)
+  await p.waitForTimeout(150);
+
   // --- Model workspace + undo
   await p.tap('[data-ws=model]'); await p.waitForTimeout(400);
   check(await st(() => StreamLine.S.ed.workspace) === 'model', 'Model workspace opens');

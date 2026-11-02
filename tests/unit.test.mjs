@@ -361,3 +361,19 @@ test('3D: fillet and chamfer round edges (boss rim, hole rim)', async () => {
   const hf = circleBlend(P.v, P.f, hc, 1.5, 'chamfer');
   assert.ok(typeof hf === 'object' && watertight(hf) && meshVolume(hf) < meshVolume(P), 'countersunk hole (chamfered rim) is watertight');
 });
+
+test('3D: sweep (mitred) and loft', async () => {
+  const { sweepRegion, pathFrames, loftSections } = await import('../js/sweep.js');
+  const sq = { outer: [[-1, -1], [1, -1], [1, 1], [-1, 1]], holes: [] };
+  const straight = sweepRegion(sq, pathFrames([[0, 0, 0], [0, 0, 10]], { u: [1, 0, 0], v: [0, 1, 0] }));
+  near(meshVolume(straight), 40, 1e-9); assert.ok(watertight(straight));
+  const bent = sweepRegion(sq, pathFrames([[0, 0, 0], [0, 0, 10], [10, 0, 10]], { u: [1, 0, 0], v: [0, 1, 0] }));
+  near(meshVolume(bent), 80, 1e-9, 'mitred L-sweep keeps the exact section'); assert.ok(watertight(bent));
+  const tube = sweepRegion({ outer: sq.outer.map(p => p.map(c => c * 2)), holes: [sq.outer.slice().reverse()] }, pathFrames([[0, 0, 0], [0, 0, 5]], { u: [1, 0, 0], v: [0, 1, 0] }));
+  near(meshVolume(tube), (16 - 4) * 5, 1e-9, 'section with a hole'); assert.ok(watertight(tube));
+  const s10 = z => [[-5, -5, z], [5, -5, z], [5, 5, z], [-5, 5, z]], s5 = z => [[-2.5, -2.5, z], [2.5, -2.5, z], [2.5, 2.5, z], [-2.5, 2.5, z]];
+  const prism = loftSections([s10(0), s10(10)], 64);
+  near(meshVolume(prism), 1000, 1e-6); assert.ok(watertight(prism));
+  const frustum = loftSections([s10(0), s5(10)], 64);
+  near(meshVolume(frustum), 10 / 3 * (100 + 25 + 50), 1e-6, 'square frustum'); assert.ok(watertight(frustum));
+});

@@ -47,6 +47,7 @@ On iPhone, open the page in Safari, then Share → **Add to Home Screen**. It th
   - **Thicken:** turn a surface, such as an added Plane, into a solid.
 - **Direct modelling:** in Face or Edge mode, the Move/Rotate/Scale gizmo drags the selected faces or edges, and the neighbouring faces stretch to follow.
 - **Revolve** can use any line in the sketch as its axis, including construction lines.
+- **Loft** (`LOFT`): a solid through two or more profiles, resampled and aligned automatically. **Sweep** (`SWEEP`): a profile, holes included, along an open path (lines, arcs or a spline) in another sketch. Corners are mitred so the section stays exact. Both can create a new body or Join, Cut or Intersect with an existing one.
 
 ## Fillet, chamfer and constraints
 - **Sketch fillet and chamfer** (Draw → Fillet tool): tap a corner where two lines meet. Rectangles are split into lines automatically. A fillet arc comes with tangent constraints.
@@ -90,4 +91,4 @@ npm run test:e2e     # drives the real UI in an emulated iPhone: Draw → CAD �
 Keyboard (iPad or desktop): `Tab` `1 2 3` `G R S` `E I F X A` `⌘Z` `⇧⌘Z` `N` `.` and numpad views.
 
 ## Layout
-`js/cmdline.js` AutoCAD command line · `js/modifiers.js` push/pull, shell, mirror · `js/sketch.js` 2D sketch geometry, snapping, regions, trim, DXF · `js/draw.js` Draw workspace · `js/features.js` extrude, revolve, booleans · `js/csg.js` double-precision BSP CSG and mesh clean-up · `js/mesh.js` polygon mesh and modelling ops · `js/operators.js` operator definitions · `js/ops.js` redo panel and undo · `js/viewport.js` renderer, camera, picking, gestures · `js/gizmo.js` transform handles · `js/units.js` units and expression parser · `js/ui.js` keypad and widgets · `js/io.js` STL/OBJ · `vendor/` three.js r170 (MIT).
+`js/cmdline.js` AutoCAD command line · `js/modifiers.js` push/pull, shell, mirror · `js/sweep.js` loft and sweep · `js/sketch.js` 2D sketch geometry, snapping, regions, trim, DXF · `js/draw.js` Draw workspace · `js/features.js` extrude, revolve, booleans · `js/csg.js` double-precision BSP CSG and mesh clean-up · `js/mesh.js` polygon mesh and modelling ops · `js/operators.js` operator definitions · `js/ops.js` redo panel and undo · `js/viewport.js` renderer, camera, picking, gestures · `js/gizmo.js` transform handles · `js/units.js` units and expression parser · `js/ui.js` keypad and widgets · `js/io.js` STL/OBJ · `vendor/` three.js r170 (MIT).
