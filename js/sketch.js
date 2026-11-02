@@ -498,7 +498,7 @@ export function findCorner(sk, p, tol) {
 export function cornerOp(sk, p, tol, r, kind) {
   const c = findCorner(sk, p, tol);
   if (!c) return 'Tap a corner where exactly two lines (or a line and an arc) meet';
-  if (c.A.e.t === 'arc' && c.B.e.t === 'arc') return 'Arc–arc corners are not supported yet';
+  if (c.A.e.t === 'arc' && c.B.e.t === 'arc') return arcArcCorner(sk, c.A, c.B, r, kind);
   if (c.A.e.t === 'arc' || c.B.e.t === 'arc') return lineArcCorner(sk, c.A.e.t === 'line' ? c.A : c.B, c.A.e.t === 'arc' ? c.A : c.B, r, kind);
   const P = c.A.p.slice();
   const other = q => (q.k === 'a' ? q.e.b : q.e.a);
@@ -749,5 +749,46 @@ function lineArcCorner(sk, Lq, Aq, r, kind) {
   sk.ents.push(e);
   sk.cons = sk.cons || [];
   sk.cons.push({ id: nid(), t: 'tan', a: L.id, b: e.id }, { id: nid(), t: 'tan', a: Ar.id, b: e.id });
+  return { ent: e };
+}
+
+
+// FILLET / CHAMFER where two arcs meet (shared endpoint)
+function arcArcCorner(sk, Aq, Bq, r, kind) {
+  const P = Aq.p.slice(), nid = () => (sk.nextEnt = (sk.nextEnt || 1000) + 1);
+  const info = q => {
+    const e = q.e, sw = sweep(e), angOf = x => Math.atan2(x[1] - e.c[1], x[0] - e.c[0]);
+    const along = x => { let a = ((angOf(x) - e.a0) % TAU + TAU) % TAU; return q.k === 's' ? a : sw - a; };
+    const on = x => { const a = along(x); return a > 1e-9 && a < sw - 1e-9; };
+    const trim = T => { const aT = angOf(T); if (q.k === 's') { const end = e.a0 + sw; e.a0 = aT; e.a1 = aT + (((end - aT) % TAU) + TAU) % TAU; } else e.a1 = e.a0 + (((aT - e.a0) % TAU) + TAU) % TAU; };
+    return { e, on, trim, angOf };
+  };
+  const A = info(Aq), B = info(Bq);
+  if (kind === 'chamfer') {
+    const pick = (X, q) => { const half = 2 * Math.asin(Math.min(1, r / (2 * X.e.r))), aP = X.angOf(P); return [aP + half, aP - half].map(a => pol(X.e.c, X.e.r, a)).find(X.on); };
+    const T1 = pick(A, Aq), T2 = pick(B, Bq);
+    if (!T1 || !T2) return 'Chamfer distance is longer than an arc';
+    A.trim(T1); B.trim(T2);
+    const ln = { id: nid(), t: 'line', a: T1, b: T2 }; sk.ents.push(ln); return { ent: ln };
+  }
+  const cands = [];
+  for (const r1 of [A.e.r + r, A.e.r - r]) for (const r2 of [B.e.r + r, B.e.r - r]) {
+    if (r1 <= 1e-12 || r2 <= 1e-12) continue;
+    for (const C of interPrims({ C: 1, c: A.e.c, r: r1 }, { C: 1, c: B.e.c, r: r2 })) {
+      const T1 = (() => { const k = d2(C, A.e.c); return [A.e.c[0] + (C[0] - A.e.c[0]) * A.e.r / k, A.e.c[1] + (C[1] - A.e.c[1]) * A.e.r / k]; })();
+      const T2 = (() => { const k = d2(C, B.e.c); return [B.e.c[0] + (C[0] - B.e.c[0]) * B.e.r / k, B.e.c[1] + (C[1] - B.e.c[1]) * B.e.r / k]; })();
+      if (A.on(T1) && B.on(T2)) cands.push({ C, T1, T2, d: d2(C, P) });
+    }
+  }
+  if (!cands.length) return 'Radius too large for this corner';
+  const { C, T1, T2 } = cands.sort((x, y) => x.d - y.d)[0];
+  A.trim(T1); B.trim(T2);
+  const a1 = Math.atan2(T1[1] - C[1], T1[0] - C[0]), a2 = Math.atan2(T2[1] - C[1], T2[0] - C[0]);
+  const ccw = (((a2 - a1) % TAU) + TAU) % TAU;
+  const arc = ccw <= Math.PI ? { a0: a1, a1: a1 + ccw } : { a0: a2, a1: a2 + (TAU - ccw) };
+  const e = { id: nid(), t: 'arc', c: C, r, ...arc };
+  sk.ents.push(e);
+  sk.cons = sk.cons || [];
+  sk.cons.push({ id: nid(), t: 'tan', a: A.e.id, b: e.id }, { id: nid(), t: 'tan', a: B.e.id, b: e.id });
   return { ent: e };
 }
