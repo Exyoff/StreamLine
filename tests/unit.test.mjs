@@ -421,3 +421,24 @@ test('2D: fillet where two arcs meet', () => {
   for (const c of [c1, c2]) { const d = Math.hypot(f.c[0] - c[0], f.c[1] - c[1]); assert.ok(Math.abs(d - 12) < 1e-9 || Math.abs(d - 8) < 1e-9, 'tangent to both arcs'); }
   assert.equal(s.cons.filter(c => c.t === 'tan').length, 2);
 });
+
+test('2D: offset and trim ellipses and splines', async () => {
+  const { offsetEntity, trimAt, entPolyline } = await import('../js/sketch.js');
+  const s = { ents: [{ id: 1, t: 'ellipse', c: [0, 0], rx: 10, ry: 5, rot: 0 }], cons: [], nextEnt: 10 };
+  const o = offsetEntity(s, s.ents[0], 1, [0, 20]);
+  assert.equal(o.t, 'spline'); assert.ok(o.closed);
+  const P = entPolyline(o).pts;
+  const minD = Math.min(...P.map(q => Math.min(...entPolyline(s.ents[0]).pts.map(r => Math.hypot(q[0] - r[0], q[1] - r[1])))));
+  assert.ok(Math.abs(minD - 1) < 0.05, `outside offset ≈ 1 mm everywhere (${minD.toFixed(3)})`);
+  assert.match(offsetEntity(s, s.ents[0], 6, [0, 0]), /larger/);
+  // trim a spline crossed by a line: the middle piece goes, two splines remain
+  const t = { ents: [{ id: 1, t: 'spline', pts: [[0, 0], [10, 5], [20, 0]] }, { id: 2, t: 'line', a: [7, -5], b: [7, 10] }, { id: 3, t: 'line', a: [13, -5], b: [13, 10] }], cons: [], nextEnt: 10 };
+  trimAt(t, t.ents[0], [10, 4.9]);
+  const sp = t.ents.filter(e => e.t === 'spline');
+  assert.equal(sp.length, 2, 'spline split into two pieces');
+  assert.ok(Math.abs(sp[0].pts.at(-1)[0] - 7) < 1e-6 && Math.abs(sp[1].pts[0][0] - 13) < 1e-6, 'pieces end on the cutting lines');
+  // trim a closed ellipse between two cutting lines → one open spline remains
+  const el = { ents: [{ id: 1, t: 'ellipse', c: [0, 0], rx: 10, ry: 5, rot: 0 }, { id: 2, t: 'line', a: [-3, -10], b: [-3, 10] }, { id: 3, t: 'line', a: [3, -10], b: [3, 10] }], cons: [], nextEnt: 10 };
+  trimAt(el, el.ents[0], [0, 5]);
+  assert.equal(el.ents.filter(e => e.t === 'spline').length, 1); assert.equal(el.ents.filter(e => e.t === 'ellipse').length, 0);
+});
