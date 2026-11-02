@@ -531,6 +531,7 @@ function renderActions() {
       act(I.subdiv, 'Slice', () => runOp(F.sliceOp)),
       act(I.revolve, 'Pattern', () => runOp(F.polarPattern)),
       act(I.plane, 'Thicken', () => runOp(F.thickenOp)),
+      act(I.cone, 'Draft', () => { if (!S.ed.faces.length) { setPick('face'); toast('Tap the side faces to draft, then Draft'); return; } runOp(F.draftOp); }),
       act(I.plus, 'Add', e => openAddMenu(e.currentTarget)),
       act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; toast('Duplicated — drag the gizmo or type an offset'); refresh(); } }),
       act(I.array, 'Array', () => runOp(OPS.arrayOp)),

@@ -45,6 +45,7 @@ On iPhone, open the page in Safari, then Share → **Add to Home Screen**. It th
   - **Slice** (`SL`): cut by a plane through the body, a world plane or a selected face. Both halves are kept.
   - **Pattern** (`3A`): a polar pattern of bodies around X, Y or Z.
   - **Thicken:** turn a surface, such as an added Plane, into a solid.
+  - **Draft:** tilt the selected side faces by an exact angle about a neutral plane, along +X, +Y or +Z. The geometry is re-solved from the face planes, so the edges stay exact.
 - **Direct modelling:** in Face or Edge mode, the Move/Rotate/Scale gizmo drags the selected faces or edges, and the neighbouring faces stretch to follow.
 - **Revolve** can use any line in the sketch as its axis, including construction lines.
 - **Loft** (`LOFT`): a solid through two or more profiles, resampled and aligned automatically. **Sweep** (`SWEEP`): a profile, holes included, along an open path (lines, arcs or a spline) in another sketch. Corners are mitred so the section stays exact. Both can create a new body or Join, Cut or Intersect with an existing one.
