@@ -184,3 +184,34 @@ export function thicken(W, faces, t) {
   const res = polysToMesh(toPolys(m.v, m.f));
   return res.f.length ? res : 'Thicken failed';
 }
+
+// Draft: tilt the given face regions by `deg` about their line on the neutral plane d·x = z0, so the
+// part narrows along the pull direction d. Every vertex is re-solved from its (new) face planes.
+export function draft(W, faces, regs, d, z0, deg) {
+  const t = deg * Math.PI / 180;
+  const fPlanes = faces.map(f => planeOf(W, f));
+  const repl = new Map();
+  for (const reg of regs) {
+    if (Math.abs(M.dot(reg.n, d)) > 1 - 1e-6) return 'Faces facing the pull direction cannot be drafted';
+    const a = M.norm(M.cross(d, reg.n));                 // hinge direction (in the face, ⟂ pull)
+    const e = M.cross(reg.n, a);                         // up the face
+    const c = regionCentroid(W, faces, reg);
+    const h = M.add(c, M.mul(e, (z0 - M.dot(c, d)) / (M.dot(e, d) || 1e-12))); // point on the hinge
+    // rotate the normal about the hinge so it leans toward +d (the face moves inward going up)
+    const n2 = M.norm(M.add(M.mul(reg.n, Math.cos(t)), M.mul(d, Math.sin(t))));
+    for (const fi of reg.faces) repl.set(fi, { n: n2, w: M.dot(n2, h) });
+  }
+  const inc = W.map(() => []); faces.forEach((f, fi) => f.forEach(i => inc[i].push(fi)));
+  const V = W.map((p, i) => {
+    if (!inc[i].some(fi => repl.has(fi))) return p.slice();
+    const planes = [];
+    for (const fi of inc[i]) { const pl = repl.get(fi) || fPlanes[fi]; if (!planes.some(q => M.dot(q.n, pl.n) > 1 - 1e-9)) planes.push(pl); }
+    const k = planes.length, G = planes.map(x => planes.map(y => M.dot(x.n, y.n)));
+    for (let q = 0; q < k; q++) G[q][q] += 1e-12;
+    const y = solve(G, planes.map(q => q.w - M.dot(q.n, p)));
+    let x = p.slice(); planes.forEach((q, j) => { x = M.add(x, M.mul(q.n, y[j])); });
+    return x;
+  });
+  const res = polysToMesh(toPolys(V, faces));
+  return res.f.length ? res : 'Draft failed';
+}

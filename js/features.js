@@ -337,7 +337,7 @@ export const mirrorOp = {
 export { faceRegion };
 
 // ---------- body pattern (polar) and slice ----------
-import { slice as sliceMesh, rotateMesh, thicken } from './modifiers.js';
+import { slice as sliceMesh, rotateMesh, thicken, draft } from './modifiers.js';
 export const polarPattern = {
   label: () => 'Polar Pattern',
   defaults: () => ({ count: 6, angle: 360, axis: 'z', cx: 0, cy: 0, cz: 0 }),
@@ -452,5 +452,25 @@ export const sweepOp = {
     const m = sweepRegion({ outer: r.outer.map(loc), holes: r.holes.map(h => h.map(loc)) }, frames);
     if (!m.f.length) return 'Sweep failed';
     return applyBody(p, m, 'Sweep', M.centroid(m.v));
+  },
+};
+
+export const draftOp = {
+  label: () => 'Draft',
+  defaults: () => ({ angle: 3, pull: 'z' }),
+  prepare(p) {
+    p.faces ??= JSON.parse(JSON.stringify(S.ed.faces || []));
+    if (!p.faces.length) return 'Select the side faces to draft (Face mode)';
+    p.obj = p.faces[0].obj; p.faces = p.faces.filter(f => f.obj === p.obj);
+    if (p.neutral == null) { const W = worldVerts(objById(p.obj)), k = 'xyz'.indexOf(p.pull); p.neutral = Math.min(...W.map(q => q[k])); }
+  },
+  touch: p => ({ ids: [p.obj], mesh: true }),
+  fields: () => [{ key: 'angle', label: 'Draft angle', kind: 'ang' }, { key: 'pull', label: 'Pull direction', kind: 'choice', options: [['x', '+X'], ['y', '+Y'], ['z', '+Z']], wide: true }, lenF('neutral', 'Neutral plane')],
+  apply(p) {
+    const o = objById(p.obj); if (!o) return 'Body missing';
+    const r = resolveFaces(p.faces); if (typeof r === 'string') return r;
+    const d = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }[p.pull];
+    const m = draft(worldVerts(o), o.mesh.f, r.map(x => x.reg), d, p.neutral, p.angle); if (typeof m === 'string') return m;
+    setBody(o, m); S.ed.faces = [];
   },
 };

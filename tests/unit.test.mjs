@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makeBox, makeCylinder, meshVolume } from '../js/mesh.js';
+import * as M from '../js/mesh.js';
 import { toPolys, boolean, polysToMesh, extrudeRegions, revolveRegions } from '../js/csg.js';
 import { PLANES, regions, intersections, trimAt, cornerOp, setDimValue, movePoint } from '../js/sketch.js';
 import { solve, dof, editAndSolve } from '../js/constraints.js';
@@ -376,4 +377,19 @@ test('3D: sweep (mitred) and loft', async () => {
   near(meshVolume(prism), 1000, 1e-6); assert.ok(watertight(prism));
   const frustum = loftSections([s10(0), s5(10)], 64);
   near(meshVolume(frustum), 10 / 3 * (100 + 25 + 50), 1e-6, 'square frustum'); assert.ok(watertight(frustum));
+});
+
+test('3D: draft side faces about a neutral plane', async () => {
+  const { draft, faceRegion } = await import('../js/modifiers.js');
+  const box = makeBox(20, 20, 20);
+  const side = faceRegion(box.v, box.f, box.f.findIndex(f => f.every(i => box.v[i][0] === 10)));
+  const th = 5, r = draft(box.v, box.f, [side], [0, 0, 1], -10, th);
+  near(meshVolume(r), 8000 - 4000 * Math.tan(th * Math.PI / 180), 1e-9, 'one drafted face');
+  assert.ok(watertight(r));
+  const top = Math.max(...r.v.filter(p => p[2] > 9.99).map(p => p[0]));
+  near(top, 10 - 20 * Math.tan(th * Math.PI / 180), 1e-9, 'top edge moves inward by h·tanθ');
+  const all = [0, 1, 2, 3].map(k => faceRegion(box.v, box.f, box.f.findIndex(f => { const n = M.faceNormal(f.map(i => box.v[i])); return Math.abs(n[2]) < 0.5 && Math.abs(Math.atan2(n[1], n[0]) - k * Math.PI / 2 + (k > 2 ? 2 * Math.PI : 0)) < 1e-6; })));
+  const tp = draft(box.v, box.f, all, [0, 0, 1], -10, th);
+  const s = 20 - 40 * Math.tan(th * Math.PI / 180);
+  near(meshVolume(tp), 20 / 3 * (400 + s * s + 20 * s), 1e-6, 'all four sides → frustum'); assert.ok(watertight(tp));
 });

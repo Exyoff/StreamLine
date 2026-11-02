@@ -290,6 +290,19 @@ try {
   const vF1 = await st(() => StreamLine.M.meshVolume(StreamLine.S.doc.objects[0].mesh));
   check(mv && mv[0] === 'Move' && mv[1] > 0 && vF1 > vF0, `dragging the face up stretches the body (dz=${mv && mv[1]}, +${(vF1 - vF0).toFixed(2)} mm³)`);
   await p.tap('[data-tool=select]');
+  // draft: tilt one side face of a fresh box by 5°
+  await p.evaluate(() => StreamLine.runOp(StreamLine.OPS.addPrim, { type: 'cube', w: 20, d: 20, h: 20, x: -80, y: 0, z: 10 }));
+  await p.locator('.ctxseg button', { hasText: 'Face' }).tap();
+  await p.evaluate(() => { StreamLine.view.frame([[-90, -10, 0], [-70, 10, 20]]); }); await p.waitForTimeout(400);
+  c = await projW([-70, 0, 10]); await tapV(c.x, c.y);
+  check(await st(() => StreamLine.S.ed.faces.length === 1 && Math.abs(StreamLine.S.ed.faces[0].n[0] - 1) < 1e-9), 'side face of the box selected');
+  await p.locator('#actions .act', { hasText: 'Draft' }).tap();
+  await p.tap('#lastop .field .val'); await keypad('5');
+  const dv = await st(() => StreamLine.M.meshVolume(StreamLine.S.doc.objects.at(-1).mesh));
+  check(Math.abs(dv - (8000 - 4000 * Math.tan(5 * Math.PI / 180))) < 1e-6, `Draft 5° gives the exact volume (${dv.toFixed(4)})`);
+  await p.tap('#lastop .ib[aria-label=Done]');
+  await p.tap('#btn-undo'); await p.tap('#btn-undo'); await p.waitForTimeout(150);
+  await p.locator('.ctxseg button', { hasText: 'Solid' }).tap();
   // thicken a plane
   await p.locator('.ctxseg button', { hasText: 'Solid' }).tap();
   await p.evaluate(() => StreamLine.runOp(StreamLine.OPS.addPrim, { type: 'plane', w: 10, d: 10, x: 80, y: 0, z: 0 }));
