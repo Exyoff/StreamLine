@@ -4,6 +4,11 @@ import { S, emit, activeObj } from './state.js';
 import { triangulateFace, meshEdges, selectedFaces, newell, norm } from './mesh.js';
 import { objMatrix, xfFor } from './scene.js';
 import { featureEdges } from './edges.js';
+import { LineSegments2 } from '../vendor/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from '../vendor/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from '../vendor/lines/LineMaterial.js';
+// screen-space fat lines (crisp edges on Retina screens); width in CSS px
+export const fatMat = (o) => new LineMaterial({ linewidth: o.width ?? 1.4, color: o.color ?? 0xffffff, transparent: o.opacity != null && o.opacity < 1, opacity: o.opacity ?? 1, vertexColors: !!o.vertexColors, depthTest: o.depthTest ?? true, dashed: !!o.dashed, dashSize: o.dashSize ?? 1, gapSize: o.gapSize ?? 1 });
 import { unitFactor } from './units.js';
 import { defSize } from './operators.js';
 
@@ -20,6 +25,7 @@ export const view = {
   cam: { target: new THREE.Vector3(0, 0, 0), dist: 140, yaw: -55 * D2R, pitch: 28 * D2R, ortho: false, autoOrtho: false },
 };
 
+view.fatMat = fatMat;
 let renderer, scene, overlay, persp, ortho, container, canvas, labelsEl;
 let gridLines, gridKey = '';
 let needsRender = true, tween = null;
@@ -52,10 +58,10 @@ view.init = function (el) {
   scene.add(new THREE.HemisphereLight(0xdfe6f0, 0x3a3d44, 1.4));
 
   matMesh = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.05, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
-  matEdgeObj = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.28 });
-  matEdgeSel = new THREE.LineBasicMaterial({ color: COL.sel });
-  matEdgeAct = new THREE.LineBasicMaterial({ color: COL.active });
-  matEdgeEdit = new THREE.LineBasicMaterial({ vertexColors: true });
+  matEdgeObj = fatMat({ color: 0x15161a, opacity: 0.55, width: 1.2 });
+  matEdgeSel = fatMat({ color: COL.sel, width: 2 });
+  matEdgeAct = fatMat({ color: COL.active, width: 2.2 });
+  matEdgeEdit = fatMat({ vertexColors: true, width: 1.6 });
   matPoints = new THREE.PointsMaterial({ vertexColors: true, size: 7, sizeAttenuation: false });
   applyXray();
 
@@ -284,9 +290,9 @@ function buildVisual(o, editing) {
     ep.push(...m.v[a], ...m.v[b]);
     if (editing) { const s = S.ed.editSel.has(a) && S.ed.editSel.has(b); const c = s ? COL.sel : COL.edge; ec.push(c.r, c.g, c.b, c.r, c.g, c.b); }
   }
-  const eg = new THREE.BufferGeometry(); eg.setAttribute('position', new THREE.Float32BufferAttribute(ep, 3));
-  if (editing) eg.setAttribute('color', new THREE.Float32BufferAttribute(ec, 3));
-  const edges = new THREE.LineSegments(eg, editing ? matEdgeEdit : matEdgeObj);
+  const eg = new LineSegmentsGeometry(); eg.setPositions(ep);
+  if (editing) eg.setColors(ec);
+  const edges = new LineSegments2(eg, editing ? matEdgeEdit : matEdgeObj);
 
   const group = new THREE.Group(); group.add(mesh, edges);
   let points = null;
@@ -434,6 +440,10 @@ function loop(now) {
   labelIdx = 0;
   for (const h of view.renderHooks) h();
   for (let i = labelIdx; i < labelPool.length; i++) labelPool[i].style.display = 'none';
+  // fat-line materials need the drawing-buffer size
+  const res = renderer.getDrawingBufferSize(new THREE.Vector2());
+  const fix = o => { const m = o.material; if (m && m.isLineMaterial && (m.resolution.x !== res.x || m.resolution.y !== res.y)) { m.resolution.copy(res); m.userData.css ??= m.linewidth; m.linewidth = m.userData.css * renderer.getPixelRatio(); } };
+  scene.traverse(fix); overlay.traverse(fix);
   renderer.setClearColor(view.bg ?? 0x2a2b2f, 1);
   renderer.clear();
   renderer.render(scene, camera());
