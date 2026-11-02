@@ -19,7 +19,7 @@ const DRAW_TOOLS = {
   SC: 'scale', SCALE: 'scale', MI: 'mirror', MIRROR: 'mirror', E: 'erase', ERASE: 'erase', X: 'explode', EXPLODE: 'explode',
   DI: 'dist', DIST: 'dist', ID: 'id', AA: 'area', AREA: 'area', LI: 'list', LS: 'list', LIST: 'list', MEA: 'dist', MEASUREGEOM: 'dist', MD: 'dist', MR: 'radius', MA: 'angle', MAR: 'area',
   DIM: 'dim', DLI: 'dim', DIMLINEAR: 'dim', DAL: 'dim', DIMALIGNED: 'dim', DRA: 'dim', DIMRADIUS: 'dim', DDI: 'dim', DIMDIAMETER: 'dim', DAN: 'dim', DIMANGULAR: 'dim',
-  SELECT: 'select', EL: 'ellipse', ELLIPSE: 'ellipse', SPL: 'spline', SPLINE: 'spline', AR: 'arrayrect', ARRAY: 'arrayrect', ARRAYRECT: 'arrayrect', ARRAYPOLAR: 'arraypolar', XL: 'line', XLINE: 'line', CONSTRUCTIONLINE: 'line',
+  SELECT: 'select', T: 'text', DT: 'text', TEXT: 'text', MT: 'text', MTEXT: 'text', H: 'hatch', BH: 'hatch', HATCH: 'hatch', EL: 'ellipse', ELLIPSE: 'ellipse', SPL: 'spline', SPLINE: 'spline', AR: 'arrayrect', ARRAY: 'arrayrect', ARRAYRECT: 'arrayrect', ARRAYPOLAR: 'arraypolar', XL: 'line', XLINE: 'line', CONSTRUCTIONLINE: 'line',
 };
 const CONSTRAINTS = { GCHORIZONTAL: 'h', GCH: 'h', GCVERTICAL: 'v', GCV: 'v', GCPARALLEL: 'par', GCPA: 'par', GCPERPENDICULAR: 'perp', GCPE: 'perp', GCEQUAL: 'eq', GCE: 'eq', GCTANGENT: 'tan', GCT: 'tan', GCCONCENTRIC: 'conc', GCCO: 'conc', GCFIX: 'fix', GCF: 'fix' };
 const TOGGLES = { GRID: 'grid', SNAP: 'snap', ORTHO: 'ortho', POLAR: 'polar', OSNAP: 'osnap' };
@@ -33,7 +33,7 @@ export function initCmdline(c) {
   inp.addEventListener('keydown', e => {
     if (FKEYS[e.key]) { e.preventDefault(); toggle(FKEYS[e.key]); return; }
     if (e.key === 'Enter') { e.preventDefault(); submit(); return; }
-    if (e.key === ' ') { e.preventDefault(); submit(); return; } // AutoCAD: space = Enter
+    if (e.key === ' ' && !Draw.acceptsSpaces()) { e.preventDefault(); submit(); return; } // AutoCAD: space = Enter (except inside TEXT)
     if (e.key === 'Escape') { e.preventDefault(); cancel(); inp.blur(); return; }
     e.stopPropagation();
   });
@@ -57,7 +57,7 @@ export function toggle(k) {
 export function key(e) {
   if (FKEYS[e.key]) { e.preventDefault(); toggle(FKEYS[e.key]); return true; }
   const inp = $('#cmdin');
-  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); exec(''); return true; }
+  if (e.key === 'Enter' || (e.key === ' ' && !Draw.acceptsSpaces())) { e.preventDefault(); exec(''); return true; }
   if (e.key === 'Escape') { cancel(); return true; }
   if (e.key.length === 1 && /[\w@<,.\-+*/()'"°π]/.test(e.key)) { e.preventDefault(); inp.focus(); inp.value += e.key; return true; }
   return false;
@@ -144,6 +144,7 @@ export function render() {
   const el = $('#cmdprompt');
   el.replaceChildren(hist ? h('span', { class: 'hist' }, hist) : '', h('span', {}, text), ...options.map(([l, v]) => h('button', { class: 'opt', 'data-v': v }, l)));
   el.scrollLeft = 1e6;
+  const inp = $('#cmdin'), free = Draw.acceptsSpaces(); inp.autocapitalize = free ? 'sentences' : 'characters'; inp.classList.toggle('free', free);
   for (const b of document.querySelectorAll('#statusbar button')) b.classList.toggle('on', !!(S.settings[b.dataset.st] ?? (b.dataset.st === 'polar' || b.dataset.st === 'osnap')));
 }
 export const hasPending = () => !!pending;

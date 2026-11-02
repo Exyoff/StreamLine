@@ -478,6 +478,8 @@ function renderActions() {
       act(I.scale, 'Scale', () => acadTool('scale')),
       act(I.inset, 'Offset', () => acadTool('offset')),
       act(I.next, 'Extend', () => acadTool('extend')),
+      act(I.file, 'Text', () => acadTool('text')),
+      act(I.fill, 'Hatch', () => acadTool('hatch')),
       act(I.circle, 'Ellipse', () => acadTool('ellipse')),
       act(I.arc, 'Spline', () => acadTool('spline')),
       act(I.cube, 'Polygon', () => acadTool('polygon')),
