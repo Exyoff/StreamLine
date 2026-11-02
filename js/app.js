@@ -501,6 +501,8 @@ function renderActions() {
     row.replaceChildren(
       act(I.extrude, 'Extrude', () => runOp(F.extrude), 'primary'),
       act(I.revolve, 'Revolve', () => runOp(F.revolve)),
+      act(I.cone, 'Loft', () => runOp(F.loftOp)),
+      act(I.arc, 'Sweep', () => runOp(F.sweepOp)),
       act(I.fillet, 'Fillet', () => runOp(F.edgeBlendOp, { kind: 'fillet' })),
       act(I.chamfer, 'Chamfer', () => runOp(F.edgeBlendOp, { kind: 'chamfer' })),
       act(I.union, 'Union', () => runOp(F.bodyBoolean, { kind: 'union' })),

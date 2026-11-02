@@ -118,6 +118,8 @@ function threeD(up) {
     FILLETEDGE: need('FILLETEDGE', 'Select edges, then Enter:', edges, () => ctx.runOp(F.edgeBlendOp, { kind: 'fillet' }), 'edge'),
     CHAMFEREDGE: need('CHAMFEREDGE', 'Select edges, then Enter:', edges, () => ctx.runOp(F.edgeBlendOp, { kind: 'chamfer' }), 'edge'),
     PRESSPULL: () => ctx.setWorkspace('model', 'face'),
+    LOFT: need('LOFT', 'Select profiles in order (multi-select on), then Enter:', () => S.ed.profiles.length >= 2, () => ctx.runOp(F.loftOp), 'select'),
+    SWEEP: need('SWEEP', 'Select the profile to sweep, then Enter:', prof, () => ctx.runOp(F.sweepOp), 'select'),
     SLICE: need('SLICE', 'Select a body, then Enter:', bodies(1), () => ctx.runOp(F.sliceOp), 'select'),
     '3DARRAY': need('3DARRAY', 'Select bodies, then Enter:', bodies(1), () => ctx.runOp(F.polarPattern), 'select'),
   };
