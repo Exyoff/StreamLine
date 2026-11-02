@@ -198,6 +198,16 @@ try {
   const ring = (await ents()).filter(e => e.t === 'circle' && Math.abs(Math.hypot(e.c[0] - 80, e.c[1]) - 20) < 1e-9);
   check(ring.length === 6, `ARRAYPOLAR makes 6 items around 80,0 (${ring.length})`);
   check(/ArrayPolar/.test(await p.textContent('#lastop')), 'array parameters are editable in the operation card');
+  // ELLIPSE, SPLINE, PLINE arc
+  await run('EL'); await run('120,0'); await run('@10<0'); await run('4');
+  const el = (await ents()).find(e => e.t === 'ellipse');
+  check(el && el.rx === 10 && el.ry === 4 && el.rot === 0, `ELLIPSE center 120,0 axis 10, other 4 (${JSON.stringify(el)})`);
+  await run('SPL'); await run('120,20'); await run('130,30'); await run('140,20'); await run('');
+  const sp = (await ents()).find(e => e.t === 'spline');
+  check(sp && sp.pts.length === 3, 'SPLINE through 3 fit points');
+  await run('PL'); await run('150,0'); await run('@10,0'); await run('A'); await run('@0,10'); await run('L'); await run('@-10,0'); await run('');
+  const ar = (await ents()).filter(e => e.t === 'arc').at(-1);
+  check(ar && Math.abs(ar.r - 5) < 1e-9 && Math.abs(ar.c[0] - 160) < 1e-9 && Math.abs(ar.c[1] - 5) < 1e-9, `PLINE tangent arc R5 centred 160,5 (${ar && JSON.stringify([ar.c, ar.r])})`);
   await shot('4-acad');
 
   // --- Plasticity-style Model: face push/pull with a live handle, edge fillet, shell

@@ -19,7 +19,7 @@ const DRAW_TOOLS = {
   SC: 'scale', SCALE: 'scale', MI: 'mirror', MIRROR: 'mirror', E: 'erase', ERASE: 'erase', X: 'explode', EXPLODE: 'explode',
   DI: 'dist', DIST: 'dist', ID: 'id', AA: 'area', AREA: 'area', LI: 'list', LS: 'list', LIST: 'list', MEA: 'dist', MEASUREGEOM: 'dist', MD: 'dist', MR: 'radius', MA: 'angle', MAR: 'area',
   DIM: 'dim', DLI: 'dim', DIMLINEAR: 'dim', DAL: 'dim', DIMALIGNED: 'dim', DRA: 'dim', DIMRADIUS: 'dim', DDI: 'dim', DIMDIAMETER: 'dim', DAN: 'dim', DIMANGULAR: 'dim',
-  SELECT: 'select', AR: 'arrayrect', ARRAY: 'arrayrect', ARRAYRECT: 'arrayrect', ARRAYPOLAR: 'arraypolar', XL: 'line', XLINE: 'line', CONSTRUCTIONLINE: 'line',
+  SELECT: 'select', EL: 'ellipse', ELLIPSE: 'ellipse', SPL: 'spline', SPLINE: 'spline', AR: 'arrayrect', ARRAY: 'arrayrect', ARRAYRECT: 'arrayrect', ARRAYPOLAR: 'arraypolar', XL: 'line', XLINE: 'line', CONSTRUCTIONLINE: 'line',
 };
 const CONSTRAINTS = { GCHORIZONTAL: 'h', GCH: 'h', GCVERTICAL: 'v', GCV: 'v', GCPARALLEL: 'par', GCPA: 'par', GCPERPENDICULAR: 'perp', GCPE: 'perp', GCEQUAL: 'eq', GCE: 'eq', GCTANGENT: 'tan', GCT: 'tan', GCCONCENTRIC: 'conc', GCCO: 'conc', GCFIX: 'fix', GCF: 'fix' };
 const TOGGLES = { GRID: 'grid', SNAP: 'snap', ORTHO: 'ortho', POLAR: 'polar', OSNAP: 'osnap' };

@@ -302,3 +302,20 @@ test('3D: thicken a plane into a solid', async () => {
   near(meshVolume(t), 400, 1e-9); assert.ok(watertight(t));
   assert.match(thicken(makeBox(2, 2, 2).v, makeBox(2, 2, 2).f, 1), /already closed/);
 });
+
+test('2D: ellipse and spline entities', async () => {
+  const { entityArea, transformEntities, toDXF, ellPt, splinePoints } = await import('../js/sketch.js');
+  const e = { id: 1, t: 'ellipse', c: [0, 0], rx: 10, ry: 5, rot: 0 };
+  const s = { ents: [e], cons: [], nextEnt: 10 };
+  near(entityArea(e).area, 50 * Math.PI, 1e-12);
+  const R = regions(s); assert.equal(R.length, 1); near(R[0].area, 50 * Math.PI, 0.3, 'faceted ellipse region');
+  assert.deepEqual(ellPt(e, Math.PI / 2), [0, 5]);
+  transformEntities(s, [1], { kind: 'rotate', c: [0, 0], deg: 90 });
+  const q = ellPt(s.ents[0], 0); near(q[0], 0, 1e-12); near(q[1], 10, 1e-12);
+  assert.match(toDXF(s), /ELLIPSE/);
+  const sp = splinePoints([[0, 0], [10, 10], [20, 0]], false, 8);
+  assert.deepEqual(sp[0], [0, 0]); assert.deepEqual(sp.at(-1), [20, 0]);
+  assert.ok(sp.some(p => Math.abs(p[0] - 10) < 1e-12 && Math.abs(p[1] - 10) < 1e-12), 'passes through fit points');
+  const cl = { ents: [{ id: 1, t: 'spline', pts: [[0, 0], [10, 0], [10, 10], [0, 10]], closed: true }], cons: [] };
+  assert.equal(regions(cl).length, 1, 'closed spline forms a region');
+});
