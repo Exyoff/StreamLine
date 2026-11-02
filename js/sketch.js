@@ -1,0 +1,459 @@
+// 2D sketches: entities on a plane, snapping, region (profile) detection, DXF export.
+// Sketch: { id, name, plane:{o,u,v,n}, ents:[...], face:{obj,..}|null, hidden }
+// Entities (2D mm): line {a,b} · circle {c,r} · arc {c,r,a0,a1} (CCW, rad) · rect {x,y,w,h} · dim {kind:'lin'|'rad'|'dia', A, B | e}
+import { S } from './state.js';
+import { editAndSolve } from './constraints.js';
+
+export const PLANES = {
+  XY: { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1], label: 'Top (XY)' },
+  XZ: { o: [0, 0, 0], u: [1, 0, 0], v: [0, 0, 1], n: [0, -1, 0], label: 'Front (XZ)' },
+  YZ: { o: [0, 0, 0], u: [0, 1, 0], v: [0, 0, 1], n: [1, 0, 0], label: 'Right (YZ)' },
+};
+export const toW = (pl, p) => [0, 1, 2].map(k => pl.o[k] + pl.u[k] * p[0] + pl.v[k] * p[1]);
+export const toP = (pl, w) => { const d = [w[0] - pl.o[0], w[1] - pl.o[1], w[2] - pl.o[2]]; return [d[0] * pl.u[0] + d[1] * pl.u[1] + d[2] * pl.u[2], d[0] * pl.v[0] + d[1] * pl.v[1] + d[2] * pl.v[2]]; };
+
+const TAU = Math.PI * 2;
+export const d2 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+export const sweep = (e) => { let s = (e.a1 - e.a0) % TAU; if (s <= 1e-12) s += TAU; return s; };
+// exact cos/sin on quarter turns so arc endpoints land on clean coordinates
+function ecos(a) { const q = a / (Math.PI / 2), k = Math.round(q); return Math.abs(q - k) < 1e-12 ? [1, 0, -1, 0][((k % 4) + 4) % 4] : Math.cos(a); }
+function esin(a) { const q = a / (Math.PI / 2), k = Math.round(q); return Math.abs(q - k) < 1e-12 ? [0, 1, 0, -1][((k % 4) + 4) % 4] : Math.sin(a); }
+const pol = (c, r, a) => [c[0] + r * ecos(a), c[1] + r * esin(a)];
+export const rectCorners = (e) => [[e.x, e.y], [e.x + e.w, e.y], [e.x + e.w, e.y + e.h], [e.x, e.y + e.h]];
+export const curveSegs = () => S.settings.curveSegs || 64;
+
+export function sketchById(id) { return (S.doc.sketches || []).find(s => s.id === id) || null; }
+export function activeSketch() { return sketchById(S.ed.sketch); }
+export const entById = (sk, id) => sk.ents.find(e => e.id === id);
+
+// ---------- point references (for snapping, dimensions, dragging) ----------
+// key points: [{k, p, movable}]
+export function keyPoints(e) {
+  switch (e.t) {
+    case 'line': return [{ k: 'a', p: e.a, m: 1 }, { k: 'b', p: e.b, m: 1 }, { k: 'mid', p: [(e.a[0] + e.b[0]) / 2, (e.a[1] + e.b[1]) / 2] }];
+    case 'circle': return [{ k: 'c', p: e.c, m: 1, center: 1 }, ...[0, 1, 2, 3].map(i => ({ k: 'q' + i, p: pol(e.c, e.r, i * Math.PI / 2) }))];
+    case 'arc': return [{ k: 'c', p: e.c, m: 1, center: 1 }, { k: 's', p: pol(e.c, e.r, e.a0), m: 1 }, { k: 'e', p: pol(e.c, e.r, e.a0 + sweep(e)), m: 1 }, { k: 'mid', p: pol(e.c, e.r, e.a0 + sweep(e) / 2) }];
+    case 'rect': return [...rectCorners(e).map((p, i) => ({ k: 'p' + i, p, m: 1 })), { k: 'ctr', p: [e.x + e.w / 2, e.y + e.h / 2], center: 1 }];
+    default: return [];
+  }
+}
+export function refPoint(sk, ref) {
+  const e = entById(sk, ref.e); if (!e) return null;
+  const kp = keyPoints(e).find(q => q.k === ref.k);
+  return kp ? kp.p.slice() : null;
+}
+// Move a point and everything coincident with it (simple connectivity, like a CAD coincidence constraint).
+export function movePoint(sk, ref, np) {
+  // constraint-aware: solve with the point pinned; fall back to plain coincident drag if that conflicts
+  const snap = JSON.stringify(sk.ents);
+  const err = editAndSolve(sk, () => {}, { pins: [{ ref, p: np }] });
+  if (!err) return;
+  // unreachable target: move there, then project back onto the constraints (closest valid position)
+  sk.ents = JSON.parse(snap);
+  const err2 = editAndSolve(sk, k => { movePointNaive(k, ref, np); });
+  if (err2) { sk.ents = JSON.parse(snap); return err2; }
+}
+export function movePointNaive(sk, ref, np) {
+  const old = refPoint(sk, ref); if (!old) return;
+  const tol = 1e-7;
+  for (const e of sk.ents) for (const kp of keyPoints(e)) {
+    if (!kp.m || d2(kp.p, old) > tol) continue;
+    if (e.t === 'circle' && !(e.id === ref.e)) continue; // circles only move when addressed directly
+    setKey(e, kp.k, np);
+  }
+}
+function setKey(e, k, p) {
+  if (e.t === 'line') e[k] = p.slice();
+  else if ((e.t === 'circle' || e.t === 'arc') && k === 'c') e.c = p.slice();
+  else if (e.t === 'arc') {
+    const sw = sweep(e);
+    const a = Math.atan2(p[1] - e.c[1], p[0] - e.c[0]);
+    e.r = d2(p, e.c);
+    if (k === 's') e.a0 = a; else { e.a1 = a; if (Math.abs(sweep(e) - sw) > Math.PI && sw > Math.PI) { /* keep large arcs large */ } }
+  } else if (e.t === 'rect') {
+    const i = +k.slice(1), cs = rectCorners(e), opp = cs[(i + 2) % 4];
+    e.x = Math.min(opp[0], p[0]); e.y = Math.min(opp[1], p[1]); e.w = Math.abs(p[0] - opp[0]); e.h = Math.abs(p[1] - opp[1]);
+  }
+}
+
+// ---------- discretisation ----------
+export function entPolyline(e) {
+  if (e.t === 'line') return { pts: [e.a, e.b], closed: false };
+  if (e.t === 'rect') return { pts: rectCorners(e), closed: true };
+  const n = curveSegs();
+  if (e.t === 'circle') { const pts = []; for (let i = 0; i < n; i++) pts.push(pol(e.c, e.r, i / n * TAU)); return { pts, closed: true }; }
+  if (e.t === 'arc') {
+    const sw = sweep(e), k = Math.max(2, Math.ceil(n * sw / TAU)), pts = [];
+    for (let i = 0; i <= k; i++) pts.push(pol(e.c, e.r, e.a0 + sw * i / k));
+    return { pts, closed: false };
+  }
+  return null;
+}
+export function sketchSegments(sk) {
+  const segs = [];
+  for (const e of sk.ents) {
+    if (e.t === 'dim' || e.construction) continue;
+    const pl = entPolyline(e); if (!pl) continue;
+    const n = pl.pts.length;
+    for (let i = 0; i < (pl.closed ? n : n - 1); i++) segs.push([pl.pts[i], pl.pts[(i + 1) % n], e.id]);
+  }
+  return segs;
+}
+
+function segInter(p, p2, q, q2) {
+  const r = [p2[0] - p[0], p2[1] - p[1]], s = [q2[0] - q[0], q2[1] - q[1]];
+  const den = r[0] * s[1] - r[1] * s[0];
+  if (Math.abs(den) < 1e-14) return null;
+  const qp = [q[0] - p[0], q[1] - p[1]];
+  const t = (qp[0] * s[1] - qp[1] * s[0]) / den, u = (qp[0] * r[1] - qp[1] * r[0]) / den;
+  const e = 1e-9;
+  if (t < -e || t > 1 + e || u < -e || u > 1 + e) return null;
+  return { t: Math.max(0, Math.min(1, t)), u: Math.max(0, Math.min(1, u)), p: [p[0] + r[0] * t, p[1] + r[1] * t] };
+}
+
+// ---------- exact analytic intersections ----------
+function prims(e) {
+  if (e.t === 'line') return [{ L: 1, a: e.a, b: e.b }];
+  if (e.t === 'rect') { const c = rectCorners(e); return [0, 1, 2, 3].map(i => ({ L: 1, a: c[i], b: c[(i + 1) % 4] })); }
+  if (e.t === 'circle') return [{ C: 1, c: e.c, r: e.r }];
+  if (e.t === 'arc') return [{ C: 1, c: e.c, r: e.r, a0: e.a0, sw: sweep(e) }];
+  return [];
+}
+const onArc = (q, p) => { if (q.sw == null) return true; let a = Math.atan2(p[1] - q.c[1], p[0] - q.c[0]) - q.a0; a = ((a % TAU) + TAU) % TAU; return a <= q.sw + 1e-9 || a >= TAU - 1e-9; };
+function interPrims(P, Q) {
+  const out = [];
+  if (P.L && Q.L) { const r = segInter(P.a, P.b, Q.a, Q.b); if (r) out.push(r.p); }
+  else if (P.C && Q.C) {
+    const d = d2(P.c, Q.c);
+    if (d < 1e-12 || d > P.r + Q.r + 1e-9 || d < Math.abs(P.r - Q.r) - 1e-9) return out;
+    const a = (P.r * P.r - Q.r * Q.r + d * d) / (2 * d), h = Math.sqrt(Math.max(0, P.r * P.r - a * a));
+    const ux = (Q.c[0] - P.c[0]) / d, uy = (Q.c[1] - P.c[1]) / d, mx = P.c[0] + ux * a, my = P.c[1] + uy * a;
+    out.push([mx - uy * h, my + ux * h]); if (h > 1e-12) out.push([mx + uy * h, my - ux * h]);
+  } else {
+    const Ln = P.L ? P : Q, C = P.L ? Q : P;
+    const dx = Ln.b[0] - Ln.a[0], dy = Ln.b[1] - Ln.a[1], fx = Ln.a[0] - C.c[0], fy = Ln.a[1] - C.c[1];
+    const A = dx * dx + dy * dy, B = 2 * (fx * dx + fy * dy), Cc = fx * fx + fy * fy - C.r * C.r;
+    const disc = B * B - 4 * A * Cc;
+    if (A < 1e-24 || disc < -1e-12) return out;
+    const sq = Math.sqrt(Math.max(0, disc));
+    for (const t of disc > 1e-12 ? [(-B - sq) / (2 * A), (-B + sq) / (2 * A)] : [-B / (2 * A)]) if (t >= -1e-9 && t <= 1 + 1e-9) out.push([Ln.a[0] + dx * t, Ln.a[1] + dy * t]);
+  }
+  return out.filter(p => (!P.C || onArc(P, p)) && (!Q.C || onArc(Q, p)));
+}
+const interCache = new WeakMap();
+export function intersections(sk) {
+  if (interCache.has(sk.ents)) return interCache.get(sk.ents);
+  const ents = sk.ents.filter(e => e.t !== 'dim'), out = [];
+  for (let i = 0; i < ents.length; i++) for (let j = i + 1; j < ents.length; j++)
+    for (const P of prims(ents[i])) for (const Q of prims(ents[j])) out.push(...interPrims(P, Q));
+  interCache.set(sk.ents, out);
+  return out;
+}
+// points where entity e is crossed by other entities
+function cutsOn(sk, e) {
+  const out = [];
+  for (const o of sk.ents) { if (o === e || o.t === 'dim') continue; for (const P of prims(e)) for (const Q of prims(o)) out.push(...interPrims(P, Q)); }
+  return out;
+}
+const uniq = arr => arr.sort((a, b) => a - b).filter((v, i, A) => i === 0 || v - A[i - 1] > 1e-10);
+// Trim the piece of entity `e` under point p (between neighbouring intersections). Mutates sk.
+export function trimAt(sk, e, p) {
+  const idx = sk.ents.indexOf(e);
+  const nid = () => (sk.nextEnt = (sk.nextEnt || 1000) + 1);
+  if (e.t === 'rect') { // explode, then trim the side
+    const c = rectCorners(e), lines = [0, 1, 2, 3].map(i => ({ id: nid(), t: 'line', a: c[i], b: c[(i + 1) % 4] }));
+    sk.ents.splice(idx, 1, ...lines);
+    const side = lines.reduce((b, l) => (segDist(p, l.a, l.b) < segDist(p, b.a, b.b) ? l : b));
+    return trimAt(sk, side, p);
+  }
+  const cuts = cutsOn(sk, e);
+  const remove = () => { sk.ents.splice(sk.ents.indexOf(e), 1); };
+  if (e.t === 'line') {
+    const dx = e.b[0] - e.a[0], dy = e.b[1] - e.a[1], L2 = dx * dx + dy * dy;
+    const par = q => ((q[0] - e.a[0]) * dx + (q[1] - e.a[1]) * dy) / L2;
+    const ts = uniq(cuts.map(par).filter(t => t > 1e-9 && t < 1 - 1e-9));
+    const tp = par(p);
+    const lo = Math.max(0, ...ts.filter(t => t < tp)), hi = Math.min(1, ...ts.filter(t => t > tp));
+    const at = t => { const q = cuts.find(c => Math.abs(par(c) - t) < 1e-10); return q ? q.slice() : [e.a[0] + dx * t, e.a[1] + dy * t]; };
+    const keep = [];
+    if (lo > 0) keep.push({ id: nid(), t: 'line', a: e.a.slice(), b: at(lo) });
+    if (hi < 1) keep.push({ id: nid(), t: 'line', a: at(hi), b: e.b.slice() });
+    sk.ents.splice(sk.ents.indexOf(e), 1, ...keep);
+    return true;
+  }
+  const ang = q => Math.atan2(q[1] - e.c[1], q[0] - e.c[0]);
+  if (e.t === 'circle') {
+    const as = uniq(cuts.map(q => ((ang(q) % TAU) + TAU) % TAU));
+    if (as.length < 2) { remove(); return true; }
+    const ap = ((ang(p) % TAU) + TAU) % TAU;
+    let i = as.findIndex(a => a > ap); if (i < 0) i = 0;
+    const end = as[i], start = as[(i - 1 + as.length) % as.length]; // removed piece: start -> end (CCW)
+    sk.ents.splice(sk.ents.indexOf(e), 1, { id: nid(), t: 'arc', c: e.c.slice(), r: e.r, a0: end, a1: start });
+    return true;
+  }
+  if (e.t === 'arc') {
+    const sw = sweep(e), off = q => { let a = ang(q) - e.a0; return ((a % TAU) + TAU) % TAU; };
+    const ts = uniq(cuts.map(off).filter(t => t > 1e-9 && t < sw - 1e-9));
+    const tp = off(p);
+    const lo = Math.max(0, ...ts.filter(t => t < tp)), hi = Math.min(sw, ...ts.filter(t => t > tp));
+    const keep = [];
+    if (lo > 1e-9) keep.push({ id: nid(), t: 'arc', c: e.c.slice(), r: e.r, a0: e.a0, a1: e.a0 + lo });
+    if (hi < sw - 1e-9) keep.push({ id: nid(), t: 'arc', c: e.c.slice(), r: e.r, a0: e.a0 + hi, a1: e.a0 + sw });
+    sk.ents.splice(sk.ents.indexOf(e), 1, ...keep);
+    return true;
+  }
+  return false;
+}
+
+// ---------- region detection (planar arrangement faces) ----------
+const regionCache = new WeakMap();
+export function regions(sk) {
+  if (regionCache.has(sk.ents)) return regionCache.get(sk.ents);
+  const segs = sketchSegments(sk);
+  // split segments at all intersections
+  const cuts = segs.map(() => [0, 1]);
+  for (let i = 0; i < segs.length; i++) for (let j = i + 1; j < segs.length; j++) {
+    const r = segInter(segs[i][0], segs[i][1], segs[j][0], segs[j][1]);
+    if (r) { cuts[i].push(r.t); cuts[j].push(r.u); }
+  }
+  const Q = 1e-6, keyOf = p => Math.round(p[0] / Q) + ',' + Math.round(p[1] / Q);
+  const nodes = new Map(); // key -> {p, out:[]}
+  const node = p => { const k = keyOf(p); if (!nodes.has(k)) nodes.set(k, { k, p, out: [] }); return nodes.get(k); };
+  const edgeSet = new Set();
+  segs.forEach(([a, b], i) => {
+    const ts = [...new Set(cuts[i].map(t => Math.round(t * 1e12) / 1e12))].sort((x, y) => x - y);
+    for (let k = 0; k < ts.length - 1; k++) {
+      const pa = [a[0] + (b[0] - a[0]) * ts[k], a[1] + (b[1] - a[1]) * ts[k]];
+      const pb = [a[0] + (b[0] - a[0]) * ts[k + 1], a[1] + (b[1] - a[1]) * ts[k + 1]];
+      const A = node(pa), B = node(pb);
+      if (A === B) continue;
+      const ek = A.k < B.k ? A.k + '|' + B.k : B.k + '|' + A.k;
+      if (edgeSet.has(ek)) continue; edgeSet.add(ek);
+      A.out.push(B); B.out.push(A);
+    }
+  });
+  // sort outgoing by angle
+  for (const n of nodes.values()) n.out.sort((x, y) => Math.atan2(x.p[1] - n.p[1], x.p[0] - n.p[0]) - Math.atan2(y.p[1] - n.p[1], y.p[0] - n.p[0]));
+  const used = new Set(), faces = [];
+  for (const n of nodes.values()) for (const m of n.out) {
+    if (used.has(n.k + '>' + m.k)) continue;
+    const loop = []; let a = n, b = m, guard = 0;
+    while (!used.has(a.k + '>' + b.k) && guard++ < 1e5) {
+      used.add(a.k + '>' + b.k); loop.push(a.p);
+      // next: at b, the edge just clockwise from the reverse direction (b->a)
+      const i = b.out.indexOf(a);
+      const nx = b.out[(i - 1 + b.out.length) % b.out.length];
+      a = b; b = nx;
+    }
+    faces.push(loop);
+  }
+  const area = pts => { let s = 0; for (let i = 0; i < pts.length; i++) { const p = pts[i], q = pts[(i + 1) % pts.length]; s += p[0] * q[1] - q[0] * p[1]; } return s / 2; };
+  const clean = pts => { // remove spikes (dangling edges)
+    let r = pts.slice(), ch = true;
+    while (ch && r.length > 2) { ch = false; for (let i = 0; i < r.length; i++) { const p = r[(i - 1 + r.length) % r.length], q = r[(i + 1) % r.length]; if (d2(p, q) < 1e-9) { r.splice(i, 1); r.splice(i % r.length, 1); ch = true; break; } } }
+    return r;
+  };
+  const outers = [], bounds = [];
+  for (const f of faces) { const c = clean(f); if (c.length < 3) continue; const A = area(c); if (A > 1e-9) outers.push({ outer: c, area: A, holes: [] }); else if (A < -1e-9) bounds.push(c); }
+  // assign component boundaries (CW) as holes of the smallest containing face that is not their own
+  for (const b of bounds) {
+    const probe = b[0];
+    let best = null;
+    for (const r of outers) {
+      if (sharesBoundary(b, r.outer) || !pointInPoly(probe, r.outer)) continue;
+      if (!best || r.area < best.area) best = r;
+    }
+    if (best) best.holes.push(b);
+  }
+  // drop holes nested inside other holes of the same face
+  for (const r of outers) r.holes = r.holes.filter(h => !r.holes.some(o => o !== h && pointInPoly(h[0], o) && Math.abs(area(o)) > Math.abs(area(h))));
+  regionCache.set(sk.ents, outers);
+  return outers;
+}
+function sharesBoundary(a, b) { const s = new Set(b.map(p => p[0].toFixed(6) + ',' + p[1].toFixed(6))); let n = 0; for (const p of a) if (s.has(p[0].toFixed(6) + ',' + p[1].toFixed(6))) n++; return n >= Math.min(a.length, 3); }
+export function pointInPoly(p, poly) {
+  let ins = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    if ((a[1] > p[1]) !== (b[1] > p[1]) && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0]) ins = !ins;
+  }
+  return ins;
+}
+export function regionAt(sk, p) {
+  let best = null;
+  for (const r of regions(sk)) if (pointInPoly(p, r.outer) && !r.holes.some(h => pointInPoly(p, h)) && (!best || r.area < best.area)) best = r;
+  return best;
+}
+
+// ---------- snapping ----------
+// returns { p, kind, ref? }
+export function snapPoint(sk, raw, opts) {
+  const { pxTol, wpp, from, refPts = [], exclude = null } = opts;
+  const tol = pxTol * wpp;
+  let best = null;
+  const consider = (p, kind, rank, ref) => { if (exclude && d2(p, exclude) < 1e-9) return; const d = d2(p, raw); if (d <= tol && (!best || rank < best.rank || (rank === best.rank && d < best.d))) best = { p: p.slice(), kind, rank, d, ref }; };
+  for (const e of sk.ents) {
+    if (e.t === 'dim') continue;
+    for (const kp of keyPoints(e)) consider(kp.p, kp.center ? 'Center' : kp.k === 'mid' ? 'Mid' : kp.k[0] === 'q' ? 'Quad' : 'End', kp.k === 'mid' || kp.k[0] === 'q' ? 2 : 0, kp.m ? { e: e.id, k: kp.k } : null);
+  }
+  for (const p of intersections(sk)) consider(p, 'Int', 1);
+  for (const p of refPts) consider(p, 'Vertex', 0);
+  consider([0, 0], 'Origin', 0);
+  if (best) return best;
+  if (from) {
+    // polar tracking
+    const dx = raw[0] - from[0], dy = raw[1] - from[1], L = Math.hypot(dx, dy);
+    if (L > tol) {
+      const a = Math.atan2(dy, dx) * 180 / Math.PI;
+      const st = S.settings.angleStep || 15;
+      const sa = Math.round(a / st) * st;
+      if (Math.abs(a - sa) < 4) {
+        let l = L * Math.cos((a - sa) * Math.PI / 180);
+        if (S.settings.snap) l = Math.round(l / S.settings.snapStep) * S.settings.snapStep;
+        const r = sa * Math.PI / 180;
+        return { p: [from[0] + l * ecos(r), from[1] + l * esin(r)], kind: `${(((sa % 360) + 360) % 360)}°` };
+      }
+    }
+  }
+  if (S.settings.snap) { const st = S.settings.snapStep; return { p: raw.map(c => Math.round(c / st) * st), kind: 'Grid' }; }
+  return { p: raw.slice(), kind: '' };
+}
+
+// nearest entity to a 2D point (for selection), within tol
+export function pickEntity(sk, p, tol) {
+  let best = null;
+  for (const e of sk.ents) {
+    let d;
+    if (e.t === 'dim') continue;
+    const pl = entPolyline(e);
+    d = Infinity;
+    const n = pl.pts.length;
+    for (let i = 0; i < (pl.closed ? n : n - 1); i++) d = Math.min(d, segDist(p, pl.pts[i], pl.pts[(i + 1) % n]));
+    if (d <= tol && (!best || d < best.d)) best = { e, d };
+  }
+  return best ? best.e : null;
+}
+export function segDist(p, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
+  let t = L2 ? ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2 : 0; t = Math.max(0, Math.min(1, t));
+  return Math.hypot(a[0] + dx * t - p[0], a[1] + dy * t - p[1]);
+}
+
+// ---------- dimensions ----------
+export function lineAngle(sk, d) {
+  const a = entById(sk, d.la), b = entById(sk, d.lb); if (!a || !b) return null;
+  let x = Math.atan2(b.b[1] - b.a[1], b.b[0] - b.a[0]) - Math.atan2(a.b[1] - a.a[1], a.b[0] - a.a[0]);
+  x = Math.atan2(Math.sin(x), Math.cos(x));
+  return x * 180 / Math.PI;
+}
+export function dimValue(sk, d) {
+  if (d.kind === 'ang') { const v = lineAngle(sk, d); return v == null ? null : Math.abs(v); }
+  if (d.kind === 'lin') { const A = refPoint(sk, d.A), B = refPoint(sk, d.B); return A && B ? d2(A, B) : null; }
+  const e = entById(sk, d.e); if (!e) return null;
+  return d.kind === 'dia' ? 2 * e.r : e.r;
+}
+export function setDimValue(sk, d, v) {
+  if (sk.cons && sk.cons.length || sk.ents.some(x => x.t === 'dim' && x.value != null)) {
+    const err = editAndSolve(sk, () => {
+      d.value = d.kind === 'ang' ? Math.sign(d.value || 1) * v : v;
+      if (d.kind === 'ang') { // rotate the second line about its start so its length is kept
+        const a = entById(sk, d.la), b = entById(sk, d.lb);
+        if (a && b) { const base = Math.atan2(a.b[1] - a.a[1], a.b[0] - a.a[0]) + d.value * Math.PI / 180, L = d2(b.a, b.b); b.b = [b.a[0] + L * Math.cos(base), b.a[1] + L * Math.sin(base)]; }
+      }
+    }, { heavyRefs: d.kind === 'lin' ? [d.A] : d.kind === 'ang' ? [{ e: d.la, k: 'a' }, { e: d.la, k: 'b' }] : [] });
+    if (!err) return;
+    d.value = null; // fall back to a direct edit below
+  }
+  if (d.kind === 'ang') {
+    const a = entById(sk, d.la), b = entById(sk, d.lb); if (!a || !b) return 'Missing line';
+    const sgn = Math.sign(lineAngle(sk, d) || 1), base = Math.atan2(a.b[1] - a.a[1], a.b[0] - a.a[0]) + sgn * v * Math.PI / 180;
+    const L = d2(b.a, b.b); b.b = [b.a[0] + L * Math.cos(base), b.a[1] + L * Math.sin(base)];
+    d.value = sgn * v; return;
+  }
+  if (d.value !== undefined) d.value = v;
+  if (d.kind === 'lin') {
+    const A = refPoint(sk, d.A), B = refPoint(sk, d.B);
+    const L = d2(A, B); if (L < 1e-12) return 'Points coincide';
+    movePoint(sk, d.B, [A[0] + (B[0] - A[0]) * v / L, A[1] + (B[1] - A[1]) * v / L]);
+  } else {
+    const e = entById(sk, d.e); if (!e) return 'Missing entity';
+    e.r = d.kind === 'dia' ? v / 2 : v;
+  }
+}
+
+// ---------- DXF (R12-compatible ASCII, millimetres) ----------
+export function toDXF(sk) {
+  const L = ['0', 'SECTION', '2', 'HEADER', '9', '$INSUNITS', '70', '4', '0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES'];
+  const f = v => (+v.toFixed(9)).toString();
+  const line = (a, b) => L.push('0', 'LINE', '8', '0', '10', f(a[0]), '20', f(a[1]), '30', '0', '11', f(b[0]), '21', f(b[1]), '31', '0');
+  for (const e of sk.ents) {
+    if (e.t === 'line') line(e.a, e.b);
+    else if (e.t === 'rect') { const c = rectCorners(e); for (let i = 0; i < 4; i++) line(c[i], c[(i + 1) % 4]); }
+    else if (e.t === 'circle') L.push('0', 'CIRCLE', '8', '0', '10', f(e.c[0]), '20', f(e.c[1]), '30', '0', '40', f(e.r));
+    else if (e.t === 'arc') L.push('0', 'ARC', '8', '0', '10', f(e.c[0]), '20', f(e.c[1]), '30', '0', '40', f(e.r), '50', f(e.a0 * 180 / Math.PI), '51', f((e.a0 + sweep(e)) * 180 / Math.PI));
+  }
+  L.push('0', 'ENDSEC', '0', 'EOF');
+  return L.join('\n') + '\n';
+}
+
+// remove constraints / dims that reference deleted entities
+export function pruneCons(sk) {
+  const ids = new Set(sk.ents.map(e => e.id));
+  sk.cons = (sk.cons || []).filter(c => ids.has(c.a) && (c.b == null || ids.has(c.b)) && (!c.p || ids.has(c.p.e)));
+  sk.ents = sk.ents.filter(d => d.t !== 'dim' || (d.kind === 'lin' ? ids.has(d.A.e) && ids.has(d.B.e) && refPoint(sk, d.A) && refPoint(sk, d.B) : d.kind === 'ang' ? ids.has(d.la) && ids.has(d.lb) : ids.has(d.e)));
+}
+export const CONS_LABEL = { h: 'H', v: 'V', par: '∥', perp: '⊥', eq: '=', tan: 'T', conc: '◎', fix: '⚓', mid: 'M' };
+
+// ---------- 2D corner fillet / chamfer ----------
+// Finds two lines meeting at the corner nearest p (within tol), then rounds (arc radius r) or bevels (distance r).
+export function explodeRect(sk, e) {
+  const idx = sk.ents.indexOf(e);
+  const c = rectCorners(e);
+  const lines = [0, 1, 2, 3].map(i => ({ id: (sk.nextEnt = (sk.nextEnt || 1000) + 1), t: 'line', a: c[i].slice(), b: c[(i + 1) % 4].slice() }));
+  sk.ents.splice(idx, 1, ...lines);
+  return lines;
+}
+export function findCorner(sk, p, tol) {
+  // explode rectangles whose corner is near p
+  for (const e of sk.ents.slice()) if (e.t === 'rect' && rectCorners(e).some(c => d2(c, p) <= tol)) explodeRect(sk, e);
+  let best = null;
+  const ends = [];
+  for (const e of sk.ents) if (e.t === 'line') { ends.push({ e, k: 'a', p: e.a }); ends.push({ e, k: 'b', p: e.b }); }
+  for (const q of ends) {
+    if (d2(q.p, p) > tol) continue;
+    const mates = ends.filter(o => o.e !== q.e && d2(o.p, q.p) < 1e-7);
+    if (mates.length === 1 && (!best || d2(q.p, p) < best.d)) best = { d: d2(q.p, p), A: q, B: mates[0] };
+  }
+  return best;
+}
+export function cornerOp(sk, p, tol, r, kind) {
+  const c = findCorner(sk, p, tol);
+  if (!c) return 'Tap a corner where exactly two lines meet';
+  const P = c.A.p.slice();
+  const other = q => (q.k === 'a' ? q.e.b : q.e.a);
+  const u1 = norm2(sub2(other(c.A), P)), u2 = norm2(sub2(other(c.B), P));
+  const L1 = d2(other(c.A), P), L2 = d2(other(c.B), P);
+  const cosT = Math.max(-1, Math.min(1, u1[0] * u2[0] + u1[1] * u2[1])), th = Math.acos(cosT);
+  if (th < 1e-6 || Math.PI - th < 1e-6) return 'Lines are parallel';
+  const t = kind === 'chamfer' ? r : r / Math.tan(th / 2);
+  if (t > L1 + 1e-9 || t > L2 + 1e-9) return `Too large: needs ${(t).toFixed(3)} mm of each line`;
+  const T1 = [P[0] + u1[0] * t, P[1] + u1[1] * t], T2 = [P[0] + u2[0] * t, P[1] + u2[1] * t];
+  c.A.e[c.A.k] = T1; c.B.e[c.B.k] = T2;
+  sk.ents = sk.ents.filter(e => !(e.t === 'line' && d2(e.a, e.b) < 1e-9));
+  const nid = () => (sk.nextEnt = (sk.nextEnt || 1000) + 1);
+  if (kind === 'chamfer') { const ln = { id: nid(), t: 'line', a: T1, b: T2 }; sk.ents.push(ln); return { ent: ln }; }
+  const bis = norm2([u1[0] + u2[0], u1[1] + u2[1]]);
+  const dc = r / Math.sin(th / 2);
+  const C = [P[0] + bis[0] * dc, P[1] + bis[1] * dc];
+  const a1 = Math.atan2(T1[1] - C[1], T1[0] - C[0]), a2 = Math.atan2(T2[1] - C[1], T2[0] - C[0]);
+  const want = Math.PI - th;
+  let s12 = ((a2 - a1) % TAU + TAU) % TAU;
+  const arc = Math.abs(s12 - want) < 1e-6 ? { a0: a1, a1: a1 + want } : { a0: a2, a1: a2 + want };
+  const e = { id: nid(), t: 'arc', c: C, r, ...arc };
+  sk.ents.push(e);
+  sk.cons = sk.cons || [];
+  sk.cons.push({ id: nid(), t: 'tan', a: c.A.e.id, b: e.id }, { id: nid(), t: 'tan', a: c.B.e.id, b: e.id });
+  return { ent: e };
+}
+const sub2 = (a, b) => [a[0] - b[0], a[1] - b[1]];
+const norm2 = a => { const l = Math.hypot(a[0], a[1]) || 1; return [a[0] / l, a[1] / l]; };

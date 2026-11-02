@@ -1,0 +1,16 @@
+{
+  "name": "streamline",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node tests/serve.mjs",
+    "test": "node --test tests/unit.test.mjs",
+    "test:e2e": "node tests/e2e.mjs"
+  },
+  "devDependencies": {
+    "three": "0.170.0"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.40.0"
+  }
+}

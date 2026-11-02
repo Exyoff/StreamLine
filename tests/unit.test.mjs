@@ -1,0 +1,193 @@
+// Unit tests for the geometry core: run with `npm test` (Node 18+).
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { makeBox, makeCylinder, meshVolume } from '../js/mesh.js';
+import { toPolys, boolean, polysToMesh, extrudeRegions, revolveRegions } from '../js/csg.js';
+import { PLANES, regions, intersections, trimAt, cornerOp, setDimValue, movePoint } from '../js/sketch.js';
+import { solve, dof, editAndSolve } from '../js/constraints.js';
+import { edgeBlend, featureEdges, straightRun } from '../js/edges.js';
+import { evalExpr } from '../js/units.js';
+
+const near = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg ?? ''} expected ${b} ± ${tol}, got ${a}`);
+const watertight = m => { const c = new Map(); for (const f of m.f) f.forEach((a, i) => { const b = f[(i + 1) % f.length]; const k = a < b ? a + '_' + b : b + '_' + a; c.set(k, (c.get(k) || 0) + 1); }); return [...c.values()].every(n => n === 2); };
+const ngonArea = (r, n) => 0.5 * n * r * r * Math.sin(2 * Math.PI / n);
+const sk = ents => ({ ents: ents.map((e, i) => ({ id: i + 1, ...e })), cons: [], nextEnt: 100 });
+
+test('expressions with units', () => {
+  near(evalExpr('3/8 in'), 9.525, 1e-12);
+  near(evalExpr('10mm + 1in'), 35.4, 1e-12);
+  near(evalExpr('2*pi*5'), 10 * Math.PI, 1e-12);
+  near(evalExpr('0.5 rad', 'ang'), 28.64788975654116, 1e-9);
+  assert.throws(() => evalExpr('1/0'));
+});
+
+test('sketch: exact intersections', () => {
+  const s = sk([{ t: 'line', a: [-10, 0], b: [10, 0] }, { t: 'circle', c: [0, 0], r: 5 }, { t: 'circle', c: [6, 0], r: 5 }]);
+  const pts = intersections(s).map(p => p.map(v => +v.toFixed(12)));
+  for (const q of [[-5, 0], [5, 0], [1, 0], [3, 4], [3, -4]]) assert.ok(pts.some(p => Math.hypot(p[0] - q[0], p[1] - q[1]) < 1e-9), `missing ${q}`);
+});
+
+test('sketch: regions with holes, splits and dangling lines', () => {
+  const plate = regions(sk([{ t: 'rect', x: 0, y: 0, w: 20, h: 10 }, { t: 'circle', c: [10, 5], r: 3 }]));
+  assert.equal(plate.length, 2);
+  assert.equal(plate.find(r => r.holes.length === 1).area, 200);
+  const split = regions(sk([{ t: 'rect', x: 0, y: 0, w: 20, h: 10 }, { t: 'line', a: [10, -5], b: [10, 15] }]));
+  assert.deepEqual(split.map(r => r.area).sort(), [100, 100]);
+  const tri = regions(sk([{ t: 'line', a: [0, 0], b: [10, 0] }, { t: 'line', a: [10, 0], b: [0, 10] }, { t: 'line', a: [0, 10], b: [0, 0] }, { t: 'line', a: [10, 0], b: [20, 0] }]));
+  assert.equal(tri.length, 1); near(tri[0].area, 50, 1e-9);
+});
+
+test('sketch: trim', () => {
+  const s = sk([{ t: 'line', a: [-10, 0], b: [10, 0] }, { t: 'circle', c: [0, 0], r: 5 }]);
+  trimAt(s, s.ents[0], [0, 0.1]);
+  const lines = s.ents.filter(e => e.t === 'line').map(e => [e.a, e.b]);
+  assert.deepEqual(lines, [[[-10, 0], [-5, 0]], [[5, 0], [10, 0]]]);
+  s.ents = [...s.ents];
+  trimAt(s, s.ents.find(e => e.t === 'circle'), [0, -5]);
+  const arc = s.ents.find(e => e.t === 'arc');
+  near(arc.a0, 0, 1e-12); near(arc.a1, Math.PI, 1e-12);
+});
+
+test('sketch: 2D fillet and chamfer', () => {
+  const s = sk([{ t: 'rect', x: 0, y: 0, w: 20, h: 10 }]);
+  const f = cornerOp(s, [20, 10], 0.5, 3, 'fillet').ent;
+  assert.deepEqual([f.t, f.c, f.r], ['arc', [17, 7], 3]);
+  near(f.a1 - f.a0, Math.PI / 2, 1e-12);
+  const c = cornerOp(s, [0, 0], 0.5, 2, 'chamfer').ent;
+  assert.deepEqual([c.a, c.b], [[2, 0], [0, 2]]);
+  assert.equal(regions(s).length, 1);
+  assert.equal(typeof cornerOp(s, [5, 5], 0.5, 1, 'fillet'), 'string', 'no corner there');
+  assert.match(cornerOp(sk([{ t: 'rect', x: 0, y: 0, w: 4, h: 4 }]), [4, 4], 0.5, 10, 'fillet'), /Too large/);
+});
+
+test('constraints: sloppy quad becomes exact 30×20 rectangle, then follows a dimension', () => {
+  const s = { ents: [
+    { id: 1, t: 'line', a: [0, 0], b: [29, 1] }, { id: 2, t: 'line', a: [29, 1], b: [31, 19] },
+    { id: 3, t: 'line', a: [31, 19], b: [1, 21] }, { id: 4, t: 'line', a: [1, 21], b: [0, 0] },
+    { id: 5, t: 'dim', kind: 'lin', A: { e: 1, k: 'a' }, B: { e: 1, k: 'b' }, value: 30 },
+    { id: 6, t: 'dim', kind: 'lin', A: { e: 2, k: 'a' }, B: { e: 2, k: 'b' }, value: 20 },
+  ], cons: [{ t: 'h', a: 1 }, { t: 'v', a: 2 }, { t: 'h', a: 3 }, { t: 'v', a: 4 }] };
+  assert.ok(solve(s).ok);
+  assert.deepEqual(s.ents.slice(0, 4).map(e => [e.a, e.b]), [[[0, 0], [30, 0]], [[30, 0], [30, 20]], [[30, 20], [0, 20]], [[0, 20], [0, 0]]]);
+  assert.equal(dof(s), 0, 'fully constrained (origin is fixed)');
+  setDimValue(s, s.ents[4], 42.5);
+  assert.deepEqual(s.ents.slice(0, 4).map(e => [e.a, e.b]), [[[0, 0], [42.5, 0]], [[42.5, 0], [42.5, 20]], [[42.5, 20], [0, 20]], [[0, 20], [0, 0]]]);
+});
+
+test('constraints: parallel, perpendicular, equal, tangent, conflict', () => {
+  const s = { ents: [{ id: 1, t: 'line', a: [0, 0], b: [10, 1] }, { id: 2, t: 'line', a: [0, 5], b: [7, 9] }, { id: 3, t: 'line', a: [20, 0], b: [21, 8] }], cons: [{ t: 'par', a: 1, b: 2 }, { t: 'perp', a: 1, b: 3 }, { t: 'eq', a: 2, b: 3 }] };
+  assert.ok(solve(s).ok);
+  const d = l => [l.b[0] - l.a[0], l.b[1] - l.a[1]], [A, B, C] = s.ents.map(d);
+  near(A[0] * B[1] - A[1] * B[0], 0, 1e-9, 'parallel');
+  near(A[0] * C[0] + A[1] * C[1], 0, 1e-9, 'perpendicular');
+  near(Math.hypot(...B), Math.hypot(...C), 1e-9, 'equal');
+  const t = { ents: [{ id: 1, t: 'line', a: [-10, 5], b: [10, 6] }, { id: 2, t: 'circle', c: [0, 0], r: 3 }], cons: [{ t: 'tan', a: 1, b: 2 }, { t: 'h', a: 1 }] };
+  assert.ok(solve(t).ok);
+  near(Math.abs(t.ents[0].a[1] - t.ents[1].c[1]), t.ents[1].r, 1e-9, 'tangent');
+  const bad = { ents: [{ id: 1, t: 'line', a: [1, 1], b: [5, 5] }, { id: 2, t: 'dim', kind: 'lin', A: { e: 1, k: 'a' }, B: { e: 1, k: 'b' }, value: 4 }], cons: [{ t: 'h', a: 1 }, { t: 'v', a: 1 }] };
+  assert.equal(solve(bad).ok, false, 'H + V + length is a conflict');
+});
+
+test('constraints: dragging a corner keeps connected lines joined and H/V', () => {
+  const s = { ents: [{ id: 1, t: 'line', a: [0, 0], b: [10, 0] }, { id: 2, t: 'line', a: [10, 0], b: [10, 10] }], cons: [{ t: 'h', a: 1 }, { t: 'v', a: 2 }], nextEnt: 10 };
+  movePoint(s, { e: 1, k: 'b' }, [15, 3]);
+  assert.deepEqual(s.ents[0].b, s.ents[1].a, 'still coincident');
+  near(s.ents[0].a[1] - s.ents[0].b[1], 0, 1e-9); near(s.ents[1].a[0] - s.ents[1].b[0], 0, 1e-9);
+  near(s.ents[0].b[0], 15, 1e-5, 'drag lands on the finger within 10 µm');
+});
+
+test('constraints: typed edits are exact and connected geometry follows', () => {
+  const s = { ents: [{ id: 1, t: 'line', a: [0, 0], b: [10, 0] }, { id: 2, t: 'line', a: [10, 0], b: [10, 10] }], cons: [{ t: 'h', a: 1 }, { t: 'v', a: 2 }], nextEnt: 10 };
+  const err = editAndSolve(s, k => { const l = k.ents[0]; l.b = [12.345, 0]; });
+  assert.equal(err, undefined);
+  assert.deepEqual(s.ents[0].b, [12.345, 0]);
+  assert.deepEqual(s.ents[1].a, [12.345, 0], 'joined line followed exactly');
+  assert.equal(s.ents[1].b[0], 12.345, 'and stayed vertical');
+});
+
+test('csg: booleans are exact and watertight', () => {
+  const box = makeBox(20, 20, 20), cyl = makeCylinder(5, 40, 32), A = ngonArea(5, 32);
+  const run = k => polysToMesh(boolean(k, toPolys(box.v, box.f), toPolys(cyl.v, cyl.f)));
+  for (const [k, v] of [['union', 8000 + A * 20], ['subtract', 8000 - A * 20], ['intersect', A * 20]]) {
+    const m = run(k); near(meshVolume(m), v, 1e-6, k); assert.ok(watertight(m), k + ' watertight');
+  }
+  const small = makeBox(10, 10, 10); small.v = small.v.map(p => [p[0] + 10, p[1] + 10, p[2] + 10]);
+  const notch = polysToMesh(boolean('subtract', toPolys(box.v, box.f), toPolys(small.v, small.f)));
+  assert.equal(notch.v.length, 14); assert.equal(notch.f.length, 9); near(meshVolume(notch), 7875, 1e-9);
+});
+
+test('features: extrude with hole and revolve', () => {
+  const R = regions(sk([{ t: 'rect', x: 0, y: 0, w: 30, h: 20 }, { t: 'circle', c: [15, 10], r: 4 }])).filter(r => r.holes.length);
+  const m = extrudeRegions(R, PLANES.XY, 0, 5);
+  near(meshVolume(m), (600 - ngonArea(4, 64)) * 5, 1e-9); assert.ok(watertight(m));
+  const ring = revolveRegions(regions(sk([{ t: 'rect', x: 5, y: 0, w: 3, h: 10 }])), PLANES.XZ, 'y', 360, 64);
+  assert.ok(watertight(ring)); near(meshVolume(ring), 30 * 2 * Math.PI * 6.5, 3, 'Pappus (faceted)');
+  const quarter = revolveRegions(regions(sk([{ t: 'rect', x: 0, y: 0, w: 3, h: 10 }])), PLANES.XZ, 'y', 90, 64);
+  assert.ok(watertight(quarter));
+});
+
+test('3D fillet and chamfer on convex and concave edges', () => {
+  const box = makeBox(20, 20, 20);
+  assert.equal(featureEdges(box.v, box.f).length, 12);
+  const ch = edgeBlend(box.v, box.f, [-10, -10, 10], [10, -10, 10], 4, 'chamfer');
+  near(meshVolume(ch), 8000 - 20 * 8, 1e-9); assert.ok(watertight(ch));
+  const segs = 16, sector = (r, sweep, n) => 0.5 * r * r * n * Math.sin(sweep / n); // inscribed polygon
+  const fl = edgeBlend(box.v, box.f, [-10, -10, 10], [10, -10, 10], 4, 'fillet', segs);
+  const k = Math.round(segs * (Math.PI / 2) / (Math.PI / 2));
+  near(meshVolume(fl), 8000 - 20 * (16 - sector(4, Math.PI / 2, k) - 0) , 2, 'fillet volume (faceted)');
+  assert.ok(watertight(fl));
+  // the result's straight edge between fillet and side is recognised as one run
+  const fe = featureEdges(fl.v, fl.f); assert.ok(fe.length > 12);
+  const blk = makeBox(10, 30, 10); blk.v = blk.v.map(p => [p[0] + 5, p[1], p[2] + 5]);
+  const L = polysToMesh(boolean('subtract', toPolys(box.v, box.f), toPolys(blk.v, blk.f)));
+  const cf = edgeBlend(L.v, L.f, [0, -10, 0], [0, 10, 0], 3, 'fillet', 16);
+  assert.ok(meshVolume(cf) > 6000, 'concave fillet adds material'); assert.ok(watertight(cf));
+  const two = edgeBlend(fl.v, fl.f, [10, -10, 10], [10, 10, 10], 4, 'fillet', 16);
+  assert.equal(typeof two, 'object', 'second fillet on a shared corner'); assert.ok(watertight(two));
+});
+
+test('regression: chamfer after fillet on a holed, chamfered plate stays watertight', () => {
+  const s = sk([{ t: 'rect', x: -20, y: -15, w: 40, h: 30 }, { t: 'circle', c: [0, 0], r: 5 }]);
+  cornerOp(s, [20, 15], 0.5, 5, 'fillet'); cornerOp(s, [-20, -15], 0.5, 4, 'chamfer');
+  const plate = extrudeRegions(regions(s).filter(r => r.holes.length), PLANES.XY, 0, 8);
+  const f = edgeBlend(plate.v, plate.f, [-16, -15, 8], [20, -15, 8], 2, 'fillet', 8);
+  assert.ok(watertight(f), 'after fillet');
+  const fe = featureEdges(f.v, f.f);
+  const e = fe.find(q => [f.v[q.a], f.v[q.b]].every(p => Math.abs(p[0] - 20) < 1e-9 && Math.abs(p[1] + 15) < 1e-9));
+  const [a, b] = straightRun(f.v, fe, e.a, e.b);
+  near(Math.abs(a[2] - b[2]), 6, 1e-9, 'vertical edge shortened by the fillet');
+  const c = edgeBlend(f.v, f.f, a, b, 1.5, 'chamfer');
+  assert.ok(watertight(c), 'after chamfer');
+  near(meshVolume(f) - meshVolume(c), 1.5 * 1.5 / 2 * 6, 1e-6, 'chamfer volume');
+});
+
+test('constraints: angle dimension drives the angle between two lines', async () => {
+  const { setDimValue: setDim, lineAngle } = await import('../js/sketch.js');
+  const s = { ents: [{ id: 1, t: 'line', a: [0, 0], b: [10, 0] }, { id: 2, t: 'line', a: [0, 0], b: [5, 7] }], cons: [{ t: 'h', a: 1 }], nextEnt: 10 };
+  const d = { id: 3, t: 'dim', kind: 'ang', la: 1, lb: 2, value: lineAngle(s, { la: 1, lb: 2 }) };
+  s.ents.push(d);
+  setDim(s, d, 30);
+  near(lineAngle(s, d), 30, 1e-9, 'angle');
+  near(s.ents[0].b[1], 0, 1e-12, 'reference line stays horizontal');
+  near(Math.hypot(...s.ents[1].b), Math.hypot(5, 7), 1e-6, 'driven line keeps its length');
+});
+
+test('constraints: fully-constrained detection', async () => {
+  const { constrainedEntities } = await import('../js/constraints.js');
+  const s = { ents: [{ id: 1, t: 'line', a: [0, 0], b: [10, 0] }, { id: 2, t: 'line', a: [10, 0], b: [10, 5] }], cons: [{ t: 'h', a: 1 }], nextEnt: 10 };
+  assert.deepEqual([...constrainedEntities(s)], [], 'nothing fully fixed yet');
+  s.ents.push({ id: 3, t: 'dim', kind: 'lin', A: { e: 1, k: 'a' }, B: { e: 1, k: 'b' }, value: 10 });
+  assert.deepEqual([...constrainedEntities(s)], [1], 'origin + H + length fix line 1 only');
+  s.cons.push({ t: 'v', a: 2 }); s.ents.push({ id: 4, t: 'dim', kind: 'lin', A: { e: 2, k: 'a' }, B: { e: 2, k: 'b' }, value: 5 });
+  assert.deepEqual([...constrainedEntities(s)].sort(), [1, 2]);
+  assert.equal(dof(s), 0);
+});
+
+test('3D two-distance chamfer', () => {
+  const box = makeBox(20, 20, 20);
+  const c = edgeBlend(box.v, box.f, [-10, -10, 10], [10, -10, 10], 2, 'chamfer', 16, 5);
+  near(meshVolume(c), 8000 - 20 * (2 * 5 / 2), 1e-9); assert.ok(watertight(c));
+  const s = edgeBlend(box.v, box.f, [-10, -10, 10], [10, -10, 10], 2, 'chamfer', 16, 5, true);
+  near(meshVolume(s), 8000 - 20 * 5, 1e-9, 'swap keeps the same volume');
+  assert.notDeepEqual(c.v.map(p => p.join()).sort(), s.v.map(p => p.join()).sort(), 'but mirrors the bevel');
+});

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="StreamLine">
+<meta name="theme-color" content="#1b1c1f">
+<meta name="format-detection" content="telephone=no">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="StreamLine — precise polygon modelling in the browser, built for iPhone and iPad.">
+<title>StreamLine</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="stylesheet" href="css/app.css">
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <button class="ib" id="btn-menu" aria-label="Menu"></button>
+    <div class="seg" id="ws-seg" role="tablist">
+      <button data-ws="draw">Draw</button>
+      <button data-ws="cad">CAD</button>
+      <button data-ws="model">Model</button>
+    </div>
+    <div class="spacer"></div>
+    <button class="ib" id="btn-undo" aria-label="Undo"></button>
+    <button class="ib" id="btn-redo" aria-label="Redo"></button>
+    <button class="ib" id="btn-props" aria-label="Properties"></button>
+  </header>
+
+  <main id="viewport">
+    <div id="hud"></div>
+    <canvas id="nav" aria-label="View axes"></canvas>
+    <div class="vcol" id="vtools-r">
+      <button class="fab" id="btn-persp" aria-label="Perspective / orthographic"></button>
+      <button class="fab" id="btn-frame" aria-label="Frame selection"></button>
+      <button class="fab" id="btn-snap" aria-label="Snapping"></button>
+      <button class="fab" id="btn-xray" aria-label="X-ray"></button>
+    </div>
+    <div class="vcol" id="vtools-l">
+      <button class="fab" id="btn-multi" aria-label="Multi-select"></button>
+      <button class="fab" id="btn-all" aria-label="Select all / none"></button>
+    </div>
+    <div id="lastop" class="card" hidden></div>
+    <div id="draw-card" class="card" hidden></div>
+    <div id="measure-card" class="card" hidden></div>
+  </main>
+
+  <footer id="bottombar">
+    <div id="actions" class="scrollrow"></div>
+    <nav id="tools"></nav>
+  </footer>
+
+  <section id="sheet" aria-hidden="true">
+    <div class="grab"></div>
+    <div class="sheet-head">
+      <div class="seg" id="sheet-tabs">
+        <button data-tab="item">Item</button>
+        <button data-tab="objects">Objects</button>
+        <button data-tab="settings">Settings</button>
+      </div>
+      <button class="ib" id="sheet-close" aria-label="Close"></button>
+    </div>
+    <div id="sheet-body"></div>
+  </section>
+
+  <div id="scrim" hidden></div>
+  <div id="popover" class="popover" hidden></div>
+  <div id="keypad" hidden></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <input type="file" id="file-input" accept=".json,.stl,.obj,application/json,model/stl,model/obj" hidden>
+</div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
