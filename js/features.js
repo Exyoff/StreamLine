@@ -202,7 +202,7 @@ export const bodyBoolean = {
 };
 
 // ---------- 3D edge fillet / chamfer ----------
-import { edgeBlend, edgeFrame } from './edges.js';
+import { edgeBlend, edgeFrame, circleBlend } from './edges.js';
 import { faceRegion, findRegion, regionCentroid, pushPull, shell, mirrorMesh } from './modifiers.js';
 export const edgeBlendOp = {
   label: p => (p.kind === 'fillet' ? 'Fillet' : 'Chamfer') + ` · ${p.edges.length} edge${p.edges.length === 1 ? '' : 's'}`,
@@ -213,7 +213,7 @@ export const edgeBlendOp = {
     p._objs = [...new Set(p.edges.map(e => e.obj))];
   },
   touch: p => ({ ids: p._objs, mesh: true }),
-  fields: p => [lenF('size', p.kind === 'fillet' ? 'Radius' : 'Distance 1'), ...(p.kind === 'fillet' ? [{ key: 'segs', label: 'Segments / 90°', kind: 'int', min: 1, max: 64 }] : [lenF('size2', 'Distance 2'), { key: 'swap', label: 'Swap sides', kind: 'bool' }]), { key: 'kind', label: 'Type', kind: 'choice', options: [['fillet', 'Fillet'], ['chamfer', 'Chamfer']], wide: true }],
+  fields: p => [lenF('size', p.kind === 'fillet' ? 'Radius' : (p.edges || []).every(e => e.circle) ? 'Distance' : 'Distance 1'), ...(p.kind === 'fillet' ? [{ key: 'segs', label: 'Segments / 90°', kind: 'int', min: 1, max: 64 }] : (p.edges || []).every(e => e.circle) ? [] : [lenF('size2', 'Distance 2'), { key: 'swap', label: 'Swap sides', kind: 'bool' }]), { key: 'kind', label: 'Type', kind: 'choice', options: [['fillet', 'Fillet'], ['chamfer', 'Chamfer']], wide: true }],
   apply(p, op) {
     if (!(p.size > 0)) return 'Size must be > 0';
     // live drag handle (computed on the edge before it is rounded): from the edge midpoint, away from the corner
@@ -233,7 +233,9 @@ export const edgeBlendOp = {
         if (p.size2 == null || p.size2 === p._size1) p.size2 = p.size;
         p._size1 = p.size;
         if (p.kind === 'chamfer' && !(p.size2 > 0)) return 'Distance 2 must be > 0';
-        const r = edgeBlend(W, faces, e.a, e.b, p.size, p.kind, Math.max(1, Math.round(p.segs)), p.kind === 'chamfer' ? p.size2 : null, !!p.swap);
+        const r = e.circle
+          ? circleBlend(W, faces, e.circle, p.size, p.kind, Math.max(1, Math.round(p.segs)))
+          : edgeBlend(W, faces, e.a, e.b, p.size, p.kind, Math.max(1, Math.round(p.segs)), p.kind === 'chamfer' ? p.size2 : null, !!p.swap);
         if (typeof r === 'string') return r;
         W = r.v; faces = r.f;
       }
