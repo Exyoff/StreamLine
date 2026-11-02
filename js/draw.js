@@ -10,6 +10,8 @@ import { runOp, updateOp, commit, cancelOp, getLast } from './ops.js';
 import { fmtLen, fmtAng, fmtArea } from './units.js';
 import { h, field, toast, openKeypad, $ } from './ui.js';
 import { xfFor } from './scene.js';
+import { Line2 } from '../vendor/lines/Line2.js';
+import { LineGeometry } from '../vendor/lines/LineGeometry.js';
 import { editAndSolve, dof as sketchDof, constrainedEntities } from './constraints.js';
 import { defSize } from './operators.js';
 import { I } from './icons.js';
@@ -425,6 +427,15 @@ export function initDraw() {
   view.renderHooks.push(renderSketches);
 }
 function lineObj(pts3, mat, closed) {
+  if (mat && mat.isLineBasicMaterial && !mat.isLineDashedMaterial) {
+    // crisp screen-space line, same colour / opacity / depth behaviour
+    const pts = closed ? [...pts3, pts3[0]] : pts3;
+    const g = new LineGeometry(); g.setPositions(pts.flat());
+    const fm = view.fatMat({ color: mat.color.getHex(), opacity: mat.opacity, depthTest: mat.depthTest, width: 1.5 });
+    mat.dispose();
+    const l = new Line2(g, fm); l.renderOrder = mat.depthTest ? 0 : 5;
+    return l;
+  }
   const g = new THREE.BufferGeometry().setFromPoints(pts3.map(p => new THREE.Vector3(...p)));
   return closed ? new THREE.LineLoop(g, mat) : new THREE.Line(g, mat);
 }
