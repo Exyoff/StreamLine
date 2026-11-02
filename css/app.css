@@ -42,7 +42,9 @@ input, select { font: inherit; }
 .seg button { padding: 0 12px; height: 34px; border-radius: 8px; color: var(--muted); font-weight: 600; font-size: 14px; white-space: nowrap; }
 .seg button.on { background: var(--panel-2); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.4); }
 .seg.icons button { padding: 0 8px; }
-#mode-seg button.on { color: var(--accent); }
+#ws-seg button.on { color: var(--accent); }
+.ctxseg { position: sticky; left: 0; z-index: 1; display: flex; gap: 4px; align-items: center; background: var(--panel); padding-right: 6px; flex: none; }
+.ctxseg .seg button { height: 44px; }
 #selmode-seg[hidden] { display: none; }
 
 /* ---------- viewport ---------- */
@@ -50,6 +52,7 @@ input, select { font: inherit; }
 #gl { position: absolute; inset: 0; touch-action: none; display: block; }
 #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 1; }
 #hud, #nav, .vcol, #viewport > .card { z-index: 2; }
+.tool { min-width: 0; }
 .vlabel {
   position: absolute; left: 0; top: 0; white-space: nowrap; pointer-events: none;
   font: 600 12px/1 var(--mono); color: #fff; padding: 4px 6px; border-radius: 6px;
@@ -86,6 +89,15 @@ input, select { font: inherit; }
 #lastop .title small { color: var(--muted); font-weight: 500; margin-left: 6px; }
 #lastop .ib { width: 32px; height: 32px; }
 #lastop.collapsed .fields { display: none; }
+#draw-card { left: calc(var(--sal) + 64px); right: calc(var(--sar) + 64px); bottom: 12px; max-width: 420px; padding: 8px 10px 10px; }
+#draw-card .head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; min-height: 32px; }
+#draw-card .title { font-weight: 700; font-size: 14px; flex: 1; }
+#draw-card .title small { color: var(--muted); font-weight: 500; margin-left: 6px; }
+#draw-card .ib { width: 32px; height: 32px; }
+.btnrow { display: flex; gap: 6px; margin-top: 8px; justify-content: flex-end; }
+.btn { height: 38px; padding: 0 16px; border-radius: 9px; background: #34353b; font-weight: 600; font-size: 14px; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); }
+.btn:active { filter: brightness(1.2); }
 #measure-card { left: calc(var(--sal) + 10px); top: 64px; padding: 10px 12px; font: 13px/1.5 var(--mono); }
 #measure-card .big { font: 700 17px/1.3 var(--mono); color: var(--accent); }
 
@@ -218,7 +230,7 @@ input, select { font: inherit; }
   #vtools-l { flex-direction: row; left: auto; right: calc(var(--sar) + 10px); bottom: 12px; }
   #measure-card { left: auto; right: calc(var(--sar) + 116px); top: 8px; }
   #hud { right: 50%; }
-  #lastop { bottom: 64px; left: calc(var(--sal) + 10px); }
+  #lastop, #draw-card { bottom: 64px; left: calc(var(--sal) + 10px); }
 }
 @media (max-width: 380px) {
   .seg button { padding: 0 9px; }

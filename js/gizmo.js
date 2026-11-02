@@ -35,6 +35,7 @@ export function initGizmo() {
 function kind() {
   const last = getLast();
   if (last && last.handle) return 'handle';
+  if (S.ed.workspace !== 'model') return null;
   if (['move', 'rotate', 'scale'].includes(S.ed.tool) && OPS.computePivot()) return S.ed.tool;
   return null;
 }
@@ -100,7 +101,7 @@ function pivotAndScale() {
 
 function update() {
   const k = kind();
-  const kk = k + '|' + (k === 'handle' ? getLast().def.label() : '');
+  const kk = k + '|' + (k === 'handle' ? getLast().def.label(getLast().params) : '');
   if (kk !== key) { key = kk; rebuild(k); }
   readout && view.label(readout.world, readout.text, 'readout');
   if (!k) { root.visible = false; return; }
@@ -236,7 +237,7 @@ function dragMove(x, y) {
     if (snapOn()) v = stepSnap(v, S.settings.snapStep);
     if (h.min != null) v = Math.max(h.min, v);
     updateOp({ [h.key]: v });
-    readout = { world: M.add(h.origin, M.mul(h.dir, v)), text: `${getLast().def.label()} ${fmtLen(v)}` };
+    readout = { world: M.add(h.origin, M.mul(h.dir, v)), text: `${getLast().def.label(getLast().params)} ${fmtLen(v)}` };
     view.render(); return;
   }
   let params = {};

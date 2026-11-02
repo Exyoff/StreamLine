@@ -1,7 +1,13 @@
 // Shared application state + a tiny event bus.
 export const S = {
-  doc: { objects: [], nextId: 1 },
+  doc: { objects: [], sketches: [], nextId: 1 },
   ed: {
+    workspace: 'draw',     // 'draw' | 'cad' | 'model'
+    sketch: null,          // active sketch id
+    drawSel: new Set(),    // selected sketch entity ids
+    profiles: [],          // selected regions [{sk, pt:[x,y]}]
+    pickFace: false,       // waiting for a tap on a face to start a sketch
+    tools: { draw: 'line', cad: 'select', model: 'select' },
     mode: 'object',        // 'object' | 'edit'
     selectMode: 'vert',    // 'vert' | 'edge' | 'face'
     selected: new Set(),   // object ids (object mode)
@@ -21,6 +27,7 @@ export const S = {
     vertexSnap: false,
     xray: false,
     grid: true,
+    curveSegs: 64,
   },
 };
 

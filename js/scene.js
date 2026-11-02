@@ -52,16 +52,21 @@ export function cloneObj(o, shareMesh = false) {
 export function serialize() {
   return {
     format: 'streamline', version: 1, unit: 'mm',
-    doc: { nextId: S.doc.nextId, objects: S.doc.objects.map(o => ({ ...o, mesh: o.mesh.toJSON() })) },
-    ed: { mode: S.ed.mode, selectMode: S.ed.selectMode, selected: [...S.ed.selected], active: S.ed.active, editSel: [...S.ed.editSel], selOrder: S.ed.selOrder.slice() },
+    doc: { nextId: S.doc.nextId, objects: S.doc.objects.map(o => ({ ...o, mesh: o.mesh.toJSON() })), sketches: S.doc.sketches || [] },
+    ed: { workspace: S.ed.workspace, sketch: S.ed.sketch, drawSel: [...S.ed.drawSel], profiles: S.ed.profiles, mode: S.ed.mode, selectMode: S.ed.selectMode, selected: [...S.ed.selected], active: S.ed.active, editSel: [...S.ed.editSel], selOrder: S.ed.selOrder.slice() },
   };
 }
 export function deserialize(data) {
   const d = typeof data === 'string' ? JSON.parse(data) : data;
   if (!d || !d.doc || !Array.isArray(d.doc.objects)) throw new Error('Not a StreamLine project');
   S.doc.objects = d.doc.objects.map(o => ({ ...o, loc: o.loc.slice(), rot: o.rot.slice(), scl: o.scl.slice(), mesh: PolyMesh.from(o.mesh) }));
+  S.doc.sketches = JSON.parse(JSON.stringify(d.doc.sketches || []));
   S.doc.nextId = d.doc.nextId || (Math.max(0, ...S.doc.objects.map(o => o.id)) + 1);
   const e = d.ed || {};
+  S.ed.workspace = e.workspace || 'model';
+  S.ed.sketch = e.sketch ?? null;
+  S.ed.drawSel = new Set(e.drawSel || []);
+  S.ed.profiles = e.profiles || [];
   S.ed.mode = e.mode || 'object';
   S.ed.selectMode = e.selectMode || 'vert';
   S.ed.selected = new Set(e.selected || []);

@@ -1,6 +1,10 @@
 # StreamLine
 
-Precise polygon modelling in the browser, designed for iPhone and iPad first. It works like Blender (Object and Edit modes, Z-up, extrude and inset, a redo panel) and lets you type exact values the way a CAD program does.
+A modelling pipeline that runs in the browser, designed for iPhone and iPad first. It follows the order a real design is made in:
+
+1. **Draw**: 2D CAD drafting on a sketch plane (XY, XZ, YZ, or any flat face of a body). Lines and polylines, rectangles, circles, arcs, trim, and dimensions you can edit to resize the geometry. Snaps to endpoints, midpoints, centres, quadrants, exact intersections, body vertices, the grid and polar angles. While drawing you can type a length and angle, a width and height, or a radius. Exports DXF.
+2. **CAD**: tap closed regions (holes are detected automatically), then **Extrude** or **Revolve** them as New, Join, Cut or Intersect. Union, subtract and intersect between bodies. The booleans run in double precision and produce clean, watertight meshes. Sketching on a face of a body targets that body automatically.
+3. **Model**: Blender-style Object and Edit modes (Z-up, extrude and inset, a redo panel) for final shaping of the solids.
 
 **No build step, no dependencies to install.** Serve the folder with any static server:
 
@@ -19,6 +23,13 @@ On iPhone, open the page in Safari, then Share → **Add to Home Screen**. It th
 - Rotations by multiples of 90° use exact matrices (no 6e-17 drift).
 - The Measure tool snaps to vertices, surfaces and the grid, and shows ΔX, ΔY and ΔZ. Edit mode shows the lengths of selected edges.
 - Statistics: surface area, volume and a watertight check.
+
+## Pipeline details
+- Sketch geometry is analytic: circles and arcs are exact, and intersections are solved in closed form (line–line, line–circle, circle–circle). Quarter-turn angles produce exact coordinates.
+- Region detection builds a full planar arrangement, so overlapping shapes, split regions and nested holes all work.
+- Dimensions drive the geometry: set a linear dimension and its point moves, together with every point coincident with it. Radius and diameter dimensions resize circles and arcs.
+- Every feature (extrude distance and operation, revolve axis, angle and segments, boolean kind) stays editable in the redo card until the next operation.
+- Curves are faceted only when a solid is built. The number of segments per circle is a setting.
 
 ## Features
 - Primitives with parametric sizes: cube, plane, cylinder, cone, UV sphere, torus.
@@ -39,4 +50,4 @@ On iPhone, open the page in Safari, then Share → **Add to Home Screen**. It th
 Keyboard (iPad or desktop): `Tab` `1 2 3` `G R S` `E I F X A` `⌘Z` `⇧⌘Z` `N` `.` and numpad views.
 
 ## Layout
-`js/mesh.js` polygon mesh and modelling ops · `js/operators.js` operator definitions · `js/ops.js` redo panel and undo · `js/viewport.js` renderer, camera, picking, gestures · `js/gizmo.js` transform handles · `js/units.js` units and expression parser · `js/ui.js` keypad and widgets · `js/io.js` STL/OBJ · `vendor/` three.js r170 (MIT).
+`js/sketch.js` 2D sketch geometry, snapping, regions, trim, DXF · `js/draw.js` Draw workspace · `js/features.js` extrude, revolve, booleans · `js/csg.js` double-precision BSP CSG and mesh clean-up · `js/mesh.js` polygon mesh and modelling ops · `js/operators.js` operator definitions · `js/ops.js` redo panel and undo · `js/viewport.js` renderer, camera, picking, gestures · `js/gizmo.js` transform handles · `js/units.js` units and expression parser · `js/ui.js` keypad and widgets · `js/io.js` STL/OBJ · `vendor/` three.js r170 (MIT).

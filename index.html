@@ -22,14 +22,10 @@
 <div id="app">
   <header id="topbar">
     <button class="ib" id="btn-menu" aria-label="Menu"></button>
-    <div class="seg" id="mode-seg" role="tablist">
-      <button data-mode="object">Object</button>
-      <button data-mode="edit">Edit</button>
-    </div>
-    <div class="seg icons" id="selmode-seg">
-      <button data-sm="vert" aria-label="Vertex select"></button>
-      <button data-sm="edge" aria-label="Edge select"></button>
-      <button data-sm="face" aria-label="Face select"></button>
+    <div class="seg" id="ws-seg" role="tablist">
+      <button data-ws="draw">Draw</button>
+      <button data-ws="cad">CAD</button>
+      <button data-ws="model">Model</button>
     </div>
     <div class="spacer"></div>
     <button class="ib" id="btn-undo" aria-label="Undo"></button>
@@ -51,6 +47,7 @@
       <button class="fab" id="btn-all" aria-label="Select all / none"></button>
     </div>
     <div id="lastop" class="card" hidden></div>
+    <div id="draw-card" class="card" hidden></div>
     <div id="measure-card" class="card" hidden></div>
   </main>
 

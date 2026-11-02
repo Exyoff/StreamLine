@@ -11,6 +11,9 @@ import { fmtLen, fmtAng, fmtArea, fmtNum, unitFactor } from './units.js';
 import { I } from './icons.js';
 import { $, h, toast, field, choice, toggle, stepper, popover, closePopover, menuItem, closeKeypad, keypadOpen, keypadKey } from './ui.js';
 import * as IO from './io.js';
+import * as SK from './sketch.js';
+import * as F from './features.js';
+import * as Draw from './draw.js';
 
 const DOC_KEY = 'streamline.doc.v1';
 const AXC = ['ax-x', 'ax-y', 'ax-z'];
@@ -23,20 +26,119 @@ function boot() {
   view.init($('#viewport'));
   view.initNav($('#nav'));
   initGizmo();
+  Draw.initDraw();
+  routeDrag();
   initMeasureOverlay();
   buildStatic();
   if (!loadAutosave()) defaultScene();
   resetHistory();
   bindEvents();
+  S.ed.tool = S.ed.tools[S.ed.workspace] || 'select';
   refresh();
-  view.frame(S.doc.objects.length ? S.doc.objects.flatMap(worldVerts) : []);
+  if (S.ed.workspace === 'draw' && SK.activeSketch()) enterSketchView(SK.activeSketch(), true);
+  else view.frame(S.doc.objects.length ? S.doc.objects.flatMap(worldVerts) : []);
   if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !/localhost|127\.0\.0\.1/.test(location.hostname)) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
 }
 function defaultScene() {
-  S.doc.objects = []; S.doc.nextId = 1;
-  runOp(OPS.addPrim, { type: 'cube' });
+  S.doc.objects = []; S.doc.sketches = []; S.doc.nextId = 1;
+  S.ed.tools = { draw: 'line', cad: 'select', model: 'select' };
+  runOp(F.newSketch, { plane: 'XY' });
+  S.ed.workspace = 'draw'; S.ed.tool = 'line';
+}
+
+// ---------- drag routing: gizmo first, then drawing tools ----------
+function routeDrag() {
+  const gz = { start: view.handlers.dragStart, move: view.handlers.dragMove, end: view.handlers.dragEnd, cancel: view.handlers.dragCancel };
+  let owner = null;
+  view.handlers.dragStart = (x, y, e) => {
+    if (keypadOpen()) closeKeypad(false);
+    if (gz.start(x, y, e)) { owner = gz; return true; }
+    if (S.ed.workspace === 'draw' && !S.ed.pickFace && Draw.down(x, y, e)) { owner = 'draw'; return true; }
+    return false;
+  };
+  view.handlers.dragMove = (x, y, e) => (owner === 'draw' ? Draw.move(x, y) : owner && owner.move(x, y, e));
+  view.handlers.dragEnd = () => { if (owner === 'draw') Draw.up(); else if (owner) owner.end(); owner = null; };
+  view.handlers.dragCancel = () => { if (owner === 'draw') Draw.cancelPress(); else if (owner) owner.cancel(); owner = null; };
+  view.handlers.hover = (x, y) => Draw.hover(x, y);
+}
+
+// ---------- workspaces ----------
+function enterSketchView(sk, instant) {
+  view.cam.lock2D = true;
+  view.lookAlong(sk.plane.n, sk.plane.o);
+}
+function setWorkspace(ws) {
+  if (ws === S.ed.workspace && !(ws === 'draw' && !SK.activeSketch())) return;
+  const prev = S.ed.workspace;
+  if (S.ed.mode === 'edit') { S.ed.mode = 'object'; S.ed.editSel = new Set(); }
+  S.ed.tools[prev] = S.ed.tool;
+  S.ed.workspace = ws;
+  S.ed.tool = S.ed.tools[ws] || 'select';
+  S.ed.pickFace = false;
+  Draw.resetTool(); clearLast();
+  if (ws === 'draw') {
+    let sk = SK.activeSketch() || (S.doc.sketches || []).filter(x => !x.hidden).slice(-1)[0];
+    if (!sk) { runOp(F.newSketch, { plane: 'XY' }); sk = SK.activeSketch(); }
+    S.ed.sketch = sk.id; sk.hidden = false;
+    enterSketchView(sk);
+  } else {
+    view.cam.lock2D = false;
+    if (prev === 'draw') view.setView('iso');
+  }
+  selectionChanged();
+}
+function startFacePick() {
+  S.ed.pickFace = true;
+  toast('Tap a flat face of a body to sketch on it', 2600);
+  if (S.ed.workspace === 'draw') { S.ed.workspace = 'cad'; S.ed.tool = 'select'; view.cam.lock2D = false; view.setView('iso'); }
+  refresh();
+}
+function facePickTap(x, y) {
+  const hit = view.pickObject(x, y);
+  S.ed.pickFace = false;
+  if (!hit || hit.face < 0) { toast('No face there — cancelled'); refresh(); return; }
+  const o = objById(hit.id), c = view.cam;
+  const plane = F.facePlane(o, hit.face, [-Math.sin(c.yaw), Math.cos(c.yaw), 0]);
+  if (!plane) { toast('That face is degenerate'); return; }
+  S.ed.tools[S.ed.workspace] = S.ed.tool;
+  runOp(F.newSketch, { face: { obj: o.id, plane } });
+  S.ed.tool = S.ed.tools.draw || 'line';
+  Draw.resetTool();
+  enterSketchView(SK.activeSketch());
+  refresh();
+}
+function activateSketch(id) {
+  const sk = SK.sketchById(id); if (!sk) return;
+  S.ed.sketch = id; sk.hidden = false;
+  if (S.ed.workspace !== 'draw') setWorkspace('draw'); else { enterSketchView(sk); selectionChanged(); }
+}
+
+// ---------- CAD taps: profiles & bodies ----------
+function cadTap(x, y) {
+  const ray = view.ray(x, y).ray;
+  let best = null;
+  for (const sk of S.doc.sketches || []) {
+    if (sk.hidden) continue;
+    const pl = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(...sk.plane.n), new THREE.Vector3(...sk.plane.o));
+    const w = ray.intersectPlane(pl, new THREE.Vector3()); if (!w) continue;
+    const t = w.distanceTo(ray.origin);
+    const p2 = SK.toP(sk.plane, w.toArray());
+    const r = SK.regionAt(sk, p2);
+    if (r && (!best || t < best.t)) best = { sk, p2, t, r };
+  }
+  const hit = view.pickObject(x, y);
+  if (best && (!hit || best.t <= hit.distance + Math.max(1e-3, hit.distance * 1e-4))) {
+    const i = S.ed.profiles.findIndex(q => q.sk === best.sk.id && SK.regionAt(best.sk, q.pt) === best.r);
+    if (i >= 0) S.ed.profiles.splice(i, 1);
+    else if (S.ed.multi) S.ed.profiles.push({ sk: best.sk.id, pt: best.p2 });
+    else S.ed.profiles = [{ sk: best.sk.id, pt: best.p2 }];
+  } else if (hit) {
+    if (S.ed.multi) { if (S.ed.selected.has(hit.id)) S.ed.selected.delete(hit.id); else S.ed.selected.add(hit.id); S.ed.active = hit.id; }
+    else { S.ed.selected = new Set([hit.id]); S.ed.active = hit.id; }
+  } else if (!S.ed.multi) { S.ed.profiles = []; S.ed.selected = new Set(); }
+  selectionChanged();
 }
 function loadAutosave() {
   try { const s = localStorage.getItem(DOC_KEY); if (!s) return false; deserialize(s); return true; } catch (e) { console.warn(e); return false; }
@@ -54,7 +156,10 @@ function selectionChanged() { clearLast(); view.markSelDirty(); refresh(); }
 
 function onTap(x, y) {
   if (keypadOpen()) { closeKeypad(false); return; }
+  if (S.ed.pickFace) return facePickTap(x, y);
   if (S.ed.tool === 'measure') return measureTap(x, y);
+  if (S.ed.workspace === 'draw') return Draw.tap(x, y);
+  if (S.ed.workspace === 'cad') return cadTap(x, y);
   if (S.ed.mode === 'object') {
     const hit = view.pickObject(x, y);
     if (hit) {
@@ -99,6 +204,12 @@ function setSelectMode(sm) {
   selectionChanged();
 }
 function selectAllToggle() {
+  if (S.ed.workspace === 'draw') {
+    const sk = SK.activeSketch(); if (!sk) return;
+    const all = sk.ents.filter(e => e.t !== 'dim').map(e => e.id);
+    S.ed.drawSel = S.ed.drawSel.size >= all.length && all.length ? new Set() : new Set(all);
+    return selectionChanged();
+  }
   if (S.ed.mode === 'object') {
     const all = S.doc.objects.filter(o => !o.hidden);
     if (S.ed.selected.size >= all.length && all.length) S.ed.selected = new Set();
@@ -111,7 +222,8 @@ function selectAllToggle() {
   selectionChanged();
 }
 function setTool(t) {
-  S.ed.tool = t;
+  S.ed.tool = t; S.ed.tools[S.ed.workspace] = t;
+  Draw.resetTool();
   if (t === 'measure') S.ed.measure = [];
   if (getLast() && getLast().handle) clearLast();
   refresh(); view.render();
@@ -181,20 +293,29 @@ function drawOverlays() {
 // =====================================================================
 // static UI
 // =====================================================================
-const TOOLS = [['select', 'Select', I.select], ['move', 'Move', I.move], ['rotate', 'Rotate', I.rotate], ['scale', 'Scale', I.scale], ['measure', 'Measure', I.measure]];
+const TOOLS = {
+  draw: [['select', 'Select', I.select], ['line', 'Line', I.line], ['rect', 'Rect', I.rect], ['circle', 'Circle', I.circle], ['arc', 'Arc', I.arc], ['trim', 'Trim', I.trim], ['dim', 'Dim', I.dim]],
+  cad: [['select', 'Select', I.select], ['measure', 'Measure', I.measure]],
+  model: [['select', 'Select', I.select], ['move', 'Move', I.move], ['rotate', 'Rotate', I.rotate], ['scale', 'Scale', I.scale], ['measure', 'Measure', I.measure]],
+};
+function renderTools() {
+  const row = $('#tools');
+  if (row.dataset.k !== S.ed.workspace) {
+    row.dataset.k = S.ed.workspace;
+    row.replaceChildren(...TOOLS[S.ed.workspace].map(([id, label, icon]) => h('button', { class: 'tool', 'data-tool': id, onclick: () => setTool(id) }, h('span', { html: icon }), h('span', {}, label))));
+  }
+  document.querySelectorAll('.tool').forEach(b => b.classList.toggle('on', b.dataset.tool === S.ed.tool));
+}
 function buildStatic() {
   $('#btn-menu').innerHTML = I.menu; $('#btn-undo').innerHTML = I.undo; $('#btn-redo').innerHTML = I.redo; $('#btn-props').innerHTML = I.sliders;
   $('#sheet-close').innerHTML = I.close;
   $('#btn-frame').innerHTML = I.frame; $('#btn-snap').innerHTML = I.magnet; $('#btn-xray').innerHTML = I.xray;
   $('#btn-multi').innerHTML = I.multi; $('#btn-all').innerHTML = I.all;
-  $('[data-sm=vert]').innerHTML = I.vert; $('[data-sm=edge]').innerHTML = I.edge; $('[data-sm=face]').innerHTML = I.face;
-  $('#tools').replaceChildren(...TOOLS.map(([id, label, icon]) => h('button', { class: 'tool', 'data-tool': id, onclick: () => setTool(id) }, h('span', { html: icon }), h('span', {}, label))));
 }
 
 function bindEvents() {
   view.handlers.tap = onTap;
-  $('#mode-seg').addEventListener('click', e => { const b = e.target.closest('button'); b && setMode(b.dataset.mode); });
-  $('#selmode-seg').addEventListener('click', e => { const b = e.target.closest('button'); b && setSelectMode(b.dataset.sm); });
+  $('#ws-seg').addEventListener('click', e => { const b = e.target.closest('button'); b && setWorkspace(b.dataset.ws); });
   $('#btn-undo').onclick = () => undo();
   $('#btn-redo').onclick = () => redo();
   $('#btn-props').onclick = () => toggleSheet();
@@ -216,6 +337,9 @@ function bindEvents() {
   on('dirty', scheduleSave);
   on('toast', m => toast(m));
   on('viewchange', () => renderViewButtons());
+  on('drawcard', () => renderDrawCard());
+  on('selection', () => selectionChanged());
+  on('change', ({ reason } = {}) => { if (reason === 'undo' || reason === 'redo') { Draw.resetTool(); if (S.ed.workspace === 'draw') view.cam.lock2D = true; } });
   on('gestureUndo', () => { undo(); toast('Undo'); });
   on('gestureRedo', () => { redo(); toast('Redo'); });
   window.addEventListener('keydown', onKey);
@@ -225,17 +349,14 @@ function bindEvents() {
 let refreshQueued = false;
 function refreshSoon() { if (!refreshQueued) { refreshQueued = true; requestAnimationFrame(() => { refreshQueued = false; refresh(); }); } }
 function refresh() {
-  renderTop(); renderActions(); renderHud(); renderLastOp(); renderMeasureCard(); renderViewButtons();
+  renderTop(); renderTools(); renderActions(); renderHud(); renderDrawCard(); renderLastOp(); renderMeasureCard(); renderViewButtons();
   if (sheetOpen && !gizmoActive()) renderSheet();
   view.render();
 }
 
 function renderTop() {
-  document.querySelectorAll('#mode-seg button').forEach(b => b.classList.toggle('on', b.dataset.mode === S.ed.mode));
-  $('#selmode-seg').hidden = S.ed.mode !== 'edit';
-  document.querySelectorAll('#selmode-seg button').forEach(b => b.classList.toggle('on', b.dataset.sm === S.ed.selectMode));
+  document.querySelectorAll('#ws-seg button').forEach(b => b.classList.toggle('on', b.dataset.ws === S.ed.workspace));
   $('#btn-undo').disabled = !canUndo(); $('#btn-redo').disabled = !canRedo();
-  document.querySelectorAll('.tool').forEach(b => b.classList.toggle('on', b.dataset.tool === S.ed.tool));
   $('#btn-snap').classList.toggle('on', S.settings.snap);
   $('#btn-xray').classList.toggle('on', S.settings.xray);
   $('#btn-multi').classList.toggle('on', S.ed.multi);
@@ -250,11 +371,37 @@ function renderViewButtons() {
 function act(icon, label, fn, cls = '') { return h('button', { class: 'act ' + cls, onclick: fn }, h('span', { html: icon }), h('span', {}, label)); }
 function renderActions() {
   const row = $('#actions');
-  const key = S.ed.mode;
+  const key = S.ed.workspace + S.ed.mode + S.ed.selectMode;
   if (row.dataset.k === key) return;
   row.dataset.k = key;
-  if (S.ed.mode === 'object') {
+  if (S.ed.workspace === 'draw') {
     row.replaceChildren(
+      act(I.sketch, 'Sketch', e => openSketchMenu(e.currentTarget), 'primary'),
+      act(I.face, 'On face', () => startFacePick()),
+      act(I.trash, 'Delete', () => Draw.deleteSelected(), 'danger'),
+      act(I.save, 'DXF', () => exportDXF()),
+      act(I.next, 'To CAD', () => setWorkspace('cad')),
+    );
+    return;
+  }
+  if (S.ed.workspace === 'cad') {
+    row.replaceChildren(
+      act(I.extrude, 'Extrude', () => runOp(F.extrude), 'primary'),
+      act(I.revolve, 'Revolve', () => runOp(F.revolve)),
+      act(I.union, 'Union', () => runOp(F.bodyBoolean, { kind: 'union' })),
+      act(I.subtract, 'Subtract', () => runOp(F.bodyBoolean, { kind: 'subtract' })),
+      act(I.intersect, 'Intersect', () => runOp(F.bodyBoolean, { kind: 'intersect' })),
+      act(I.face, 'On face', () => startFacePick()),
+      act(I.sketch, 'Sketch', e => openSketchMenu(e.currentTarget)),
+      act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'),
+    );
+    return;
+  }
+  const modeSeg = h('div', { class: 'ctxseg' },
+    h('div', { class: 'seg' }, ...[['object', 'Obj'], ['edit', 'Edit']].map(([m, l]) => h('button', { class: S.ed.mode === m ? 'on' : '', onclick: () => setMode(m) }, l))),
+    S.ed.mode === 'edit' ? h('div', { class: 'seg icons' }, ...['vert', 'edge', 'face'].map(sm => h('button', { class: S.ed.selectMode === sm ? 'on' : '', 'aria-label': sm, html: I[sm], onclick: () => setSelectMode(sm) }))) : null);
+  if (S.ed.mode === 'object') {
+    row.replaceChildren(modeSeg,
       act(I.plus, 'Add', e => openAddMenu(e.currentTarget), 'primary'),
       act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; toast('Duplicated — drag the gizmo or type an offset'); refresh(); } }),
       act(I.array, 'Array', () => runOp(OPS.arrayOp)),
@@ -264,7 +411,7 @@ function renderActions() {
       act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'),
     );
   } else {
-    row.replaceChildren(
+    row.replaceChildren(modeSeg,
       act(I.extrude, 'Extrude', () => runOp(OPS.extrude), 'primary'),
       act(I.inset, 'Inset', () => runOp(OPS.inset)),
       act(I.subdiv, 'Subdivide', () => runOp(OPS.subdivide)),
@@ -289,6 +436,20 @@ function renderHud() {
   const o = activeObj();
   const parts = [];
   const step = `Snap ${S.settings.snap ? fmtLen(S.settings.snapStep) : 'off'}`;
+  if (S.ed.workspace === 'draw') {
+    const sk = SK.activeSketch();
+    if (sk) parts.push(`<b>${esc(sk.name)}</b> · ${sk.face ? 'on face' : esc(planeName(sk))}`, `${sk.ents.filter(e => e.t !== 'dim').length} entities · ${SK.regions(sk).length} closed region${SK.regions(sk).length === 1 ? '' : 's'}`);
+    parts.push(`Grid ${fmtLen(view.gridStep)} · ${step} · ${S.settings.angleStep}°`);
+    $('#hud').innerHTML = parts.join('<br>');
+    return;
+  }
+  if (S.ed.workspace === 'cad') {
+    const t = selectedObjs();
+    parts.push(`<b>CAD</b> · ${S.ed.profiles.length} profile${S.ed.profiles.length === 1 ? '' : 's'} · ${t.length ? esc(t.map(x => x.name).join(', ')) : 'no body'} selected`);
+    parts.push(S.ed.pickFace ? '<b>Tap a face…</b>' : 'Tap regions to pick profiles, bodies to target');
+    $('#hud').innerHTML = parts.join('<br>');
+    return;
+  }
   if (S.ed.mode === 'edit' && o) {
     const fs = M.selectedFaces(o.mesh, S.ed.editSel).length;
     parts.push(`<b>${esc(o.name)}</b> · Edit`, `V ${S.ed.editSel.size}/${o.mesh.v.length} · F ${fs}/${o.mesh.f.length}`);
@@ -298,19 +459,43 @@ function renderHud() {
   parts.push(`${view.cam.ortho ? 'Ortho' : 'Persp'} · Grid ${fmtLen(view.gridStep)} · ${step}`);
   $('#hud').innerHTML = parts.join('<br>');
 }
+function planeName(sk) { for (const [k, p] of Object.entries(SK.PLANES)) if (p.n.every((c, i) => Math.abs(c - sk.plane.n[i]) < 1e-9)) { const off = M.dot(sk.plane.o, p.n); return p.label + (Math.abs(off) > 1e-9 ? ` +${fmtLen(off)}` : ''); } return 'custom plane'; }
+function renderDrawCard() {
+  const el = $('#draw-card');
+  const content = S.ed.workspace === 'draw' && !gizmoActive() ? Draw.cardContent() : null;
+  el.hidden = !content;
+  if (content) el.replaceChildren(content);
+  renderLastOp();
+}
+function openSketchMenu(anchor) {
+  const sks = S.doc.sketches || [];
+  popover(anchor, h('div', {},
+    h('div', { class: 'mtitle' }, 'New sketch on'),
+    ...Object.entries(SK.PLANES).map(([k, p]) => menuItem(I.sketch, p.label, () => { runOp(F.newSketch, { plane: k }); S.ed.tool = S.ed.tools.draw || 'line'; Draw.resetTool(); enterSketchView(SK.activeSketch()); refresh(); })),
+    menuItem(I.face, 'Face of a body…', () => startFacePick()),
+    sks.length ? h('div', { class: 'msep' }) : null,
+    sks.length ? h('div', { class: 'mtitle' }, 'Edit sketch') : null,
+    ...sks.map(sk => menuItem(sk.id === S.ed.sketch ? I.check : '', sk.name, () => activateSketch(sk.id), `${sk.ents.length}`))), { above: true });
+}
+async function exportDXF() {
+  const sk = SK.activeSketch(); if (!sk) { toast('No active sketch'); return; }
+  const r = await IO.deliver(new Blob([SK.toDXF(sk)], { type: 'application/dxf' }), `${sk.name.replace(/\s+/g, '_')}.dxf`);
+  if (r !== 'cancelled') toast('DXF exported (mm, sketch coordinates)');
+}
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 // ---------- adjust-last-operation card ----------
 let lastCollapsed = false;
 function renderLastOp() {
   const el = $('#lastop'), op = getLast();
-  const show = op && op.committed && (op.def.fields || op.info);
+  const show = op && op.committed && (op.def.fields || op.info) && $('#draw-card').hidden;
   el.hidden = !show || gizmoActive();
   if (!show) return;
   const fields = op.def.fields ? op.def.fields(op.params) : [];
   const fieldEls = fields.map(f => {
     const cls = f.label.length === 1 ? AXC['XYZ'.indexOf(f.label)] || '' : '';
     if (f.kind === 'choice') return choice({ label: f.label, options: f.options, value: op.params[f.key], onChange: v => updateOp({ [f.key]: v }), cls: 'wide' });
+    if (f.kind === 'int' && f.key === 'segs') return field({ label: f.label, kind: 'int', value: op.params[f.key], min: f.min, max: f.max, onCommit: v => updateOp({ [f.key]: v }) });
     if (f.kind === 'bool') return choice({ label: f.label, options: [[true, 'Yes'], [false, 'No']], value: !!op.params[f.key], onChange: v => updateOp({ [f.key]: v }) });
     return field({ label: f.label, kind: f.kind, value: op.params[f.key], min: f.min, max: f.max, cls, onCommit: v => updateOp({ [f.key]: v }) });
   });
@@ -445,19 +630,28 @@ function editItemTab(o) {
 }
 
 function objectsTab() {
-  if (!S.doc.objects.length) return [h('p', { class: 'note' }, 'The scene is empty.')];
-  return [group(`Scene · ${S.doc.objects.length}`, ...S.doc.objects.map(o => {
+  const sks = S.doc.sketches || [];
+  const skGroup = sks.length ? group(`Sketches · ${sks.length}`, ...sks.map(sk => {
+    const eye = h('button', { class: 'ib', 'aria-label': sk.hidden ? 'Show' : 'Hide', html: sk.hidden ? I.eyeOff : I.eye });
+    eye.onclick = e => { e.stopPropagation(); runOp(F.sketchOp(sk.hidden ? 'Show sketch' : 'Hide sketch', sk.id, k => { k.hidden = !k.hidden; })); };
+    const row = h('div', { class: 'objrow' + (sk.id === S.ed.sketch ? ' act' : '') }, h('span', { html: I.sketch }), h('span', { class: 'nm' }, sk.name), h('span', { class: 'meta' }, sk.face ? 'face' : planeName(sk).split(' ')[0]), eye);
+    row.onclick = () => activateSketch(sk.id);
+    return row;
+  })) : null;
+  if (!S.doc.objects.length) return [skGroup, h('p', { class: 'note' }, 'No bodies yet — draw a closed shape, then Extrude or Revolve it in CAD.')].filter(Boolean);
+  return [skGroup, group(`Bodies · ${S.doc.objects.length}`, ...S.doc.objects.map(o => {
     const eye = h('button', { class: 'ib', 'aria-label': o.hidden ? 'Show' : 'Hide', html: o.hidden ? I.eyeOff : I.eye });
     eye.onclick = e => { e.stopPropagation(); setProp(o.hidden ? 'Show' : 'Hide', o.id, ob => { ob.hidden = !ob.hidden; }); };
     const row = h('div', { class: 'objrow' + (S.ed.selected.has(o.id) ? ' sel' : '') + (S.ed.active === o.id ? ' act' : '') },
       h('span', { class: 'sw', style: `background:${o.color}` }), h('span', { class: 'nm' }, o.name), h('span', { class: 'meta' }, `${o.mesh.f.length}f`), eye);
     row.onclick = () => {
       if (S.ed.mode === 'edit') setMode('object');
+      if (S.ed.workspace === 'draw') setWorkspace('model');
       if (S.ed.multi) S.ed.selected.add(o.id); else S.ed.selected = new Set([o.id]);
       S.ed.active = o.id; selectionChanged();
     };
     return row;
-  }))];
+  }))].filter(Boolean);
 }
 
 function settingsTab() {
@@ -474,9 +668,13 @@ function settingsTab() {
         field({ label: 'Angle step', kind: 'ang', value: S.settings.angleStep, min: 0.001, onCommit: v => set('angleStep', v) })),
       choice({ label: 'Distance snapping', options: [[false, 'Increment'], [true, 'Absolute grid']], value: !!S.settings.snapAbs, onChange: v => set('snapAbs', v), cls: 'wide' }),
       toggle({ label: 'Snap to vertices', value: S.settings.vertexSnap, onChange: v => set('vertexSnap', v) })),
+    group('Curves',
+      h('div', { class: 'fields two' }, field({ label: 'Segments per circle', kind: 'int', value: S.settings.curveSegs || 64, min: 8, max: 1024, onCommit: v => set('curveSegs', v) })),
+      h('p', { class: 'note' }, 'Sketch circles and arcs are exact; solids facet them with this many segments per 360°.')),
     group('Display',
       toggle({ label: 'Grid', value: S.settings.grid, onChange: v => set('grid', v) }),
       toggle({ label: 'X-ray', value: S.settings.xray, onChange: v => set('xray', v) }),
+      toggle({ label: 'Show sketches in Model', value: S.settings.showSketches !== false, onChange: v => set('showSketches', v) }),
       toggle({ label: 'Edge lengths (Edit mode)', value: S.settings.edgeLengths !== false, onChange: v => set('edgeLengths', v) })),
     group('About', h('p', { class: 'note' }, 'StreamLine — precise polygon modelling for the browser. Works offline once loaded; on iPhone use Share → Add to Home Screen for full-screen use.')),
   ];
@@ -499,6 +697,7 @@ function openMainMenu() {
     h('div', { class: 'msep' }),
     menuItem(I.save, 'Export STL', () => exportAs('stl'), selLabel()),
     menuItem(I.save, 'Export OBJ', () => exportAs('obj'), selLabel()),
+    menuItem(I.save, 'Export DXF (sketch)', () => exportDXF()),
     h('div', { class: 'msep' }),
     menuItem(I.frame, 'Frame all', () => view.frame(S.doc.objects.flatMap(worldVerts))),
     menuItem(I.persp, 'Views…', () => openViewsMenu()),
@@ -535,9 +734,9 @@ function openInstall() {
 
 function newScene() {
   S.doc.objects = []; S.doc.nextId = 1;
-  S.ed.mode = 'object'; S.ed.selected = new Set(); S.ed.active = null; S.ed.editSel = new Set(); S.ed.measure = [];
-  defaultScene(); resetHistory(); scheduleSave(); refresh();
-  view.frame(S.doc.objects.flatMap(worldVerts));
+  S.ed.mode = 'object'; S.ed.selected = new Set(); S.ed.active = null; S.ed.editSel = new Set(); S.ed.measure = []; S.ed.profiles = []; S.ed.drawSel = new Set();
+  defaultScene(); resetHistory(); Draw.resetTool(); scheduleSave(); refresh();
+  enterSketchView(SK.activeSketch());
 }
 function exportTargets() {
   const objs = S.ed.mode === 'object' && S.ed.selected.size ? selectedObjs() : S.doc.objects.filter(o => !o.hidden);
@@ -566,7 +765,9 @@ async function onFile(e) {
       const before = JSON.stringify(serialize());
       try { deserialize(txt); } catch (err) { deserialize(before); throw err; }
       resetHistory(); scheduleSave(); refresh(); view.markSelDirty();
-      view.frame(S.doc.objects.flatMap(worldVerts)); toast(`Opened ${file.name}`);
+      S.ed.tool = S.ed.tools[S.ed.workspace] || 'select'; Draw.resetTool();
+      if (S.ed.workspace === 'draw' && SK.activeSketch()) enterSketchView(SK.activeSketch()); else { view.cam.lock2D = false; view.frame(S.doc.objects.flatMap(worldVerts)); }
+      toast(`Opened ${file.name}`);
       return;
     }
     let items;
@@ -609,7 +810,14 @@ function onKey(e) {
     if (n === '5') { view.toggleOrtho(); return; }
     if (n === 'Decimal') { $('#btn-frame').click(); return; }
   }
-  if (k === 'tab') { e.preventDefault(); setMode(S.ed.mode === 'edit' ? 'object' : 'edit'); return; }
+  if (S.ed.workspace === 'draw') {
+    const dm = { q: 'select', l: 'line', r: 'rect', c: 'circle', a: 'arc', t: 'trim', d: 'dim' };
+    if (dm[k]) { setTool(dm[k]); return; }
+    if (k === 'escape' || k === 'enter') { Draw.resetTool(); return; }
+    if (k === 'delete' || k === 'backspace' || k === 'x') { Draw.deleteSelected(); return; }
+  }
+  if (S.ed.workspace === 'cad' && k === 'e') { runOp(F.extrude); return; }
+  if (k === 'tab') { e.preventDefault(); if (S.ed.workspace !== 'model') setWorkspace('model'); setMode(S.ed.mode === 'edit' ? 'object' : 'edit'); return; }
   if (S.ed.mode === 'edit' && ['1', '2', '3'].includes(k)) { setSelectMode(['vert', 'edge', 'face'][+k - 1]); return; }
   if (k === 'escape') { if (getLast() && getLast().handle) clearLast(); closePopover(); toggleSheet(false); return; }
   const map = {
@@ -631,4 +839,4 @@ function onKey(e) {
 
 boot();
 // console/debug access
-window.StreamLine = { S, view, OPS, runOp, undo, redo, getLast, M, serialize };
+window.StreamLine = { S, view, OPS, F, SK, Draw, runOp, undo, redo, getLast, M, serialize, setWorkspace };

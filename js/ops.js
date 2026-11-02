@@ -8,11 +8,11 @@ const undoStack = [], redoStack = [];
 let last = null; // { def, params, base, undoSnap, committed, handle }
 
 function edCopy() {
-  return { mode: S.ed.mode, selected: new Set(S.ed.selected), active: S.ed.active, editSel: new Set(S.ed.editSel), selOrder: S.ed.selOrder.slice(), nextId: S.doc.nextId };
+  return { workspace: S.ed.workspace, sketch: S.ed.sketch, drawSel: new Set(S.ed.drawSel), profiles: JSON.parse(JSON.stringify(S.ed.profiles)), mode: S.ed.mode, selected: new Set(S.ed.selected), active: S.ed.active, editSel: new Set(S.ed.editSel), selOrder: S.ed.selOrder.slice(), nextId: S.doc.nextId };
 }
 function makeBase(def, params) {
   const t = def.touch ? def.touch(params) : 'all';
-  const base = { list: S.doc.objects.slice(), clones: new Map(), ed: edCopy(), shareMesh: false };
+  const base = { list: S.doc.objects.slice(), clones: new Map(), ed: edCopy(), shareMesh: false, sketches: JSON.stringify(S.doc.sketches) };
   if (t === 'all') { base.list = S.doc.objects.map(o => cloneObj(o)); base.all = true; }
   else {
     base.shareMesh = !t.mesh;
@@ -23,7 +23,9 @@ function makeBase(def, params) {
 function restore(base) {
   if (base.all) S.doc.objects = base.list.map(o => cloneObj(o));
   else S.doc.objects = base.list.map(o => base.clones.has(o.id) ? cloneObj(base.clones.get(o.id), base.shareMesh) : o);
+  S.doc.sketches = JSON.parse(base.sketches);
   const e = base.ed;
+  S.ed.workspace = e.workspace; S.ed.sketch = e.sketch; S.ed.drawSel = new Set(e.drawSel); S.ed.profiles = JSON.parse(JSON.stringify(e.profiles));
   S.ed.mode = e.mode; S.ed.selected = new Set(e.selected); S.ed.active = e.active;
   S.ed.editSel = new Set(e.editSel); S.ed.selOrder = e.selOrder.slice(); S.doc.nextId = e.nextId;
 }
@@ -43,6 +45,7 @@ export function runOp(def, params = {}, { interactive = false } = {}) {
   const op = { def, params: { ...(def.defaults ? def.defaults() : {}), ...params }, undoSnap: JSON.stringify(serialize()), committed: false };
   if (def.prepare) { const p = def.prepare(op.params); if (typeof p === 'string') { emit('toast', p); return false; } }
   op.base = makeBase(def, op.params);
+  restore(op.base); // operate on fresh copies so caches keyed by identity stay valid
   const r = apply(op);
   if (typeof r === 'string') { restore(op.base); emit('toast', r); emit('change', { reason: 'op-fail' }); return false; }
   last = op;

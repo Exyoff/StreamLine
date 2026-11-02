@@ -39,7 +39,7 @@ view.init = function (el) {
   labelsEl = document.createElement('div'); labelsEl.id = 'labels'; container.appendChild(labelsEl);
 
   scene = new THREE.Scene();
-  overlay = new THREE.Scene(); view.overlayScene = overlay;
+  overlay = new THREE.Scene(); view.overlayScene = overlay; view.scene = scene;
   persp = new THREE.PerspectiveCamera(40, 1, 0.1, 1e6);
   ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1e6);
   for (const c of [persp, ortho]) {
@@ -169,6 +169,15 @@ function stepTween(now) {
   if (t >= 1) tween = null;
   needsRender = true; emit('viewchange');
 }
+// Look straight at a plane (normal toward viewer), centred on target
+view.lookAlong = (n, target) => {
+  const c = view.cam;
+  const pitch = Math.asin(Math.max(-1, Math.min(1, n[2])));
+  let yaw = Math.abs(Math.cos(pitch)) < 1e-6 ? -Math.PI / 2 : Math.atan2(n[1], n[0]);
+  if (!c.ortho) { c.ortho = true; c.autoOrtho = true; }
+  animateTo(yaw, pitch, target ? new THREE.Vector3(...target) : null);
+  emit('viewchange');
+};
 view.toggleOrtho = () => { view.cam.ortho = !view.cam.ortho; view.cam.autoOrtho = false; view.render(); emit('viewchange'); };
 view.frame = (points) => {
   const c = view.cam;
@@ -461,7 +470,7 @@ function bindPointer() {
     if (Math.hypot(q.x - p.sx, q.y - p.sy) > thr) { moved = true; if (multiTap && pts.size >= 2) multiTap = null; }
     p.x = q.x; p.y = q.y;
     if (mode === 'pending' && moved) mode = 'orbit';
-    if (mode === 'orbit') view.orbit(dx, dy);
+    if (mode === 'orbit') (view.cam.lock2D ? view.pan(dx, dy) : view.orbit(dx, dy));
     else if (mode === 'pan') view.pan(dx, dy);
     else if (mode === 'gizmo') view.handlers.dragMove(q.x, q.y, e);
     else if (mode === 'pinch' && pts.size === 2) {
