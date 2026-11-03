@@ -33,8 +33,10 @@ function setPlaneTarget(plane, face = null) {
   if (ex) { target = { skId: ex.id }; S.ed.sketch = ex.id; }
   else target = { plane: { o: plane.o.slice(), u: plane.u.slice(), v: plane.v.slice(), n: plane.n.slice() }, face };
 }
-function typedTarget() { if (studio() && DRAW_PRIMARY.has(tool()) && waitingFirstPoint() && !st.pressed) setPlaneTarget(cplane()); }
+const editTarget = () => { const e = S.ed.editingSketch != null && SK.sketchById(S.ed.editingSketch); if (e) { target = { skId: e.id }; S.ed.sketch = e.id; } return !!e; };
+function typedTarget() { if (editTarget()) return; if (studio() && DRAW_PRIMARY.has(tool()) && waitingFirstPoint() && !st.pressed) setPlaneTarget(cplane()); }
 export function chooseTarget(x, y) {
+  if (editTarget()) return;
   const hit = view.pickObject(x, y);
   let plane = null, face = null;
   if (hit && hit.face >= 0) {

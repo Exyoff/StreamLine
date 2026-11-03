@@ -185,6 +185,8 @@ view.lookAlong = (n, target, dist = null) => {
   animateTo(yaw, pitch, target ? new THREE.Vector3(...target) : null, dist);
   emit('viewchange');
 };
+view.saveCam = () => { const c = view.cam; return { yaw: c.yaw, pitch: c.pitch, dist: c.dist, target: c.target.toArray(), ortho: c.ortho, autoOrtho: c.autoOrtho }; };
+view.restoreCam = s => { const c = view.cam; c.ortho = s.ortho; c.autoOrtho = s.autoOrtho; animateTo(s.yaw, s.pitch, new THREE.Vector3(...s.target), s.dist); emit('viewchange'); };
 view.toggleOrtho = () => { view.cam.ortho = !view.cam.ortho; view.cam.autoOrtho = false; view.render(); emit('viewchange'); };
 view.frame = (points) => {
   const c = view.cam;

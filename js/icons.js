@@ -40,6 +40,8 @@ export const I = {
   eyeOff: s('<path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3 3.8M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a9.6 9.6 0 0 0 5.4-1.6"/>'),
   join: s('<rect x="3" y="7" width="8" height="10" rx="1"/><rect x="13" y="7" width="8" height="10" rx="1"/><path d="M11 12h2"/>'),
   cube: s('<path d="M12 3 4 7v10l8 4 8-4V7z"/><path d="M4 7l8 4 8-4M12 11v10"/>'),
+  polygon: s('<path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9z"/>'),
+  spline: s('<path d="M3 17c3-9 6-9 9-5s6 4 9-5"/>'),
   plane: s('<path d="M2 15l10-5 10 5-10 5z"/>'),
   cylinder: s('<ellipse cx="12" cy="6" rx="7" ry="2.5"/><path d="M5 6v12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5V6"/>'),
   cone: s('<path d="M12 3 5 18M12 3l7 15"/><ellipse cx="12" cy="18" rx="7" ry="2.5"/>'),
