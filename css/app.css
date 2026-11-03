@@ -63,7 +63,7 @@ input, select { font: inherit; }
 .vlabel.cons { background: #3a3d45; color: #ffd27a; font-size: 11px; padding: 3px 5px; min-width: 18px; text-align: center; border-color: rgba(255,210,122,.4); }
 .vlabel.edge { background: rgba(20,21,24,.6); font-size: 11px; padding: 3px 5px; }
 #viewport { --cmdh: 0px; --tlh: 0px; --sabv: var(--sab); }
-body.has-tl #viewport { --tlh: 40px; }
+body.has-tl #viewport { --tlh: 46px; }
 body.has-cmd #viewport { --cmdh: 122px; }
 #hud {
   position: absolute; left: calc(var(--sal) + 70px); top: 8px; right: 12px; pointer-events: none;
@@ -173,7 +173,7 @@ body.has-cmd #viewport { --cmdh: 122px; }
 .textin { width: 100%; height: 40px; border-radius: 9px; background: #18191c; border: 1px solid var(--line); color: var(--text); padding: 0 10px; font-size: 16px; -webkit-user-select: text; user-select: text; }
 .objrow { display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 6px; border-radius: 10px; }
 .objrow.sel { background: rgba(255,154,31,.12); }
-.objrow.act .nm { color: var(--accent); }
+.objrow.cur .nm { color: var(--accent); }
 .objrow .nm { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .objrow .meta { color: var(--muted); font-size: 12px; font-family: var(--mono); }
 .objrow .sw { width: 14px; height: 14px; border-radius: 4px; flex: none; }
@@ -220,7 +220,7 @@ body.has-cmd #viewport { --cmdh: 122px; }
 
 /* ---------- toast ---------- */
 #toast {
-  position: fixed; left: 50%; top: calc(var(--sat) + 62px); transform: translate(-50%, -12px); z-index: 50; opacity: 0; pointer-events: none;
+  position: fixed; left: 50%; bottom: calc(var(--sab) + 150px); transform: translate(-50%, 12px); z-index: 50; opacity: 0; pointer-events: none;
   background: rgba(240,242,246,.96); color: #111; padding: 9px 14px; border-radius: 12px; font-weight: 600; font-size: 14px;
   transition: opacity .2s, transform .2s; max-width: calc(100vw - 32px); text-align: center; box-shadow: 0 6px 24px rgba(0,0,0,.4);
 }
@@ -303,8 +303,8 @@ body.ws-model #lastop .field.wide { flex-direction: column; align-items: stretch
 #timeline { position: absolute; z-index: 3; left: 0; right: 0; bottom: calc(var(--cmdh) + var(--sabv)); height: var(--tlh); display: none;
   align-items: center; gap: 4px; padding: 4px 8px 4px calc(var(--sal) + 8px); background: rgba(24,25,28,.92); border-top: 1px solid var(--line); border-bottom: 0; }
 body.has-tl #timeline { display: flex; }
-.tl-title { flex: none; font: 700 10px var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-right: 4px; }
-.tl-chip { flex: none; display: flex; align-items: center; gap: 4px; height: 30px; max-width: 150px; padding: 0 8px 0 6px; border-radius: 8px;
+.tl-title { position: sticky; left: -8px; z-index: 1; align-self: stretch; display: flex; align-items: center; padding: 0 6px 0 4px; background: rgb(24,25,28); flex: none; font: 700 10px var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-right: 4px; }
+.tl-chip { flex: none; display: flex; align-items: center; gap: 4px; height: 36px; max-width: 150px; padding: 0 8px 0 6px; border-radius: 8px;
   background: #2c2e34; border: 1px solid #3a3d45; font-size: 12px; font-weight: 600; color: var(--text); }
 .tl-chip .ic { display: grid; place-items: center; width: 18px; height: 18px; flex: none; }
 .tl-chip .ic svg { width: 16px; height: 16px; }
@@ -314,14 +314,32 @@ body.has-tl #timeline { display: flex; }
 .tl-chip.err { border-color: #d24b4b; background: #3a2224; color: #ffb0b0; }
 .tl-chip.future { opacity: .35; }
 .tl-chip.tl-end { background: transparent; border-style: dashed; color: var(--muted); }
-.tl-marker { flex: none; width: 4px; height: 30px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.tl-marker { flex: none; width: 4px; height: 36px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
 .mnote { font-size: 12px; color: var(--muted); padding: 0 12px 6px; }
 .mnote.err { color: #ff9a9a; }
 .objrow.dim { opacity: .45; }
 .objrow.err .nm { color: #ff9a9a; }
 .objrow.off .nm { text-decoration: line-through; opacity: .6; }
 .objrow.tlrow { height: 40px; }
-.ltag { flex: none; max-width: 84px; height: 26px; padding: 0 8px; border-radius: 13px; background: #2c2e34; border: 1px solid #3a3d45; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ltag { flex: none; max-width: 84px; height: 34px; padding: 0 10px; border-radius: 17px; background: #2c2e34; border: 1px solid #3a3d45; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lyr-dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--muted); flex: none; }
 .lyr-dot.on { background: var(--accent); border-color: var(--accent); }
 .btn.wide { width: 100%; margin-top: 6px; }
+
+.tl-chip.cur { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(255,154,31,.35); }
+.tl-chip.pulse { animation: tlpulse 1s ease-in-out 3; }
+@keyframes tlpulse { 50% { box-shadow: 0 0 0 4px rgba(210,75,75,.6); } }
+/* the op dialog must never run off screen or under the timeline */
+body.ws-model #lastop { max-height: calc(100% - 76px - var(--tlh) - var(--cmdh) - var(--sabv)); overflow-y: auto; overscroll-behavior: contain; }
+@media (max-width: 500px) { body.ws-model #lastop { max-height: min(38%, calc(100% - 76px - var(--tlh) - var(--cmdh) - var(--sabv))); } }
+@media (orientation: landscape) and (max-height: 500px) {
+  body.ws-model #lastop { top: 8px; left: calc(var(--sal) + 70px); }
+  #toast { bottom: calc(var(--sab) + 60px); }
+  #keypad { max-height: 100dvh; overflow-y: auto; padding-top: 4px; }
+  #keypad .kd { padding: 0 6px 2px; }
+  #keypad .kprev { min-height: 0; padding-bottom: 2px; }
+  #keypad .kg { gap: 4px; max-width: 640px; }
+  #keypad .kg button { height: 34px; font-size: 18px; }
+}
+@media (pointer: coarse) { .kbhint { display: none; } }
+#toolrail #tools { overflow-y: auto; scrollbar-width: none; mask-image: linear-gradient(#000 calc(100% - 18px), transparent); -webkit-mask-image: linear-gradient(#000 calc(100% - 18px), transparent); }

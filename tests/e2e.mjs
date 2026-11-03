@@ -179,6 +179,7 @@ try {
   const nObj = await st(() => StreamLine.S.doc.objects.length);
   await st(() => { const i = StreamLine.H.hist().findLastIndex(x => x.op === 'F.extrude'); StreamLine.BR.rollTo(i); });
   check(await st(() => StreamLine.S.doc.objects.length) === nObj - 1, 'rolling the marker back before the extrude removes its body');
+  await p.waitForTimeout(200);
   check(await p.locator('#timeline .tl-chip.future').count() >= 1, 'steps after the marker are greyed in the timeline');
   await st(() => StreamLine.BR.rollTo(1e9));
   check(await st(id => !!StreamLine.S.doc.objects.find(o => o.id === id), box.id), 'rolling to the end brings it back');
@@ -195,7 +196,22 @@ try {
   check(await st(id => !StreamLine.isShown(StreamLine.S.doc.objects.find(o => o.id === id)), box.id), 'hiding a layer hides the bodies on it');
   await st(() => { const sk = StreamLine.S.doc.sketches.at(-1); sk.hidden = false; StreamLine.runOp(StreamLine.F.sketchOp('Widen', sk.id, k => { k.ents.find(e => e.t === 'rect').w = 30; })); });
   check(await st(id => StreamLine.S.doc.objects.find(o => o.id === id).layer === 2, box.id), 'layer and visibility survive a rebuild');
-  await p.tap('#sheet-close');
+  check(await p.locator('#sheet-body .objrow.act').count() === 0 && await p.locator('#sheet-body .objrow.cur').count() >= 1, 'Browser rows use their own "current" style (no clash with the command bar)');
+  await tapV(220, 120);
+  check(!(await p.locator('#sheet.open').count()), 'tapping the viewport closes the Browser sheet on a phone');
+  // Plasticity-style hole: on a face, pushing the extrude into the body cuts automatically
+  await st(() => StreamLine.addSketchedPrim('cube'));
+  const cube = await st(() => { const o = StreamLine.S.doc.objects.at(-1); return { id: o.id, v: StreamLine.M.meshVolume(o.mesh) }; });
+  await st(id => { const L = StreamLine; L.runOp(L.F.sketchOpNew('Hole', { o: [0, 0, 20], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }, { obj: id }, k => { L.F.addEntity(k, { t: 'circle', c: [0, 0], r: 3 }); })); }, cube.id);
+  await st(() => { const L = StreamLine; L.runOp(L.F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [0, 0] }], distance: -5 }); });
+  const holeV = await st(id => StreamLine.M.meshVolume(StreamLine.S.doc.objects.find(o => o.id === id).mesh), cube.id);
+  check(holeV < cube.v - 100 && await st(() => StreamLine.getLast().params.mode) === 'cut', `negative extrude from a face sketch cuts a hole (${(cube.v - holeV).toFixed(2)} mm³ removed)`);
+  // edit a sketch from the timeline: editing mode with a Finish command
+  await st(() => { const r = StreamLine.H.hist().find(x => x.kind === 'sketch'); StreamLine.BR.editStep(r.id); });
+  await p.waitForTimeout(250);
+  check(/Editing/.test(await p.textContent('#hud')) && (await ctxBar()).includes('Finish') && await p.locator('#timeline .tl-chip.cur').count() === 1, 'Edit sketch: HUD says Editing, chip highlighted, Finish offered');
+  await p.tap('#actions .act.primary'); await p.waitForTimeout(200);
+  check(await st(() => StreamLine.S.ed.editingSketch) == null, 'Finish leaves sketch editing');
   await shot('5-timeline');
 } catch (e) {
   await p.screenshot({ path: OUT + 'crash.png' }).catch(() => {});

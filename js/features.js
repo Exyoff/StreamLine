@@ -149,7 +149,7 @@ function prepFeature(p) {
     const faceObj = sk.face && objById(sk.face.obj) ? sk.face.obj : null;
     const sel = selectedObjs()[0];
     p.target = faceObj ?? (sel ? sel.id : null);
-    if (p.mode === undefined) p.mode = faceObj ? 'join' : 'new';
+    if (p.mode === undefined) { p.mode = faceObj ? 'join' : 'new'; if (faceObj != null) p._auto = p.mode; }
   }
   p.mode ??= 'new';
   p._id ??= S.doc.nextId;
@@ -165,12 +165,16 @@ export const extrude = {
   fields: () => [lenF('distance', 'Distance'), { key: 'mode', label: 'Operation', kind: 'choice', options: MODES, wide: true }, { key: 'symmetric', label: 'Symmetric', kind: 'bool' }, { key: 'flip', label: 'Flip', kind: 'bool' }],
   apply(p, op) {
     if (Math.abs(p.distance) < 1e-9) return 'Distance must not be zero';
+    // Plasticity-style: on a face, pulling out joins and pushing in cuts — until the user picks an operation
+    if (p._auto && p.mode !== p._auto) p._auto = null;
+    if (p._auto) p.mode = p._auto = p.distance < 0 ? 'cut' : 'join';
+    const auto = !!p._auto;
     const groups = profileGroups(p.pts);
     if (!groups.length) return 'Profiles no longer exist';
     const meshes = [];
     let dirW = null, anchor = null;
     for (const g of groups) {
-      const into = g.sk.face && (p.mode === 'cut' || p.mode === 'intersect') ? -1 : 1;
+      const into = auto ? 1 : g.sk.face && (p.mode === 'cut' || p.mode === 'intersect') ? -1 : 1;
       const s = (p.flip ? -1 : 1) * into;
       const [h0, h1] = p.symmetric ? [-p.distance / 2, p.distance / 2] : [0, p.distance * s];
       const regs = g.regs;
