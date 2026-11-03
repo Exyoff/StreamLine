@@ -17,13 +17,13 @@ const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=sw
 const ctx = await browser.newContext({ ...devices['iPhone 14 Pro'] });
 const p = await ctx.newPage();
 const errors = [];
-p.on('pageerror', e => errors.push(e.message));
+p.on('pageerror', e => { errors.push(e.message); console.log('PAGEERR', e.stack); });
 p.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
 await p.goto(`http://localhost:${PORT}/`);
 await p.evaluate(() => localStorage.clear()); await p.reload(); await p.waitForTimeout(1200);
 const cdp = await ctx.newCDPSession(p);
 const top = await p.evaluate(() => document.querySelector('#gl').getBoundingClientRect().top);
-const st = fn => p.evaluate(fn);
+const st = (fn, arg) => p.evaluate(fn, arg);
 const shot = async n => { await p.waitForTimeout(300); await p.screenshot({ path: OUT + n + '.png' }); };
 const tapV = async (x, y) => { await p.touchscreen.tap(x, y + top); await p.waitForTimeout(460); };
 const keypad = async str => {
@@ -153,6 +153,50 @@ try {
   await p.waitForTimeout(200);
   check(Math.abs(await vol() - v1) < 1e-9, 'undo returns to the state before the fillet exactly');
   await shot('4-final');
+
+  // --- parametric timeline: every step recorded; editing a sketch rebuilds later features
+  const tl = await st(() => StreamLine.H.hist().map(r => r.kind === 'sketch' ? 'sketch' : r.op));
+  check(tl[0] === 'sketch' && tl.includes('F.extrude'), `timeline records sketches and features in order (${tl.join(' → ')})`);
+  check(await p.locator('#timeline .tl-chip').count() >= 3, 'the timeline strip shows a chip per step');
+  // fresh part: rectangle 40×20 extruded 10, then grow the rectangle → the body follows
+  await st(() => { StreamLine.S.doc.objects.forEach(o => (o.hidden = true)); });
+  await st(() => StreamLine.addSketchedPrim('cube'));
+  const box = await st(() => { const o = StreamLine.S.doc.objects.at(-1); return { id: o.id, v: StreamLine.M.meshVolume(o.mesh) }; });
+  check(Math.abs(box.v - 20 * 20 * 20) < 1e-6, `Add Cube builds a sketch + Extrude (${box.v.toFixed(3)} mm³)`);
+  const hcount = await st(() => StreamLine.H.hist().length);
+  await st(() => { const sk = StreamLine.S.doc.sketches.at(-1); StreamLine.runOp(StreamLine.F.sketchOp('Widen', sk.id, k => { const r = k.ents.find(e => e.t === 'rect'); r.w = 40; })); });
+  const boxV2 = await st(id => StreamLine.M.meshVolume(StreamLine.S.doc.objects.find(o => o.id === id).mesh), box.id);
+  check(Math.abs(boxV2 - 40 * 20 * 20) < 1e-6, `editing the sketch rebuilds the extrude after it (${boxV2.toFixed(3)} mm³)`);
+  check(await st(() => StreamLine.H.hist().length) === hcount, 'a sketch edit is not a new timeline step');
+  // edit the extrude's parameters from the timeline
+  await st(() => { const r = StreamLine.H.hist().findLast(x => x.op === 'F.extrude'); StreamLine.BR.editStep(r.id); });
+  await p.waitForTimeout(250);
+  check(await p.locator('#lastop').isVisible() && /Edit/.test(await p.textContent('#lastop')), 'Edit parameters opens the step in the floating dialog');
+  await p.evaluate(async () => { const m = await import('./js/ops.js'); m.updateOp({ distance: 5 }); });
+  const boxV3 = await st(id => StreamLine.M.meshVolume(StreamLine.S.doc.objects.find(o => o.id === id).mesh), box.id);
+  check(Math.abs(boxV3 - 40 * 20 * 5) < 1e-6, `editing the Extrude step from the timeline rebuilds it (${boxV3.toFixed(3)} mm³)`);
+  // rollback marker
+  const nObj = await st(() => StreamLine.S.doc.objects.length);
+  await st(() => { const i = StreamLine.H.hist().findLastIndex(x => x.op === 'F.extrude'); StreamLine.BR.rollTo(i); });
+  check(await st(() => StreamLine.S.doc.objects.length) === nObj - 1, 'rolling the marker back before the extrude removes its body');
+  check(await p.locator('#timeline .tl-chip.future').count() >= 1, 'steps after the marker are greyed in the timeline');
+  await st(() => StreamLine.BR.rollTo(1e9));
+  check(await st(id => !!StreamLine.S.doc.objects.find(o => o.id === id), box.id), 'rolling to the end brings it back');
+  // suppress / failure display
+  await st(() => { const r = StreamLine.H.hist().findLast(x => x.op === 'F.extrude'); StreamLine.BR.toggleStep(r.id); });
+  check(await st(id => !StreamLine.S.doc.objects.find(o => o.id === id), box.id), 'suppressing a step removes its result');
+  await st(() => { const r = StreamLine.H.hist().findLast(x => x.op === 'F.extrude'); StreamLine.BR.toggleStep(r.id); });
+  // layers + visibility
+  await p.tap('#btn-props'); await p.tap('#sheet-tabs [data-tab=objects]'); await p.waitForTimeout(200);
+  check(await p.locator('#sheet-body h3', { hasText: 'Layers' }).count() === 1 && await p.locator('#sheet-body h3', { hasText: 'Timeline' }).count() === 1, 'Browser shows Layers, Sketches, Bodies and the Timeline');
+  await st(() => StreamLine.runOp({ label: () => 'Add layer', presentation: true, touch: () => 'all', apply() { StreamLine.S.doc.layers.push({ id: 2, name: 'Parts', visible: true }); StreamLine.S.doc.layer = 2; } }));
+  await st(id => StreamLine.runOp({ label: () => 'mv', presentation: true, touch: () => 'all', apply() { StreamLine.S.doc.objects.find(o => o.id === id).layer = 2; } }), box.id);
+  await st(() => StreamLine.runOp({ label: () => 'hide', presentation: true, touch: () => 'all', apply() { StreamLine.S.doc.layers.find(l => l.id === 2).visible = false; } }));
+  check(await st(id => !StreamLine.isShown(StreamLine.S.doc.objects.find(o => o.id === id)), box.id), 'hiding a layer hides the bodies on it');
+  await st(() => { const sk = StreamLine.S.doc.sketches.at(-1); sk.hidden = false; StreamLine.runOp(StreamLine.F.sketchOp('Widen', sk.id, k => { k.ents.find(e => e.t === 'rect').w = 30; })); });
+  check(await st(id => StreamLine.S.doc.objects.find(o => o.id === id).layer === 2, box.id), 'layer and visibility survive a rebuild');
+  await p.tap('#sheet-close');
+  await shot('5-timeline');
 } catch (e) {
   await p.screenshot({ path: OUT + 'crash.png' }).catch(() => {});
   check(false, 'test crashed: ' + e.message.split('\n').slice(0, 8).join(' / '));

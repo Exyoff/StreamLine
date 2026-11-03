@@ -272,6 +272,7 @@ export const weldOp = {
 // Set the median of the selection to an exact world position
 export function setMedianOp(axis, value) {
   return {
+    factory: ['setMedianOp', [axis, value]],
     label: () => `Median ${axis.toUpperCase()}`,
     prepare: () => (S.ed.editSel.size ? undefined : 'Nothing selected'),
     touch: () => ({ ids: [S.ed.active], mesh: true }),
@@ -390,8 +391,10 @@ export const setOrigin = {
 };
 
 // Generic property setter (from the properties panel); no redo fields.
-export function setPropOp(label, ids, fn, mesh = false) {
-  return { label: () => label, touch: () => ({ ids, mesh }), apply: fn };
+// presentation=true (name, colour, visibility, layer) stays out of the parametric history;
+// otherwise the resulting placement is recorded as a step.
+export function setPropOp(label, ids, fn, mesh = false, presentation = false) {
+  return { label: () => label, touch: () => ({ ids, mesh }), apply: fn, presentation, xfIds: presentation ? null : ids };
 }
 
 export const joinObjs = {

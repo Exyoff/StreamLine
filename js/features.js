@@ -14,7 +14,7 @@ export const newSketch = {
   label: p => `New Sketch · ${p.face ? 'on face' : SK.PLANES[p.plane].label}`,
   defaults: () => ({ plane: 'XY', offset: 0 }),
   prepare(p) { p._id ??= S.doc.nextId; p._n ??= (S.doc.sketches || []).length + 1; },
-  touch: () => ({ ids: [] }),
+  touch: () => ({ ids: [] }), sketchOnly: true,
   fields: p => (p.face ? [lenF('offset', 'Offset')] : [{ key: 'plane', label: 'Plane', kind: 'choice', options: [['XY', 'XY'], ['XZ', 'XZ'], ['YZ', 'YZ']] }, lenF('offset', 'Offset')]),
   apply(p) {
     const base = p.face ? p.face.plane : SK.PLANES[p.plane];
@@ -23,7 +23,7 @@ export const newSketch = {
     const ents = [];
     let nextEnt = 1;
     if (p.face && p.face.loops) for (const L of p.face.loops) for (const e of projectLoop(L.map(w => SK.toP(plane, w)))) ents.push({ id: ++nextEnt, ...e, proj: true });
-    S.doc.sketches.push({ id: p._id, name: `Sketch ${p._n}`, plane, ents, face: p.face ? { obj: p.face.obj } : null, hidden: false, nextEnt });
+    S.doc.sketches.push({ id: p._id, name: `Sketch ${p._n}`, plane, ents, face: p.face ? { obj: p.face.obj } : null, hidden: false, nextEnt, layer: S.doc.layer ?? 1 });
     S.ed.sketch = p._id; if (S.ed.workspace !== 'model') S.ed.workspace = 'draw'; S.ed.drawSel = new Set(); S.ed.profiles = [];
   },
 };
@@ -51,7 +51,7 @@ export function projectLoop(P) {
 // generic sketch mutation (entity add / edit / delete)
 export function sketchOp(label, skId, fn, fields = null) {
   return {
-    label: () => label, touch: () => ({ ids: [] }),
+    label: () => label, touch: () => ({ ids: [] }), sketchOnly: true,
     fields: fields ? () => fields : undefined,
     apply(p) { const sk = SK.sketchById(skId); if (!sk) return 'Sketch missing'; return fn(sk, p); },
   };
@@ -59,12 +59,12 @@ export function sketchOp(label, skId, fn, fields = null) {
 // Sketch edit on a plane that has no sketch yet: create it in the same operation (one undo step).
 export function sketchOpNew(label, plane, face, fn, fields = null) {
   return {
-    label: () => label, touch: () => ({ ids: [] }),
+    label: () => label, touch: () => ({ ids: [] }), sketchOnly: true,
     fields: fields ? () => fields : undefined,
     prepare(p) { p._id ??= S.doc.nextId; p._n ??= (S.doc.sketches || []).length + 1; },
     apply(p) {
       if (p._id >= S.doc.nextId) S.doc.nextId = p._id + 1;
-      const sk = { id: p._id, name: `Sketch ${p._n}`, plane: JSON.parse(JSON.stringify(plane)), ents: [], face: face ? { obj: face.obj } : null, hidden: false, nextEnt: 1 };
+      const sk = { id: p._id, name: `Sketch ${p._n}`, plane: JSON.parse(JSON.stringify(plane)), ents: [], face: face ? { obj: face.obj } : null, hidden: false, nextEnt: 1, layer: S.doc.layer ?? 1 };
       S.doc.sketches.push(sk);
       S.ed.sketch = sk.id;
       return fn(sk, p);
@@ -136,6 +136,8 @@ function applyBody(p, tool, name, anchor) {
     t.mesh = res; t.mesh.v = res.v.map(xf.toL);
     S.ed.selected = new Set([t.id]); S.ed.active = t.id;
   }
+  // the sketch is consumed by the feature: hide it (show it again from the Browser to edit)
+  for (const it of p.pts || []) { const sk = SK.sketchById(it.sk); if (sk && S.settings.hideConsumed !== false) sk.hidden = true; }
   S.ed.profiles = [];
 }
 function prepFeature(p) {
