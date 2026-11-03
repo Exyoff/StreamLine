@@ -285,7 +285,8 @@ function buildVisual(o, editing) {
   g.computeBoundingSphere();
   const mesh = new THREE.Mesh(g, matMesh); mesh.userData.objId = o.id;
 
-  const E = editing ? meshEdges(m) : featureEdges(m.v, m.f).map(e => [e.a, e.b]), ep = [], ec = [];
+  // display only real creases (> 25°): smooth faceted surfaces show no edges, as in Plasticity
+  const E = editing ? meshEdges(m) : featureEdges(m.v, m.f, 1 - Math.cos(25 * Math.PI / 180)).map(e => [e.a, e.b]), ep = [], ec = [];
   for (const [a, b] of E) {
     ep.push(...m.v[a], ...m.v[b]);
     if (editing) { const s = S.ed.editSel.has(a) && S.ed.editSel.has(b); const c = s ? COL.sel : COL.edge; ec.push(c.r, c.g, c.b, c.r, c.g, c.b); }
@@ -325,7 +326,8 @@ function syncScene() {
     v.group.visible = !o.hidden;
     v.group.matrixAutoUpdate = false;
     v.group.matrix.copy(objMatrix(o)); v.group.matrixWorldNeedsUpdate = true;
-    if (!isEdit) v.edges.material = o.id === S.ed.active && S.ed.selected.has(o.id) ? matEdgeAct : S.ed.selected.has(o.id) ? matEdgeSel : matEdgeObj;
+    const showSel = S.ed.workspace !== 'model' || S.ed.pick === 'solid';
+    if (!isEdit) v.edges.material = showSel && o.id === S.ed.active && S.ed.selected.has(o.id) ? matEdgeAct : showSel && S.ed.selected.has(o.id) ? matEdgeSel : matEdgeObj;
     // dim other objects while editing
     v.mesh.visible = true;
   }

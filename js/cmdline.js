@@ -43,7 +43,7 @@ export function initCmdline(c) {
   $('#cmdprompt').addEventListener('click', e => { const b = e.target.closest('.opt'); if (b) exec(b.dataset.v); });
 }
 function submit() { const inp = $('#cmdin'); const v = inp.value; inp.value = ''; exec(v); if (matchMedia('(pointer: coarse)').matches) inp.blur(); }
-export function cancel() { pending = null; Draw.resetTool(); if (S.ed.workspace === 'draw' && S.ed.tool !== 'select') ctx.setTool('select'); emit('cmd'); }
+export function cancel() { pending = null; Draw.resetTool(); if (S.ed.workspace !== 'cad' && S.ed.tool !== 'select') ctx.setTool('select'); emit('cmd'); }
 export function toggle(k) {
   const on = !(S.settings[k] ?? (k === 'polar' || k === 'osnap'));
   S.settings[k] = on;
@@ -69,12 +69,12 @@ export function exec(raw) {
   // empty Enter: finish the current command, run a pending 3D command, or repeat the last one
   if (!str) {
     if (pending) { const p = pending; pending = null; p.run(); emit('cmd'); return; }
-    if (S.ed.workspace === 'draw' && Draw.enter()) { emit('cmd'); return; }
+    if (S.ed.workspace !== 'cad' && Draw.enter()) { emit('cmd'); return; }
     if (last) return exec(last);
     return;
   }
   // a value or option for the running command
-  if (S.ed.workspace === 'draw' && S.ed.tool !== 'select') {
+  if (S.ed.workspace !== 'cad' && S.ed.tool !== 'select') {
     const r = Draw.typed(str);
     if (r === 'radius') { toast('Type the radius / distance'); emit('cmd'); return; }
     if (r) { emit('cmd'); return; }
@@ -130,13 +130,13 @@ function threeD(up) {
 
 export function render() {
   const bar = $('#cmdbar');
-  const show = S.ed.workspace === 'draw' || S.ed.workspace === 'cad';
+  const show = S.ed.workspace === 'draw' || S.ed.workspace === 'cad' || (S.ed.workspace === 'model' && !!S.settings.cmdline);
   bar.hidden = !show;
   document.body.classList.toggle('has-cmd', show);
   if (!show) return;
   let text = 'Command:', options = [];
   if (pending) text = `${pending.name} ${pending.prompt}`;
-  else if (S.ed.workspace === 'draw') ({ text, options } = Draw.prompt());
+  else if (S.ed.workspace !== 'cad') ({ text, options } = Draw.prompt());
   else if (S.ed.tool === 'edge') text = 'Command: select edges, then FILLETEDGE or CHAMFEREDGE';
   const lg = $('#cmdlog');
   lg.textContent = logLines.length ? logLines[logLines.length - 1] : 'Command history — results of DIST, AREA, LIST… appear here';
