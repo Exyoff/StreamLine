@@ -352,7 +352,7 @@ body.ws-model #lastop { max-height: calc(100% - 76px - var(--tlh) - var(--cmdh) 
 .tl-chip.open { background: #3b3024; border-color: var(--accent); }
 /* phone portrait: the op dialog docks at the bottom, above the timeline, leaving the model in view */
 @media (max-width: 500px) {
-  body.ws-model #lastop { top: auto; bottom: calc(var(--cmdh) + var(--tlh) + var(--sabv) + 6px); left: calc(var(--sal) + 70px); right: calc(var(--sar) + 8px); width: auto; max-height: 34%;
+  body.ws-model #lastop { top: auto; bottom: calc(var(--cmdh) + var(--tlh) + var(--sabv) + 6px); left: calc(var(--sal) + 70px); right: calc(var(--sar) + 8px); width: auto; max-height: 48%;
     box-shadow: 0 -6px 24px rgba(0,0,0,.5); }
   body.ws-model.has-lastop #vtools-r, body.ws-model.has-lastop #nav { visibility: hidden; }
 }
@@ -376,3 +376,14 @@ body.ws-model #lastop .fields > .half .seg button { height: 36px; flex: 1; }
 body:has(#popover:not([hidden])) #toast { opacity: 0; }
 .objrow .meta { font-family: var(--font); font-size: 11px; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: none; }
 @media (min-width: 768px) { .tl-chip { max-width: 240px; } }
+
+/* when the op dialog is docked at the bottom (phones), messages show near the top of the view */
+@media (max-width: 500px) { body.has-lastop #toast { bottom: auto; top: calc(var(--sat) + 140px); } }
+body.ws-model #lastop .ib { width: 40px; height: 40px; }
+body.ws-model #lastop .field .val { height: 38px; }
+/* scroll hint when the dialog has more rows below */
+#lastop.more { -webkit-mask-image: linear-gradient(#000 calc(100% - 26px), transparent); mask-image: linear-gradient(#000 calc(100% - 26px), transparent); }
+@media (max-width: 500px) { #sheet { height: min(50vh, 460px); } }
+@media (orientation: landscape) and (max-height: 500px) {
+  #keypad { left: auto; width: min(430px, 56vw); border-left: 1px solid var(--line); border-radius: 14px 0 0 0; }
+}

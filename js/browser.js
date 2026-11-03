@@ -169,7 +169,11 @@ export function browserTab(group) {
     const row = h('div', { class: 'objrow' + (S.doc.layer === l.id ? ' cur' : '') },
       h('span', { class: 'lyr-dot' + (S.doc.layer === l.id ? ' on' : '') }), h('span', { class: 'nm' }, l.name),
       h('span', { class: 'meta' }, (() => { const b = S.doc.objects.filter(o => (o.layer ?? 1) === l.id).length, k = S.doc.sketches.filter(x => (x.layer ?? 1) === l.id).length; return `${b} bod${b === 1 ? 'y' : 'ies'} · ${k} sketch${k === 1 ? '' : 'es'}`; })()),
-      eyeBtn(l.visible !== false, () => presOp(l.visible !== false ? 'Hide layer' : 'Show layer', () => { const x = S.doc.layers.find(q => q.id === l.id); x.visible = x.visible === false; })));
+      eyeBtn(l.visible !== false, () => presOp(l.visible !== false ? 'Hide layer' : 'Show layer', () => {
+        const x = S.doc.layers.find(q => q.id === l.id); x.visible = x.visible === false;
+        // new work must not go onto a hidden layer
+        if (!x.visible && S.doc.layer === x.id) { const v = S.doc.layers.find(q => q.visible !== false); if (v) { S.doc.layer = v.id; toast(`Active layer is now ${v.name}`); } }
+      })));
     row.onclick = () => layerMenu(row, l);
     return row;
   }), h('button', { class: 'btn wide', onclick: addLayer }, '+ New layer'));

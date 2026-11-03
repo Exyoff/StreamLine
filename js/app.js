@@ -141,7 +141,7 @@ function facePickTap(x, y) {
   toast(`Sketching on the face · ${loops.length} edge loop${loops.length === 1 ? '' : 's'} projected`);
   refresh();
 }
-let camBeforeEdit = null;
+let camBeforeEdit = null, pickBeforeEdit = null;
 function finishSketchEdit() {
   const id = S.ed.editingSketch, sk = SK.sketchById(id);
   S.ed.editingSketch = null; S.ed.drawSel = new Set(); S.ed.profiles = [];
@@ -150,15 +150,16 @@ function finishSketchEdit() {
   view.cam.lock2D = false;
   if (camBeforeEdit) view.restoreCam(camBeforeEdit); else view.setView('iso');
   camBeforeEdit = null;
-  setPick('solid');
+  setPick(pickBeforeEdit || 'solid'); pickBeforeEdit = null;
 }
 function activateSketch(id) {
   const sk = SK.sketchById(id); if (!sk) return;
   if (S.ed.editingSketch != null && S.ed.editingSketch !== id) { const o = SK.sketchById(S.ed.editingSketch); if (o && o._wasHidden) { o.hidden = true; delete o._wasHidden; } }
   if (sk.hidden) sk._wasHidden = true;
   if (S.ed.editingSketch == null) camBeforeEdit = view.saveCam();
+  if (S.ed.editingSketch == null) pickBeforeEdit = S.ed.pick;
   S.ed.editingSketch = id; S.ed.pick = 'edge'; S.ed.faces = []; S.ed.edges = []; S.ed.selected = new Set();
-  S.ed.sketch = id; sk.hidden = false;
+  S.ed.sketch = id; sk.hidden = false; Draw.clearTarget();
   if (S.ed.workspace !== 'model') setWorkspace('model');
   enterSketchView(sk); selectionChanged();
 }
@@ -265,7 +266,7 @@ function curveOrEdgeTap(x, y) {
   const hit = S.ed.editingSketch != null ? null : view.pickObject(x, y); // bodies are ghosted while a sketch is edited
   if (best && (!hit || best.t <= hit.distance + view.worldPerPixel(hit.point) * 8)) {
     if (S.ed.sketch !== best.k.id || !S.ed.multi) S.ed.drawSel = new Set();
-    S.ed.sketch = best.k.id;
+    S.ed.sketch = best.k.id; Draw.clearTarget();
     S.ed.drawSel.has(best.e.id) ? S.ed.drawSel.delete(best.e.id) : S.ed.drawSel.add(best.e.id);
     if (!S.ed.multi) { S.ed.edges = []; S.ed.profiles = []; S.ed.faces = []; }
     return selectionChanged();
@@ -829,6 +830,8 @@ function renderLastOp() {
   const el = $('#lastop'), op = getLast();
   const show = op && op.committed && (op.def.fields || op.info) && $('#draw-card').hidden;
   el.hidden = !show || gizmoActive(); document.body.classList.toggle('has-lastop', !el.hidden);
+  const more = () => el.classList.toggle('more', el.scrollHeight - el.scrollTop - el.clientHeight > 4);
+  el.onscroll = more; requestAnimationFrame(more);
   if (!show) return;
   const fields = op.def.fields ? op.def.fields(op.params) : [];
   const fieldEls = fields.map(f => {
