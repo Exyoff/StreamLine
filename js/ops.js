@@ -2,6 +2,7 @@
 // ("Adjust Last Operation", like Blender's redo panel) and undone.
 import { S, emit } from './state.js';
 import { serialize, deserialize, cloneObj } from './scene.js';
+import * as H from './history.js';
 
 const MAX_UNDO = 80;
 const undoStack = [], redoStack = [];
@@ -42,7 +43,7 @@ export function clearLast() { if (last) { last = null; emit('lastop', null); } }
 // Run an operator. interactive=true keeps it open for live updates (gizmo drags).
 export function runOp(def, params = {}, { interactive = false } = {}) {
   if (last && !last.committed) commit();
-  const op = { def, params: { ...(def.defaults ? def.defaults() : {}), ...params }, undoSnap: JSON.stringify(serialize()), committed: false };
+  const op = { def, params: { ...(def.defaults ? def.defaults() : {}), ...params }, undoSnap: JSON.stringify(serialize()), committed: false, sel: H.edSnap() };
   if (def.prepare) { const p = def.prepare(op.params); if (typeof p === 'string') { emit('toast', p); return false; } }
   op.base = makeBase(def, op.params);
   restore(op.base); // operate on fresh copies so caches keyed by identity stay valid
@@ -59,6 +60,7 @@ export function updateOp(params) {
   restore(last.base);
   const r = apply(last);
   if (typeof r === 'string') { restore(last.base); emit('toast', r); }
+  else if (last.committed) afterApply(last);
   emit('change', { reason: 'op-update' });
   if (last.committed) { emit('lastop', last); emit('dirty'); }
 }
@@ -67,6 +69,7 @@ export function commit() {
   last.committed = true;
   undoStack.push(last.undoSnap); if (undoStack.length > MAX_UNDO) undoStack.shift();
   redoStack.length = 0;
+  afterApply(last);
   emit('history'); emit('lastop', last); emit('dirty');
 }
 export function cancelOp() {
@@ -79,17 +82,58 @@ export function undo() {
   if (last && !last.committed) { cancelOp(); return; }
   if (!undoStack.length) { emit('toast', 'Nothing to undo'); return; }
   redoStack.push(JSON.stringify(serialize()));
-  deserialize(undoStack.pop());
+  deserialize(undoStack.pop()); H.resetCache();
   last = null;
   emit('change', { reason: 'undo' }); emit('lastop', null); emit('history'); emit('dirty');
 }
 export function redo() {
   if (!redoStack.length) { emit('toast', 'Nothing to redo'); return; }
   undoStack.push(JSON.stringify(serialize()));
-  deserialize(redoStack.pop());
+  deserialize(redoStack.pop()); H.resetCache();
   last = null;
   emit('change', { reason: 'redo' }); emit('lastop', null); emit('history'); emit('dirty');
 }
 export function canUndo() { return undoStack.length > 0 || (last && !last.committed); }
 export function canRedo() { return redoStack.length > 0; }
-export function resetHistory() { undoStack.length = 0; redoStack.length = 0; last = null; emit('history'); emit('lastop', null); }
+export function resetHistory() { H.resetCache(); undoStack.length = 0; redoStack.length = 0; last = null; emit('history'); emit('lastop', null); }
+
+// ---------- parametric history hooks ----------
+const stripSk = s => JSON.stringify({ ...s, hidden: 0, _rb: 0 });
+function afterApply(op) {
+  const d = op.def;
+  if (d.noRecord || d.presentation) return;
+  if (d.sketchOnly) { sketchChanged(op); return; }
+  const label = (() => { try { return d.label(op.params); } catch (e) { return 'Operation'; } })();
+  if (op.rec) {
+    const i = H.hist().indexOf(op.rec);
+    if (op.rec.op === '_xf') Object.assign(op.rec, H.bakeXf(d.xfIds, label) || {});
+    else if (op.rec.op === '_bake') Object.assign(op.rec, H.bakeAdded(op.base.list, label) || {});
+    if (i >= 0) H.invalidate(i + 1);
+    emit('timeline');
+    return;
+  }
+  const name = H.recName(d);
+  let rec = null;
+  if (name) rec = { op: name, params: op.params, sel: op.sel };
+  else if (d.factory) rec = { factory: d.factory[0], args: d.factory[1], params: op.params, sel: op.sel };
+  else if (d.xfIds) rec = H.bakeXf(d.xfIds, label);
+  else rec = H.bakeAdded(op.base.list, label);
+  if (rec) { rec.label = label; op.rec = H.insertRecord(rec); }
+}
+function sketchChanged(op) {
+  const before = new Map(JSON.parse(op.base.sketches).map(s => [s.id, stripSk(s)]));
+  const changed = [];
+  for (const sk of S.doc.sketches || []) {
+    const b = before.get(sk.id);
+    if (b === undefined) { if (H.sketchRecIndex(sk.id) < 0) H.insertRecord({ kind: 'sketch', sk: sk.id, label: sk.name }); }
+    else if (b !== stripSk(sk)) changed.push(sk.id);
+  }
+  if (changed.length) {
+    const i = H.firstUsing(changed);
+    if (i >= 0) {
+      const failed = H.regenerate(i);
+      if (failed.length) emit('toast', `${failed.length} later feature${failed.length > 1 ? 's' : ''} failed to update — see the timeline`);
+    }
+  }
+  emit('timeline');
+}

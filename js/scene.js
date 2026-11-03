@@ -37,7 +37,7 @@ const PALETTE = ['#b8bcc4', '#9fb6cf', '#c9b79c', '#a7c4a0', '#c4a3b8', '#d0c58f
 export function newObject(name, mesh, loc = [0, 0, 0], id = null) {
   const oid = id ?? S.doc.nextId++;
   if (id != null && id >= S.doc.nextId) S.doc.nextId = id + 1;
-  return { id: oid, name: uniqueName(name), mesh, loc: loc.slice(), rot: [0, 0, 0], scl: [1, 1, 1], color: PALETTE[(oid - 1) % PALETTE.length], hidden: false };
+  return { id: oid, name: uniqueName(name), mesh, loc: loc.slice(), rot: [0, 0, 0], scl: [1, 1, 1], color: PALETTE[(oid - 1) % PALETTE.length], hidden: false, layer: S.doc.layer ?? 1 };
 }
 export function uniqueName(base) {
   const names = new Set(S.doc.objects.map(o => o.name));
@@ -52,7 +52,7 @@ export function cloneObj(o, shareMesh = false) {
 export function serialize() {
   return {
     format: 'streamline', version: 1, unit: 'mm',
-    doc: { nextId: S.doc.nextId, objects: S.doc.objects.map(o => ({ ...o, mesh: o.mesh.toJSON() })), sketches: S.doc.sketches || [] },
+    doc: { nextId: S.doc.nextId, objects: S.doc.objects.map(o => ({ ...o, mesh: o.mesh.toJSON() })), sketches: S.doc.sketches || [], history: S.doc.history || [], marker: S.doc.marker ?? null, layers: S.doc.layers || defaultLayers(), layer: S.doc.layer ?? 1 },
     ed: { workspace: S.ed.workspace, sketch: S.ed.sketch, drawSel: [...S.ed.drawSel], profiles: S.ed.profiles, mode: S.ed.mode, selectMode: S.ed.selectMode, selected: [...S.ed.selected], active: S.ed.active, editSel: [...S.ed.editSel], selOrder: S.ed.selOrder.slice() },
   };
 }
@@ -62,6 +62,12 @@ export function deserialize(data) {
   S.doc.objects = d.doc.objects.map(o => ({ ...o, loc: o.loc.slice(), rot: o.rot.slice(), scl: o.scl.slice(), mesh: PolyMesh.from(o.mesh) }));
   S.doc.sketches = JSON.parse(JSON.stringify(d.doc.sketches || []));
   S.doc.nextId = d.doc.nextId || (Math.max(0, ...S.doc.objects.map(o => o.id)) + 1);
+  S.doc.layers = JSON.parse(JSON.stringify(d.doc.layers || defaultLayers()));
+  S.doc.layer = d.doc.layer ?? S.doc.layers[0].id;
+  S.doc.marker = d.doc.marker ?? null;
+  S.doc.history = JSON.parse(JSON.stringify(d.doc.history || []));
+  // projects saved before the timeline existed: their bodies become one baked first step
+  if (!d.doc.history && S.doc.objects.length) S.doc.history = [{ id: 'r0', op: '_bake', label: 'Imported geometry', t: Date.now(), params: { add: JSON.parse(JSON.stringify(d.doc.objects)) } }];
   const e = d.ed || {};
   S.ed.workspace = e.workspace || 'model';
   S.ed.sketch = e.sketch ?? null;
@@ -75,3 +81,5 @@ export function deserialize(data) {
   S.ed.selOrder = e.selOrder || [];
   if (S.ed.mode === 'edit' && !S.doc.objects.some(o => o.id === S.ed.active)) S.ed.mode = 'object';
 }
+
+export const defaultLayers = () => [{ id: 1, name: 'Default', visible: true }];

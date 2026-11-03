@@ -37,6 +37,20 @@ On iPhone, open the page in Safari, then Share → **Add to Home Screen**. It th
 - The Draw / CAD / Model switcher, undo/redo and properties sit in the top bar. Under it is the **station bar** with the actions for the current workspace: Constrain, Modify commands, Extrude, Fillet and so on.
 - **Tools** are in a vertical rail on the left of the viewport. View controls (the axis navigator and the persp/frame/snap/x-ray buttons) are bottom-right. The AutoCAD command line runs along the bottom in Draw and CAD.
 
+## Parametric timeline, layers and visibility
+
+Every shape starts from a sketch: drawing tools create sketches, and **Add solid** builds a profile sketch plus an Extrude or Revolve rather than a loose mesh.
+Each sketch and feature is a step on the **timeline** strip along the bottom, stamped with the time it was made:
+
+- **Edit a sketch** (tap its chip → Edit sketch, or tap it in the Browser). Every feature after it rebuilds: widen a rectangle and its extrude, the fillets on it and so on follow.
+- **Edit parameters** of any earlier feature (distance, angle, radius…) in the floating dialog. Later steps replay on top.
+- **Roll back** to just before or just after a step. The orange marker shows where you are, and steps after it are greyed out and ignored. New work is inserted at the marker; **To end** rolls forward again.
+- **Suppress** or **delete** a step. A step that can no longer be rebuilt turns red and explains why.
+
+Sketches a feature has used are hidden automatically. The **Browser** (sliders button → Browser) lists layers, sketches and bodies, each with an eye toggle.
+Tap a layer to make it active (new sketches and bodies go there), rename it or delete it. Use a row's layer tag to move a sketch or body to another layer.
+Visibility, names, colours and layers are not history steps, so they survive rebuilds and never break them.
+
 ## Sketching on faces
 Use **On face** (Draw or CAD) or **Sketch on face** (Model), then tap a flat face. The new sketch:
 - **projects the face's boundary**, outer edge and holes included, as purple reference geometry, the way Fusion does. Round holes come in as exact circles, and straight runs as single lines.

@@ -1,6 +1,6 @@
 // 3D viewport: renderer, Z-up turntable camera (persp/ortho), touch gestures, grid, picking.
 import * as THREE from 'three';
-import { S, emit, activeObj } from './state.js';
+import { S, emit, activeObj, isShown } from './state.js';
 import { triangulateFace, meshEdges, selectedFaces, newell, norm } from './mesh.js';
 import { objMatrix, xfFor } from './scene.js';
 import { featureEdges } from './edges.js';
@@ -323,7 +323,7 @@ function syncScene() {
       v = buildVisual(o, isEdit); v.color = o.color;
       visuals.set(o.id, v); scene.add(v.group);
     }
-    v.group.visible = !o.hidden;
+    v.group.visible = isShown(o);
     v.group.matrixAutoUpdate = false;
     v.group.matrix.copy(objMatrix(o)); v.group.matrixWorldNeedsUpdate = true;
     const showSel = S.ed.workspace !== 'model' || S.ed.pick === 'solid';
@@ -361,7 +361,7 @@ function occluded(world, rc) {
 // nearest vertex in screen space. opts: { objs: [obj], exclude: (obj, i) => bool, tol }
 view.pickVertex = (x, y, opts = {}) => {
   const tol = opts.tol ?? 28;
-  const objs = opts.objs || S.doc.objects.filter(o => !o.hidden);
+  const objs = opts.objs || S.doc.objects.filter(isShown);
   const cands = [];
   for (const o of objs) {
     const xf = xfFor(o);

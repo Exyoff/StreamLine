@@ -1,6 +1,6 @@
 // Draw workspace: 2D drafting tools on the active sketch plane + sketch/profile rendering.
 import * as THREE from 'three';
-import { S, emit, objById } from './state.js';
+import { S, emit, objById, isShown } from './state.js';
 import { view, camera } from './viewport.js';
 import * as SK from './sketch.js';
 const ecos = d => { const k = Math.round(d / 90); return Math.abs(d / 90 - k) < 1e-12 ? [1, 0, -1, 0][((k % 4) + 4) % 4] : Math.cos(d * Math.PI / 180); };
@@ -29,7 +29,7 @@ const samePlane = (a, b) => a.n.every((c, i) => Math.abs(c - b.n[i]) < 1e-9) && 
 export function cplane() { return S.ed.cplane || SK.PLANES.XY; }
 // typed first points (tool card / command line) refer to the construction plane, like Plasticity
 function setPlaneTarget(plane, face = null) {
-  const ex = (S.doc.sketches || []).find(k => !k.hidden && samePlane(k.plane, plane));
+  const ex = (S.doc.sketches || []).find(k => isShown(k) && samePlane(k.plane, plane));
   if (ex) { target = { skId: ex.id }; S.ed.sketch = ex.id; }
   else target = { plane: { o: plane.o.slice(), u: plane.u.slice(), v: plane.v.slice(), n: plane.n.slice() }, face };
 }
@@ -77,7 +77,7 @@ function refPts(s) {
   if (refCache.key === S.doc.objects && refCache.sk === s.id && refCache.pl === s.plane) return refCache.pts;
   const pts = [];
   for (const o of S.doc.objects) {
-    if (o.hidden) continue;
+    if (!isShown(o)) continue;
     const xf = xfFor(o);
     for (const v of o.mesh.v) {
       const w = xf.toW(v), d = [w[0] - s.plane.o[0], w[1] - s.plane.o[1], w[2] - s.plane.o[2]];
@@ -525,7 +525,7 @@ function dimGeom(s, d) {
 
 function renderSketches() {
   const ws = S.ed.workspace, act = studio() ? sk() : SK.activeSketch(), stu = studio();
-  const key = [ws, S.ed.sketch, (S.doc.sketches || []).map(s => s.hidden).join(), [...S.ed.drawSel].join(), JSON.stringify(S.ed.profiles), S.settings.showSketches].join('|');
+  const key = [ws, S.ed.sketch, (S.doc.sketches || []).map(s => isShown(s)).join(), [...S.ed.drawSel].join(), JSON.stringify(S.ed.profiles), S.settings.showSketches].join('|');
   const sketches = S.doc.sketches || [];
   const entsArr = sketches.map(s => s.ents), prevEnts = sketchGroup.userData.ents || [];
   const changed = key !== renderKey || entsArr.length !== prevEnts.length || entsArr.some((e, i) => e !== prevEnts[i]);
@@ -534,7 +534,7 @@ function renderSketches() {
       renderKey = key; sketchGroup.userData.ents = entsArr;
       clearGroup(sketchGroup);
       for (const s of sketches) {
-        if (s.hidden) continue;
+        if (!isShown(s)) continue;
         const isAct = stu || (ws === 'draw' && s.id === S.ed.sketch);
         const top = isAct && !stu;
         const mine = s.id === S.ed.sketch;

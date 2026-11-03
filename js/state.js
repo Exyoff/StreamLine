@@ -1,6 +1,6 @@
 // Shared application state + a tiny event bus.
 export const S = {
-  doc: { objects: [], sketches: [], nextId: 1 },
+  doc: { objects: [], sketches: [], nextId: 1, history: [], marker: null, layers: [{ id: 1, name: 'Default', visible: true }], layer: 1 },
   ed: {
     workspace: 'draw',     // 'draw' | 'cad' | 'model'
     sketch: null,          // active sketch id
@@ -54,3 +54,7 @@ export function loadSettings() {
 export function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(S.settings)); } catch (e) {}
 }
+
+// visible = not hidden itself and on a visible layer (objects and sketches)
+export function layerVisible(id) { const l = (S.doc.layers || []).find(x => x.id === (id ?? 1)); return !l || l.visible !== false; }
+export function isShown(x) { return !!x && !x.hidden && layerVisible(x.layer); }
