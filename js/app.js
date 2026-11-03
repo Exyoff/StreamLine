@@ -144,7 +144,7 @@ function facePickTap(x, y) {
 let camBeforeEdit = null, pickBeforeEdit = null;
 function finishSketchEdit() {
   const id = S.ed.editingSketch, sk = SK.sketchById(id);
-  S.ed.editingSketch = null; S.ed.drawSel = new Set(); S.ed.profiles = [];
+  S.ed.editingSketch = null; S.ed.drawSel = new Set(); S.ed.profiles = []; S.ed.sketch = null;
   if (sk && sk._wasHidden) { sk.hidden = true; delete sk._wasHidden; }
   if (S.ed.tool !== 'select') setTool('select');
   view.cam.lock2D = false;
@@ -837,8 +837,9 @@ function renderLastOp() {
   el.onscroll = more; requestAnimationFrame(more);
   requestAnimationFrame(() => {
     const docked = !el.hidden && matchMedia('(max-width: 500px)').matches;
-    const off = docked ? el.offsetHeight / 2 : 0;
-    if (Math.abs((view.offsetY || 0) - off) > 1) { view.offsetY = off; view.render(); }
+    const side = !el.hidden && matchMedia('(orientation: landscape) and (max-height: 500px)').matches;
+    const off = docked ? el.offsetHeight / 2 : 0, offX = side ? -(el.offsetWidth + 40) / 2 : 0; // move the model out from under the dialog
+    if (Math.abs((view.offsetY || 0) - off) > 1 || Math.abs((view.offsetX || 0) - offX) > 1) { view.offsetY = off; view.offsetX = offX; view.render(); }
   });
   if (!show) return;
   const fields = op.def.fields ? op.def.fields(op.params) : [];

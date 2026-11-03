@@ -110,8 +110,8 @@ function updateCamera() {
   persp.position.copy(c.target).addScaledVector(dir, c.dist);
   persp.quaternion.setFromRotationMatrix(basis);
   // a panel docked over the lower view (phone op dialog) shifts the picture up so the model stays visible
-  const oy = Math.round(view.offsetY || 0);
-  if (oy) persp.setViewOffset(w, h, 0, oy, w, h); else persp.clearViewOffset();
+  const oy = Math.round(view.offsetY || 0), ox = Math.round(view.offsetX || 0);
+  if (oy || ox) persp.setViewOffset(w, h, ox, oy, w, h); else persp.clearViewOffset();
   persp.updateProjectionMatrix(); persp.updateMatrixWorld();
   const hh = c.dist * Math.tan(persp.fov * D2R / 2);
   ortho.left = -hh * aspect; ortho.right = hh * aspect; ortho.top = hh; ortho.bottom = -hh;
@@ -119,7 +119,7 @@ function updateCamera() {
   ortho.position.copy(c.target).addScaledVector(dir, D);
   ortho.near = D * 0.001; ortho.far = D + R * 2;
   ortho.quaternion.setFromRotationMatrix(basis);
-  if (oy) ortho.setViewOffset(w, h, 0, oy, w, h); else ortho.clearViewOffset();
+  if (oy || ox) ortho.setViewOffset(w, h, ox, oy, w, h); else ortho.clearViewOffset();
   ortho.updateProjectionMatrix(); ortho.updateMatrixWorld();
 }
 view.viewDir = () => { const c = view.cam, cp = Math.cos(c.pitch); return [cp * Math.cos(c.yaw), cp * Math.sin(c.yaw), Math.sin(c.pitch)]; }; // toward viewer

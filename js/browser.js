@@ -139,15 +139,26 @@ export function setVisible(kind, id, v) {
 function setLayerOf(kind, id, layer) {
   presOp('Move to layer', () => { const x = kind === 'sketch' ? SK.sketchById(id) : S.doc.objects.find(o => o.id === id); if (x) x.layer = layer; });
 }
-export function addLayer() {
-  const name = prompt('Layer name', `Layer ${(S.doc.layers || []).length + 1}`); if (!name) return;
+// in-app text entry (native prompt() looks foreign and is unreliable in iOS home-screen apps)
+function askText(anchor, title, value, done) {
+  const inp = h('input', { class: 'textin', value, enterkeyhint: 'done', autocomplete: 'off', autocorrect: 'off', spellcheck: 'false' });
+  const ok = () => { const v = inp.value.trim(); closePopover(); if (v) done(v); };
+  inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') ok(); if (e.key === 'Escape') closePopover(); });
+  popover(anchor, h('form', { class: 'askform', onsubmit: e => { e.preventDefault(); ok(); } }, h('div', { class: 'mtitle' }, title), inp,
+    h('div', { class: 'btnrow' }, h('button', { type: 'button', class: 'btn', onclick: () => closePopover() }, 'Cancel'), h('button', { type: 'submit', class: 'btn primary' }, 'OK'))));
+  setTimeout(() => { inp.focus(); inp.select(); }, 60);
+}
+export function addLayer(e) {
+  askText(e?.currentTarget || $('#sheet-body'), 'New layer', `Layer ${(S.doc.layers || []).length + 1}`, name => doAddLayer(name));
+}
+function doAddLayer(name) {
   presOp('Add layer', () => { const id = Math.max(0, ...S.doc.layers.map(l => l.id)) + 1; S.doc.layers.push({ id, name, visible: true }); S.doc.layer = id; });
 }
 function layerMenu(anchor, l) {
   popover(anchor, h('div', {},
     h('div', { class: 'mtitle' }, l.name),
     menuItem(I.check, 'Make active (new work goes here)', () => presOp('Active layer', () => { S.doc.layer = l.id; if (l.visible === false) l.visible = true; })),
-    menuItem(I.sliders, 'Rename…', () => { const n = prompt('Layer name', l.name); if (n) presOp('Rename layer', () => { S.doc.layers.find(x => x.id === l.id).name = n; }); }),
+    menuItem(I.sliders, 'Rename…', () => setTimeout(() => askText(anchor, 'Rename layer', l.name, n => presOp('Rename layer', () => { S.doc.layers.find(x => x.id === l.id).name = n; })), 0)),
     menuItem(I.select, 'Select its bodies', () => { S.ed.selected = new Set(S.doc.objects.filter(o => (o.layer ?? 1) === l.id && isShown(o)).map(o => o.id)); ctx.selectionChanged(); }),
     S.doc.layers.length > 1 ? menuItem(I.trash, 'Delete layer (contents → Default)', () => presOp('Delete layer', () => {
       const to = S.doc.layers.find(x => x.id !== l.id).id;
@@ -158,7 +169,7 @@ function layerMenu(anchor, l) {
 }
 function chooseLayer(anchor, kind, id) {
   popover(anchor, h('div', {}, h('div', { class: 'mtitle' }, 'Move to layer'),
-    ...S.doc.layers.map(l => menuItem(I.check, l.name, () => setLayerOf(kind, id, l.id)))));
+    ...S.doc.layers.map(l => { const x = kind === 'sketch' ? SK.sketchById(id) : S.doc.objects.find(o => o.id === id); return menuItem((x?.layer ?? 1) === l.id ? I.check : '', l.name, () => setLayerOf(kind, id, l.id)); })));
 }
 const eyeBtn = (shown, fn) => { const b = h('button', { class: 'ib', 'aria-label': shown ? 'Hide' : 'Show', html: shown ? I.eye : I.eyeOff }); b.onclick = e => { e.stopPropagation(); fn(); }; return b; };
 const layerTag = (kind, x) => { const l = S.doc.layers.find(q => q.id === (x.layer ?? 1)); const b = h('button', { class: 'ltag', title: 'Layer' }, l ? l.name : '—'); b.onclick = e => { e.stopPropagation(); chooseLayer(b, kind, x.id); }; return b; };
