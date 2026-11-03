@@ -141,10 +141,22 @@ function facePickTap(x, y) {
   toast(`Sketching on the face · ${loops.length} edge loop${loops.length === 1 ? '' : 's'} projected`);
   refresh();
 }
+function finishSketchEdit() {
+  const id = S.ed.editingSketch, sk = SK.sketchById(id);
+  S.ed.editingSketch = null; S.ed.drawSel = new Set(); S.ed.profiles = [];
+  if (sk && sk._wasHidden) { sk.hidden = true; delete sk._wasHidden; }
+  if (S.ed.tool !== 'select') setTool('select');
+  view.cam.lock2D = false; view.setView('iso');
+  setPick('solid');
+}
 function activateSketch(id) {
   const sk = SK.sketchById(id); if (!sk) return;
+  if (S.ed.editingSketch != null && S.ed.editingSketch !== id) { const o = SK.sketchById(S.ed.editingSketch); if (o && o._wasHidden) { o.hidden = true; delete o._wasHidden; } }
+  if (sk.hidden) sk._wasHidden = true;
+  S.ed.editingSketch = id; S.ed.pick = 'edge'; S.ed.faces = []; S.ed.edges = []; S.ed.selected = new Set();
   S.ed.sketch = id; sk.hidden = false;
-  if (S.ed.workspace !== 'draw') setWorkspace('draw'); else { enterSketchView(sk); selectionChanged(); }
+  if (S.ed.workspace !== 'model') setWorkspace('model');
+  enterSketchView(sk); selectionChanged();
 }
 
 // ---------- CAD taps: profiles & bodies ----------
@@ -282,6 +294,7 @@ function regionOrFaceTap(x, y) {
 function onTap(x, y) {
   lastViewportTap = performance.now();
   if (keypadOpen()) { closeKeypad(false); return; }
+  if (sheetOpen && !document.body.classList.contains('sheet-docked')) { toggleSheet(false); return; }
   if (S.ed.pickFace) return facePickTap(x, y);
   if (S.ed.tool === 'measure') return measureTap(x, y);
   if (S.ed.workspace === 'draw') return Draw.tap(x, y);
@@ -430,10 +443,9 @@ function drawOverlays() {
   drawFaceHighlights();
   edgeGroup.clear();
   if ((S.ed.workspace === 'cad' || S.ed.workspace === 'model') && S.ed.edges.length) {
-    const mat = new THREE.LineBasicMaterial({ color: 0xff9a1f, depthTest: false });
     for (const e of S.ed.edges) {
       const pts = e.circle ? e.circle.loop : [e.a, e.b];
-      edgeGroup.add(new (e.circle ? THREE.LineLoop : THREE.Line)(new THREE.BufferGeometry().setFromPoints(pts.map(q => new THREE.Vector3(...q))), mat));
+      edgeGroup.add(Draw.fatLine(pts, 0xff9a1f, 4, !!e.circle));
       const mk = new THREE.Mesh(new THREE.RingGeometry(0.5, 1, 16), new THREE.MeshBasicMaterial({ color: 0xff9a1f, depthTest: false }));
       const mid = e.circle ? e.circle.loop[0] : M.mul(M.add(e.a, e.b), 0.5);
       mk.position.set(...mid); mk.quaternion.copy(camera().quaternion); mk.scale.setScalar(view.worldPerPixel(mid) * 6); edgeGroup.add(mk);
@@ -603,6 +615,7 @@ function renderActions() {
     const curves = S.ed.drawSel.size, prof = S.ed.profiles.length, faces = S.ed.faces.length, edges = S.ed.edges.length;
     const solids = S.ed.pick === 'solid' ? S.ed.selected.size : 0;
     const c = [];
+    if (S.ed.editingSketch != null && SK.sketchById(S.ed.editingSketch)) c.push(act(I.check, 'Finish', () => finishSketchEdit(), 'primary'));
     if (prof) c.push(act(I.extrude, 'Extrude', () => runOp(F.extrude), 'primary'), act(I.revolve, 'Revolve', () => runOp(F.revolve)), ...(prof >= 2 ? [act(I.cone, 'Loft', () => runOp(F.loftOp))] : []), act(I.arc, 'Sweep', () => runOp(F.sweepOp)));
     if (faces) c.push(act(I.extrude, 'Push/Pull', () => modifier('pushpull'), prof ? '' : 'primary'), act(I.inset, 'Shell', () => modifier('shell')), act(I.cone, 'Draft', () => runOp(F.draftOp)), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)));
     if (edges) c.push(act(I.fillet, 'Fillet', () => modifier('fillet'), 'primary'), act(I.chamfer, 'Chamfer', () => modifier('chamfer')));
@@ -675,11 +688,17 @@ function renderHud() {
     return;
   }
   if (S.ed.pickFace) { $('#hud').innerHTML = '<b>Sketch on face</b><br>Tap a flat face of a body'; return; }
+  const eds = S.ed.editingSketch != null && SK.sketchById(S.ed.editingSketch);
+  if (eds && S.ed.mode === 'object') {
+    const used = H.firstUsing([eds.id]) >= 0;
+    $('#hud').innerHTML = `<b>Editing ${esc(eds.name)}</b> · ${eds.ents.filter(e => e.t !== 'dim').length} curves · ${SK.regions(eds).length} regions<br>${used ? 'Features built from it update as you change it' : 'Draw or edit curves'} · tap <b>Finish</b> when done`;
+    return;
+  }
   if (S.ed.workspace === 'model' && S.ed.mode === 'object') {
     const drawing = !GIZMO_TOOLS.has(S.ed.tool) && S.ed.tool !== 'select';
     const sel = [[S.ed.drawSel.size, 'curve'], [S.ed.profiles.length, 'region'], [S.ed.faces.length, 'face'], [S.ed.edges.length, 'edge'], [S.ed.pick === 'solid' ? S.ed.selected.size : 0, 'solid']].filter(q => q[0]).map(([n, w]) => `${n} ${w}${n === 1 ? '' : 's'}`);
     parts.push(drawing ? `<b>${S.ed.tool[0].toUpperCase() + S.ed.tool.slice(1)}</b> · draw on the grid or on any face` : `<b>${{ edge: 'Edge', face: 'Face', solid: 'Solid' }[S.ed.pick]} select</b>${sel.length ? ' · ' + sel.join(', ') : ''}`);
-    parts.push(drawing ? `${S.ed.sketch && SK.activeSketch() ? esc(SK.activeSketch().name) + ' · ' : ''}${Draw.dofText ? Draw.dofText() : ''}` : 'Space or 🔍 for commands · 2 Edge · 3 Face · 4 Solid');
+    parts.push(drawing ? `${S.ed.sketch && SK.activeSketch() ? esc(SK.activeSketch().name) + ' · ' : ''}${Draw.dofText ? Draw.dofText() : ''}` : '<span class="kbhint">Space or 🔍 for commands · 2 Edge · 3 Face · 4 Solid</span>');
     $('#hud').innerHTML = parts.join('<br>');
     return;
   }

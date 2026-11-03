@@ -26,7 +26,8 @@ function recIcon(rec) {
 }
 const when = t => { if (!t) return ''; const d = new Date(t); return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' · ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }); };
 const idxOf = id => H.hist().findIndex(r => r.id === id);
-function failNote(failed) { if (failed.length) toast(`${failed.length} later step${failed.length > 1 ? 's' : ''} failed — shown red in the timeline`, 2800); }
+let focusErr = false, lastEnd = -1;
+function failNote(failed) { if (failed.length) { focusErr = true; toast(`⚠ ${failed.length} later step${failed.length > 1 ? 's' : ''} failed — tap the red chip`, 3200); } }
 
 // ---------- timeline actions (all undoable, none recorded) ----------
 export function rollTo(k) {
@@ -45,7 +46,7 @@ export function rollTo(k) {
 export function editStep(id) {
   const i = idxOf(id), rec = H.hist()[i];
   if (!rec) return;
-  if (rec.kind === 'sketch') { if (i >= H.markerIndex()) { toast('Roll forward past this sketch to edit it'); return; } ctx.activateSketch(rec.sk); toast('Editing the sketch — features after it update when you change it'); return; }
+  if (rec.kind === 'sketch') { if (i >= H.markerIndex()) { toast('Roll forward past this sketch to edit it'); return; } ctx.activateSketch(rec.sk); return; }
   const def = H.defOf(rec);
   if (!def || !def.fields) { toast('This step has no parameters to edit'); return; }
   if (i >= H.markerIndex()) { toast('Roll forward past this step to edit it'); return; }
@@ -90,7 +91,7 @@ export function renderTimeline() {
   const kids = [];
   hist.forEach((rec, i) => {
     if (i === end) kids.push(h('span', { class: 'tl-marker', title: 'Rollback marker' }));
-    const chip = h('button', { class: 'tl-chip' + (rec.kind === 'sketch' ? ' sk' : '') + (rec.off ? ' off' : '') + (rec.err ? ' err' : '') + (i >= end ? ' future' : ''), title: `${recLabel(rec)} · ${when(rec.t)}${rec.err ? ' · ' + rec.err : ''}`, 'data-id': rec.id },
+    const chip = h('button', { class: 'tl-chip' + (rec.kind === 'sketch' ? ' sk' : '') + (rec.off ? ' off' : '') + (rec.err ? ' err' : '') + (i >= end ? ' future' : '') + (rec.kind === 'sketch' && rec.sk === S.ed.editingSketch ? ' cur' : ''), title: `${recLabel(rec)} · ${when(rec.t)}${rec.err ? ' · ' + rec.err : ''}`, 'data-id': rec.id },
       h('span', { class: 'ic', html: recIcon(rec) }), h('span', { class: 'nm' }, recLabel(rec)));
     chip.onclick = e => { e.stopPropagation(); stepMenu(chip, rec, i); };
     kids.push(chip);
@@ -99,7 +100,12 @@ export function renderTimeline() {
   else kids.push(h('button', { class: 'tl-chip tl-end', onclick: () => rollTo(hist.length), title: 'Roll to end' }, h('span', { class: 'ic', html: I.next }), h('span', { class: 'nm' }, 'To end')));
   const keep = el.scrollLeft, atEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 4;
   el.replaceChildren(h('span', { class: 'tl-title' }, 'History'), ...kids);
-  el.scrollLeft = atEnd ? el.scrollWidth : keep;
+  el.scrollLeft = atEnd && end >= hist.length ? el.scrollWidth : keep;
+  // bring what changed into view: the first failed step, or the moved rollback marker
+  const reveal = n => { if (!n) return; const a = n.offsetLeft - 60, b = n.offsetLeft + n.offsetWidth + 80; if (a < el.scrollLeft) el.scrollLeft = a; else if (b > el.scrollLeft + el.clientWidth) el.scrollLeft = b - el.clientWidth; };
+  if (focusErr) { focusErr = false; const e = el.querySelector('.tl-chip.err'); if (e) { reveal(e); e.classList.add('pulse'); } }
+  else if (end !== lastEnd) reveal(el.querySelector('.tl-marker'));
+  lastEnd = end;
 }
 function stepMenu(anchor, rec, i) {
   const end = H.markerIndex(), sketch = rec.kind === 'sketch';
@@ -157,7 +163,7 @@ const layerTag = (kind, x) => { const l = S.doc.layers.find(q => q.id === (x.lay
 export function browserTab(group) {
   const L = S.doc.layers || [];
   const layers = group('Layers', ...L.map(l => {
-    const row = h('div', { class: 'objrow' + (S.doc.layer === l.id ? ' act' : '') },
+    const row = h('div', { class: 'objrow' + (S.doc.layer === l.id ? ' cur' : '') },
       h('span', { class: 'lyr-dot' + (S.doc.layer === l.id ? ' on' : '') }), h('span', { class: 'nm' }, l.name),
       h('span', { class: 'meta' }, `${S.doc.objects.filter(o => (o.layer ?? 1) === l.id).length}b · ${S.doc.sketches.filter(k => (k.layer ?? 1) === l.id).length}s`),
       eyeBtn(l.visible !== false, () => presOp(l.visible !== false ? 'Hide layer' : 'Show layer', () => { const x = S.doc.layers.find(q => q.id === l.id); x.visible = x.visible === false; })));
@@ -169,14 +175,14 @@ export function browserTab(group) {
   const skG = group(`Sketches · ${sks.length}`, ...(sks.length ? sks.map(sk => {
     const future = H.sketchRecIndex(sk.id) >= end;
     const used = H.firstUsing([sk.id]) >= 0;
-    const row = h('div', { class: 'objrow' + (sk.id === S.ed.sketch ? ' act' : '') + (layerVisible(sk.layer) ? '' : ' dim') + (future ? ' dim' : '') },
+    const row = h('div', { class: 'objrow' + (sk.id === S.ed.sketch ? ' cur' : '') + (layerVisible(sk.layer) ? '' : ' dim') + (future ? ' dim' : '') },
       h('span', { html: I.sketch }), h('span', { class: 'nm' }, sk.name), h('span', { class: 'meta' }, (future ? 'rolled back · ' : used ? 'used · ' : '') + `${sk.ents.length}`),
       layerTag('sketch', sk), eyeBtn(!sk.hidden, () => setVisible('sketch', sk.id, !!sk.hidden)));
     row.onclick = () => { if (future) { toast('This sketch is after the rollback marker'); return; } ctx.activateSketch(sk.id); };
     return row;
   }) : [h('p', { class: 'note' }, 'Draw on the grid or on a face to make a sketch.')]));
   const bodies = group(`Bodies · ${S.doc.objects.length}`, ...(S.doc.objects.length ? S.doc.objects.map(o => {
-    const row = h('div', { class: 'objrow' + (S.ed.selected.has(o.id) ? ' sel' : '') + (S.ed.active === o.id ? ' act' : '') + (layerVisible(o.layer) ? '' : ' dim') },
+    const row = h('div', { class: 'objrow' + (S.ed.selected.has(o.id) ? ' sel' : '') + (S.ed.active === o.id ? ' cur' : '') + (layerVisible(o.layer) ? '' : ' dim') },
       h('span', { class: 'sw', style: `background:${o.color}` }), h('span', { class: 'nm' }, o.name), h('span', { class: 'meta' }, `${o.mesh.f.length}f`),
       layerTag('obj', o), eyeBtn(!o.hidden, () => setVisible('obj', o.id, !!o.hidden)));
     row.onclick = () => ctx.selectObj(o.id);

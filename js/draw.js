@@ -479,6 +479,11 @@ export function initDraw() {
   previewGroup = new THREE.Group(); view.overlayScene.add(previewGroup);
   view.renderHooks.push(renderSketches);
 }
+export function fatLine(pts3, color, width, closed) {
+  const pts = closed ? [...pts3, pts3[0]] : pts3;
+  const g = new LineGeometry(); g.setPositions(pts.flat());
+  const l = new Line2(g, view.fatMat({ color, depthTest: false, width })); l.renderOrder = 6; return l;
+}
 function lineObj(pts3, mat, closed) {
   if (mat && mat.isLineBasicMaterial && !mat.isLineDashedMaterial) {
     // crisp screen-space line, same colour / opacity / depth behaviour
