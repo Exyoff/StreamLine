@@ -155,10 +155,11 @@ function prepFeature(p) {
   p._id ??= S.doc.nextId;
 }
 const touchFeature = p => (p.mode !== 'new' && p.target != null ? { ids: [p.target], mesh: true } : { ids: [] });
-const targetLabel = p => { const t = p.mode !== 'new' && objById(p.target); return t ? ` → ${t.name}` : ''; };
+const targetLabel = p => { const t = p.mode !== 'new' && objById(p.target); return t ? (p.mode === 'cut' ? ` ⊖ ${t.name}` : p.mode === 'intersect' ? ` ∩ ${t.name}` : ` → ${t.name}`) : ''; };
+const modeName = (base, p) => (p.mode === 'cut' ? `${base} cut` : base);
 
 export const extrude = {
-  label: p => `Extrude${targetLabel(p)}`,
+  label: p => `${modeName('Extrude', p)}${targetLabel(p)}`,
   defaults: () => ({ distance: defSize() / 2, symmetric: false, flip: false }),
   prepare: prepFeature,
   touch: touchFeature,
@@ -189,7 +190,7 @@ export const extrude = {
 };
 
 export const revolve = {
-  label: p => `Revolve${targetLabel(p)}`,
+  label: p => `${modeName('Revolve', p)}${targetLabel(p)}`,
   defaults: () => ({ angle: 360, segs: S.settings.curveSegs || 64 }),
   prepare(p) {
     const e = prepFeature(p); if (e) return e;

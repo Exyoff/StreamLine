@@ -207,9 +207,11 @@ try {
   const holeV = await st(id => StreamLine.M.meshVolume(StreamLine.S.doc.objects.find(o => o.id === id).mesh), cube.id);
   check(holeV < cube.v - 100 && await st(() => StreamLine.getLast().params.mode) === 'cut', `negative extrude from a face sketch cuts a hole (${(cube.v - holeV).toFixed(2)} mm³ removed)`);
   // edit a sketch from the timeline: editing mode with a Finish command
+  await p.tap('#ws-seg [data-pick=edge]'); await p.waitForTimeout(150); // already in Edge mode: the bar must still switch
   await st(() => { const r = StreamLine.H.hist().find(x => x.kind === 'sketch'); StreamLine.BR.editStep(r.id); });
   await p.waitForTimeout(250);
   check(/Editing/.test(await p.textContent('#hud')) && (await ctxBar()).includes('Finish') && await p.locator('#timeline .tl-chip.cur').count() === 1, 'Edit sketch: HUD says Editing, chip highlighted, Finish offered');
+  check(await st(() => StreamLine.view.xrayFor === true), 'bodies are ghosted while a sketch is edited');
   await p.tap('#actions .act.primary'); await p.waitForTimeout(200);
   check(await st(() => StreamLine.S.ed.editingSketch) == null, 'Finish leaves sketch editing');
   await shot('5-timeline');

@@ -531,6 +531,11 @@ function bindEvents() {
 let refreshQueued = false;
 function refreshSoon() { if (!refreshQueued) { refreshQueued = true; requestAnimationFrame(() => { refreshQueued = false; refresh(); }); } }
 function refresh() {
+  if ([...S.ed.selected].some(id => !isShown(objById(id)))) { S.ed.selected = new Set([...S.ed.selected].filter(id => isShown(objById(id)))); if (!S.ed.selected.has(S.ed.active) && S.ed.mode !== 'edit') S.ed.active = [...S.ed.selected].pop() ?? null; }
+  if (S.ed.faces.some(f => !isShown(objById(f.obj)))) S.ed.faces = S.ed.faces.filter(f => isShown(objById(f.obj)));
+  if (S.ed.edges.some(e => !isShown(objById(e.obj)))) S.ed.edges = S.ed.edges.filter(e => isShown(objById(e.obj)));
+  document.body.classList.toggle('editing-sketch', S.ed.editingSketch != null);
+  if (view.xrayFor !== (S.ed.editingSketch != null)) { view.xrayFor = S.ed.editingSketch != null; view.applyXray(); }
   document.body.classList.toggle('ws-model', S.ed.workspace === 'model');
   document.body.classList.toggle('ws-draw', S.ed.workspace === 'draw');
   document.body.classList.toggle('ws-cad', S.ed.workspace === 'cad');
@@ -558,7 +563,7 @@ function renderViewButtons() {
 function act(icon, label, fn, cls = '') { return h('button', { class: 'act ' + cls, onclick: fn }, h('span', { html: icon }), h('span', {}, label)); }
 function renderActions() {
   const row = $('#actions');
-  const key = S.ed.workspace + S.ed.mode + S.ed.selectMode + S.ed.pick + [S.ed.drawSel.size, S.ed.profiles.length, S.ed.faces.length, S.ed.edges.length, S.ed.pick === 'solid' ? S.ed.selected.size : 0].join();
+  const key = S.ed.workspace + S.ed.mode + S.ed.selectMode + S.ed.pick + (S.ed.editingSketch ?? '') + [S.ed.drawSel.size, S.ed.profiles.length, S.ed.faces.length, S.ed.edges.length, S.ed.pick === 'solid' ? S.ed.selected.size : 0].join();
   if (row.dataset.k === key) return;
   row.dataset.k = key;
   if (S.ed.workspace === 'draw') {
@@ -691,7 +696,7 @@ function renderHud() {
   const eds = S.ed.editingSketch != null && SK.sketchById(S.ed.editingSketch);
   if (eds && S.ed.mode === 'object') {
     const used = H.firstUsing([eds.id]) >= 0;
-    $('#hud').innerHTML = `<b>Editing ${esc(eds.name)}</b> · ${eds.ents.filter(e => e.t !== 'dim').length} curves · ${SK.regions(eds).length} regions<br>${used ? 'Features built from it update as you change it' : 'Draw or edit curves'} · tap <b>Finish</b> when done`;
+    $('#hud').innerHTML = `<b>Editing ${esc(eds.name)}</b> · ${((n, r) => `${n} curve${n === 1 ? '' : 's'} · ${r} region${r === 1 ? '' : 's'}`)(eds.ents.filter(e => e.t !== 'dim').length, SK.regions(eds).length)}<br>${used ? 'Features built from it update as you change it' : 'Draw or edit curves'} · tap <b>Finish</b> when done`;
     return;
   }
   if (S.ed.workspace === 'model' && S.ed.mode === 'object') {
@@ -818,7 +823,7 @@ let lastCollapsed = false;
 function renderLastOp() {
   const el = $('#lastop'), op = getLast();
   const show = op && op.committed && (op.def.fields || op.info) && $('#draw-card').hidden;
-  el.hidden = !show || gizmoActive();
+  el.hidden = !show || gizmoActive(); document.body.classList.toggle('has-lastop', !el.hidden);
   if (!show) return;
   const fields = op.def.fields ? op.def.fields(op.params) : [];
   const fieldEls = fields.map(f => {
