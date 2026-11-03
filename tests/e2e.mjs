@@ -196,6 +196,10 @@ try {
   check(await st(id => !StreamLine.isShown(StreamLine.S.doc.objects.find(o => o.id === id)), box.id), 'hiding a layer hides the bodies on it');
   await st(() => { const sk = StreamLine.S.doc.sketches.at(-1); sk.hidden = false; StreamLine.runOp(StreamLine.F.sketchOp('Widen', sk.id, k => { k.ents.find(e => e.t === 'rect').w = 30; })); });
   check(await st(id => StreamLine.S.doc.objects.find(o => o.id === id).layer === 2, box.id), 'layer and visibility survive a rebuild');
+  await p.tap('#sheet-body button.btn.wide'); await p.waitForTimeout(250);
+  await p.fill('.askform input', 'Fixtures'); await p.press('.askform input', 'Enter'); await p.waitForTimeout(200);
+  check(await st(() => StreamLine.S.doc.layers.some(l => l.name === 'Fixtures' ) && StreamLine.S.doc.layers.find(l => l.id === StreamLine.S.doc.layer).name === 'Fixtures'), 'New layer uses an in-app name field and becomes active');
+  await st(() => { const L = StreamLine.S.doc; L.layer = 1; });
   check(await p.locator('#sheet-body .objrow.act').count() === 0 && await p.locator('#sheet-body .objrow.cur').count() >= 1, 'Browser rows use their own "current" style (no clash with the command bar)');
   await tapV(220, 120);
   check(!(await p.locator('#sheet.open').count()), 'tapping the viewport closes the Browser sheet on a phone');

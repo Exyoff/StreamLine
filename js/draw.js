@@ -348,7 +348,7 @@ export function constrain(t) {
 import { fixValues as fixValuesOf } from './constraints.js';
 let dofCache = { k: null, v: 0 };
 export function dofText() {
-  const s = sk(); if (!s) return '';
+  const s = sk(); if (!s || !s.ents || !s.ents.length) return '';
   if (dofCache.k !== s.ents || dofCache.c !== s.cons) dofCache = { k: s.ents, c: s.cons, v: sketchDof(s) };
   return dofCache.v === 0 ? 'fully constrained' : `${dofCache.v} DOF free`;
 }

@@ -390,3 +390,9 @@ body.ws-model #lastop .field .val { height: 38px; }
 
 #hud .rbwarn { display: inline-block; color: #ffcf8a; background: rgba(60,40,10,.75); border: 1px solid rgba(255,154,31,.5); border-radius: 6px; padding: 1px 6px; margin-bottom: 3px; pointer-events: none; }
 .tl-chip.sk { background: #262c33; border-color: #34404d; color: #b9d6f2; }
+
+@media (orientation: landscape) and (max-height: 500px) {
+  body.ws-model #lastop { max-height: calc(100% - var(--tlh) - var(--cmdh) - var(--sabv) - 16px); }
+}
+.askform { display: flex; flex-direction: column; gap: 8px; padding: 4px 6px 6px; min-width: 220px; }
+.askform .btnrow { margin-top: 0; }
