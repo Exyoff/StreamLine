@@ -139,7 +139,9 @@ function applyBody(p, tool, name, anchor) {
   // the sketch is consumed by the feature: hide it (show it again from the Browser to edit)
   for (const id of new Set((p.pts || []).map(it => it.sk))) {
     const sk = SK.sketchById(id); if (!sk || S.settings.hideConsumed === false) continue;
-    const used = new Set(p.pts.filter(it => it.sk === id).map(it => SK.regionAt(sk, it.pt)).filter(Boolean));
+    // regions used by this feature or by any earlier one in the timeline
+    const seeds = [...p.pts.filter(it => it.sk === id).map(it => it.pt), ...(S.doc.history || []).flatMap(r => (r.params?.pts || []).filter(it => it.sk === id).map(it => it.pt))];
+    const used = new Set(seeds.map(pt => SK.regionAt(sk, pt)).filter(Boolean));
     if (SK.regions(sk).every(r => used.has(r))) sk.hidden = true; // other closed shapes in it stay visible for later features
   }
   S.ed.profiles = [];
@@ -164,18 +166,25 @@ const modeName = (base, p) => (p.mode === 'cut' ? `${base} cut` : base);
 
 export const extrude = {
   label: p => `${modeName('Extrude', p)}${targetLabel(p)}`,
-  defaults: () => ({ distance: defSize() / 2, symmetric: false, flip: false }),
+  // starts at 0 like Plasticity: nothing is built until you drag the arrow or type a distance,
+  // so a small part never gets blown out of proportion by a fixed default
+  defaults: () => ({ distance: 0, symmetric: false, flip: false }),
+  isEmpty: p => Math.abs(p.distance) < 1e-9,
   prepare: prepFeature,
   touch: touchFeature,
   fields: () => [lenF('distance', 'Distance'), { key: 'mode', label: 'Operation', kind: 'choice', options: MODES, wide: true }, { key: 'symmetric', label: 'Symmetric', kind: 'bool' }, { key: 'flip', label: 'Flip', kind: 'bool' }],
   apply(p, op) {
-    if (Math.abs(p.distance) < 1e-9) return 'Distance must not be zero';
     // Plasticity-style: on a face, pulling out joins and pushing in cuts — until the user picks an operation
     if (p._auto && p.mode !== p._auto) p._auto = null;
     if (p._auto) p.mode = p._auto = p.distance < 0 ? 'cut' : 'join';
     const auto = !!p._auto;
     const groups = profileGroups(p.pts);
     if (!groups.length) return 'Profiles no longer exist';
+    if (Math.abs(p.distance) < 1e-9) { // waiting for a distance: show the arrow only
+      const g = groups[0], s = (p.flip ? -1 : 1) * (!auto && g.sk.face && (p.mode === 'cut' || p.mode === 'intersect') ? -1 : 1);
+      op.handle = { origin: regionsCentroid(g), dir: M.mul(g.sk.plane.n, s), key: 'distance' };
+      return;
+    }
     const meshes = [];
     let dirW = null, anchor = null;
     for (const g of groups) {
@@ -366,14 +375,15 @@ function setBody(o, m) {
 }
 export const pushPullOp = {
   label: () => 'Push/Pull',
-  defaults: () => ({ dist: defSize() / 4 }),
+  defaults: () => ({ dist: 0 }),
+  isEmpty: p => Math.abs(p.dist) < 1e-9,
   prepare(p) { p.faces ??= JSON.parse(JSON.stringify(S.ed.faces || [])); if (!p.faces.length) return 'Select a face (Face mode)'; p._objs = [...new Set(p.faces.map(f => f.obj))]; },
   touch: p => ({ ids: p._objs, mesh: true }),
   fields: () => [lenF('dist', 'Distance')],
   apply(p, op) {
-    if (Math.abs(p.dist) < 1e-9) return 'Distance must not be zero';
     const first = resolveFaces([p.faces[0]]); if (typeof first === 'string') return first;
     const c0 = regionCentroid(first[0].W, first[0].o.mesh.f, first[0].reg);
+    if (Math.abs(p.dist) < 1e-9) { op.handle = { origin: c0, dir: p.faces[0].n, key: 'dist' }; return; }
     for (const f of p.faces) {
       const r = resolveFaces([f]); if (typeof r === 'string') return r;
       const { o, W, reg } = r[0];

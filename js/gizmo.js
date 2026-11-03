@@ -235,7 +235,7 @@ function dragMove(x, y) {
     const t = axisParam(x, y, M.add(h.origin, M.mul(h.dir, drag.v0)), h.dir);
     if (t == null) return;
     let v = drag.v0 + (t - drag.t0);
-    if (snapOn()) v = stepSnap(v, S.settings.snapStep);
+    if (snapOn()) v = stepSnap(v, fineStep());
     if (h.min != null) v = Math.max(h.min, v);
     updateOp({ [h.key]: v });
     readout = { world: M.add(h.origin, M.mul(h.dir, v)), text: `${getLast().def.label(getLast().params)} ${fmtLen(v)}` };
@@ -303,3 +303,14 @@ function dragCancel() {
   view.render();
 }
 export const gizmoActive = () => !!drag;
+
+// snap step for drag handles: the user's step, made finer when zoomed in on small parts (1 · 2 · 5 × 10ⁿ ≥ ~8 px)
+function fineStep() {
+  const last = getLast(), h = last && last.handle;
+  const wpp = h ? view.worldPerPixel(M.add(h.origin, M.mul(h.dir, last.params[h.key] || 0))) : 0;
+  const want = wpp * 8, step = S.settings.snapStep;
+  if (!(want > 0) || want >= step) return step;
+  const e = Math.pow(10, Math.floor(Math.log10(want)));
+  for (const k of [1, 2, 5, 10]) if (k * e >= want) return Math.min(step, k * e);
+  return step;
+}

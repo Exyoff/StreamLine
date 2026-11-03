@@ -58,9 +58,12 @@ view.init = function (el) {
   scene.add(new THREE.HemisphereLight(0xdfe6f0, 0x3a3d44, 1.4));
 
   matMesh = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.05, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
-  matEdgeObj = fatMat({ color: 0x15161a, opacity: 0.55, width: 1.2 });
+  // opaque (overlapping joints of a translucent line darken unevenly) and pulled toward the camera so the
+  // edge never fights with the faces it lies on — no speckled rims on holes and bosses
+  matEdgeObj = fatMat({ color: 0x3a4250, width: 1.2 });
   matEdgeSel = fatMat({ color: COL.sel, width: 2 });
   matEdgeAct = fatMat({ color: COL.active, width: 2.2 });
+  for (const m of [matEdgeObj, matEdgeSel, matEdgeAct]) { m.polygonOffset = true; m.polygonOffsetFactor = -2; m.polygonOffsetUnits = -6; }
   matEdgeEdit = fatMat({ vertexColors: true, width: 1.6 });
   matPoints = new THREE.PointsMaterial({ vertexColors: true, size: 7, sizeAttenuation: false });
   applyXray();

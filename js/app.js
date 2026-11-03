@@ -503,7 +503,8 @@ function bindEvents() {
   $('#btn-cmd').onclick = () => openPalette();
   $('#btn-undo').onclick = () => undo();
   $('#btn-redo').onclick = () => redo();
-  $('#btn-props').onclick = () => toggleSheet();
+  $('#btn-props').onclick = () => { if (!sheetOpen) sheetTab = S.ed.selected.size || S.ed.mode === 'edit' ? 'item' : 'objects'; toggleSheet(); };
+  $('#layerpill').onclick = () => { sheetTab = 'objects'; toggleSheet(true); renderSheet(); };
   $('#sheet-close').onclick = () => toggleSheet(false);
   $('#sheet-tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { sheetTab = b.dataset.tab; renderSheet(); } });
   $('#btn-menu').onclick = () => openMainMenu();
@@ -547,7 +548,7 @@ function refresh() {
   document.body.classList.toggle('ws-cad', S.ed.workspace === 'cad');
   view.bg = S.ed.workspace === 'model' ? 0x2b2c30 : 0x212830; // Plasticity-grey studio vs AutoCAD model space
   Cmd.render();
-  renderTop(); renderTools(); renderActions(); renderHud(); renderDrawCard(); renderLastOp(); renderMeasureCard(); renderViewButtons(); BR.renderTimeline();
+  renderTop(); renderTools(); renderActions(); renderHud(); renderDrawCard(); renderLastOp(); renderMeasureCard(); renderViewButtons(); BR.renderTimeline(); BR.renderLayerPill();
   if (sheetOpen && !gizmoActive()) renderSheet();
   view.render();
 }
@@ -601,7 +602,7 @@ function renderActions() {
   }
   if (S.ed.workspace === 'cad') {
     row.replaceChildren(
-      act(I.extrude, 'Extrude', () => runOp(F.extrude), 'primary'),
+      act(I.extrude, 'Extrude', () => startExtrude(), 'primary'),
       act(I.revolve, 'Revolve', () => runOp(F.revolve)),
       act(I.cone, 'Loft', () => runOp(F.loftOp)),
       act(I.arc, 'Sweep', () => runOp(F.sweepOp)),
@@ -627,7 +628,7 @@ function renderActions() {
     const solids = S.ed.pick === 'solid' ? S.ed.selected.size : 0;
     const c = [];
     if (S.ed.editingSketch != null && SK.sketchById(S.ed.editingSketch)) c.push(act(I.check, 'Finish', () => finishSketchEdit(), 'primary'));
-    if (prof) c.push(act(I.extrude, 'Extrude', () => runOp(F.extrude), 'primary'), act(I.revolve, 'Revolve', () => runOp(F.revolve)), ...(prof >= 2 ? [act(I.cone, 'Loft', () => runOp(F.loftOp))] : []), act(I.arc, 'Sweep', () => runOp(F.sweepOp)));
+    if (prof) c.push(act(I.extrude, 'Extrude', () => startExtrude(), 'primary'), act(I.revolve, 'Revolve', () => runOp(F.revolve)), ...(prof >= 2 ? [act(I.cone, 'Loft', () => runOp(F.loftOp))] : []), act(I.arc, 'Sweep', () => runOp(F.sweepOp)));
     if (faces) c.push(act(I.extrude, 'Push/Pull', () => modifier('pushpull'), prof ? '' : 'primary'), act(I.inset, 'Shell', () => modifier('shell')), act(I.cone, 'Draft', () => runOp(F.draftOp)), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)));
     if (edges) c.push(act(I.fillet, 'Fillet', () => modifier('fillet'), 'primary'), act(I.chamfer, 'Chamfer', () => modifier('chamfer')));
     if (curves) c.push(act(I.move, 'Move', () => acadTool('move')), act(I.dup, 'Copy', () => acadTool('copy')), act(I.rotate, 'Rotate', () => acadTool('rotate')), act(I.flip, 'Mirror', () => acadTool('mirror')), act(I.scale, 'Scale', () => acadTool('scale')), act(I.inset, 'Offset', () => acadTool('offset')), act(I.array, 'Array', () => acadTool('arrayrect')), act(I.constrain, 'Constrain', e => openConstrainMenu(e.currentTarget)), act(I.line, 'Construction', () => Draw.toggleConstruction()), act(I.trash, 'Delete', () => Draw.deleteSelected(), 'danger'));
@@ -662,7 +663,7 @@ function modifier(kind) {
     if (!S.ed.edges.length) { setPick('edge'); toast(`Tap edges, then ${kind === 'fillet' ? 'Fillet' : 'Chamfer'}`); return; }
     return runOp(F.edgeBlendOp, { kind });
   }
-  if (kind === 'pushpull') { if (!S.ed.faces.length) { setPick('face'); toast('Tap a face, then Push/Pull'); return; } return runOp(F.pushPullOp); }
+  if (kind === 'pushpull') { if (!S.ed.faces.length) { setPick('face'); toast('Tap a face, then Push/Pull'); return; } const ok = runOp(F.pushPullOp); if (ok) toast('Drag the arrow or type a distance'); return ok; }
   if (kind === 'shell') { if (!S.ed.faces.length && !S.ed.selected.size) { setPick('face'); toast('Tap the face(s) to open, then Shell'); return; } return runOp(F.shellOp); }
   if (kind === 'mirror') return runOp(F.mirrorOp);
 }
@@ -747,7 +748,7 @@ function commands() {
     C('Line', 'L', tool('line'), 'polyline pline draw'), C('Rectangle', '⇧R', tool('rect'), 'rect box draw'), C('Circle', 'C', tool('circle'), 'draw'), C('Arc', '', tool('arc'), 'draw'),
     C('Spline', '', tool('spline'), 'curve'), C('Polygon', '', tool('polygon'), 'hexagon'), C('Ellipse', '', () => acadTool('ellipse')), C('Text', '', () => acadTool('text')), C('Hatch', '', () => acadTool('hatch')),
     C('Curve fillet / chamfer', '', tool('corner'), 'corner round'), C('Trim curve', '', tool('trim')), C('Extend curve', '', () => setTool('extend')), C('Offset curve', '', () => acadTool('offset')), C('Dimension', '', tool('dim'), 'dim measure constraint'),
-    C('Extrude', 'E', () => (S.ed.profiles.length ? runOp(F.extrude) : modifier('pushpull')), 'push pull'), C('Revolve', '', () => runOp(F.revolve)), C('Loft', '', () => runOp(F.loftOp)), C('Sweep', '', () => runOp(F.sweepOp)),
+    C('Extrude', 'E', () => (S.ed.profiles.length ? startExtrude() : modifier('pushpull')), 'push pull'), C('Revolve', '', () => runOp(F.revolve)), C('Loft', '', () => runOp(F.loftOp)), C('Sweep', '', () => runOp(F.sweepOp)),
     C('Fillet edges', 'F', () => modifier('fillet'), 'round'), C('Chamfer edges', '⇧C', () => modifier('chamfer'), 'bevel'), C('Push / pull face (offset face)', 'O', () => modifier('pushpull'), 'offset face move face'),
     C('Shell', 'H', () => modifier('shell'), 'hollow'), C('Draft', '', () => runOp(F.draftOp), 'taper'), C('Thicken', '', () => runOp(F.thickenOp)), C('Mirror', 'M', () => modifier('mirror')), C('Slice', '', () => runOp(F.sliceOp), 'cut split'),
     C('Pattern (polar)', '', () => runOp(F.polarPattern), 'array circular'), C('Union', '', () => runOp(F.bodyBoolean, { kind: 'union' }), 'boolean join add'), C('Subtract', '', () => runOp(F.bodyBoolean, { kind: 'subtract' }), 'boolean difference cut'), C('Intersect', '', () => runOp(F.bodyBoolean, { kind: 'intersect' }), 'boolean'),
@@ -1148,7 +1149,7 @@ function onKey(e) {
     if (!e.shiftKey && dk[k]) { setTool(dk[k]); return; }
     if (e.shiftKey && k === 'r') { setTool('rect'); return; }
     if (e.shiftKey && k === 'c') { modifier('chamfer'); return; }
-    if (k === 'e' && !e.shiftKey) { if (S.ed.profiles.length) runOp(F.extrude); else modifier('pushpull'); return; }
+    if (k === 'e' && !e.shiftKey) { if (S.ed.profiles.length) startExtrude(); else modifier('pushpull'); return; }
     if ((k === 'escape') && (S.ed.tool !== 'select')) { Draw.resetTool(); setTool('select'); return; }
     if ((k === 'x' || k === 'delete' || k === 'backspace') && !e.shiftKey) { deleteSelection(); return; }
     if (k === 'enter' && Draw.enter()) { refresh(); return; }
@@ -1201,4 +1202,11 @@ function addSketchedPrim(type) {
   const skId = S.ed.sketch;
   runOp(P.op, { pts: [{ sk: skId, pt: P.seed }], mode: 'new', target: null, ...P.params });
   S.ed.pick = 'solid'; S.ed.drawSel = new Set(); refresh();
+}
+
+// Extrude starts at 0 (nothing built yet): drag the arrow or type the distance
+function startExtrude() {
+  const ok = runOp(F.extrude);
+  if (ok) toast('Drag the arrow or type a distance');
+  return ok;
 }

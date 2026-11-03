@@ -112,6 +112,7 @@ function afterApply(op) {
     emit('timeline');
     return;
   }
+  if (d.isEmpty && d.isEmpty(op.params)) return; // nothing built yet (e.g. an extrude still at 0)
   const name = H.recName(d);
   let rec = null;
   if (name) rec = { op: name, params: op.params, sel: op.sel };
