@@ -47,6 +47,14 @@ export function refPoint(sk, ref) {
 }
 // Move a point and everything coincident with it (simple connectivity, like a CAD coincidence constraint).
 export function movePoint(sk, ref, np) {
+  // a rectangle corner drags with the opposite corner fixed (a minimum-change solve would split the move)
+  const re = sk.ents.find(e => e.id === ref.e);
+  if (re && re.t === 'rect') {
+    const snap0 = JSON.stringify(sk.ents);
+    const err0 = editAndSolve(sk, k => { movePointNaive(k, ref, np); });
+    if (!err0) return;
+    sk.ents = JSON.parse(snap0);
+  }
   // constraint-aware: solve with the point pinned; fall back to plain coincident drag if that conflicts
   const snap = JSON.stringify(sk.ents);
   const err = editAndSolve(sk, () => {}, { pins: [{ ref, p: np }] });

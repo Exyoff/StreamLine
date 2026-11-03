@@ -700,6 +700,9 @@ function renderHud() {
   }
   if (S.ed.pickFace) { $('#hud').innerHTML = '<b>Sketch on face</b><br>Tap a flat face of a body'; return; }
   const eds = S.ed.editingSketch != null && SK.sketchById(S.ed.editingSketch);
+  const rolled = H.hist().length - H.markerIndex();
+  const rb = rolled > 0 ? `<span class="rbwarn">⏪ Rolled back · ${rolled} later step${rolled === 1 ? '' : 's'} not applied — new work is inserted here</span><br>` : '';
+  if (rb && !eds) { const prev = $('#hud'); queueMicrotask(() => { if (!prev.innerHTML.startsWith('<span class="rbwarn">')) prev.innerHTML = rb + prev.innerHTML; }); }
   if (eds && S.ed.mode === 'object') {
     const used = H.firstUsing([eds.id]) >= 0;
     $('#hud').innerHTML = `<b>Editing ${esc(eds.name)}</b> · ${((n, r) => `${n} curve${n === 1 ? '' : 's'} · ${r} region${r === 1 ? '' : 's'}`)(eds.ents.filter(e => e.t !== 'dim').length, SK.regions(eds).length)}<br>${used ? 'Features built from it update as you change it' : 'Draw or edit curves'} · tap <b>Finish</b> when done`;
@@ -832,6 +835,11 @@ function renderLastOp() {
   el.hidden = !show || gizmoActive(); document.body.classList.toggle('has-lastop', !el.hidden);
   const more = () => el.classList.toggle('more', el.scrollHeight - el.scrollTop - el.clientHeight > 4);
   el.onscroll = more; requestAnimationFrame(more);
+  requestAnimationFrame(() => {
+    const docked = !el.hidden && matchMedia('(max-width: 500px)').matches;
+    const off = docked ? el.offsetHeight / 2 : 0;
+    if (Math.abs((view.offsetY || 0) - off) > 1) { view.offsetY = off; view.render(); }
+  });
   if (!show) return;
   const fields = op.def.fields ? op.def.fields(op.params) : [];
   const fieldEls = fields.map(f => {

@@ -137,7 +137,11 @@ function applyBody(p, tool, name, anchor) {
     S.ed.selected = new Set([t.id]); S.ed.active = t.id;
   }
   // the sketch is consumed by the feature: hide it (show it again from the Browser to edit)
-  for (const it of p.pts || []) { const sk = SK.sketchById(it.sk); if (sk && S.settings.hideConsumed !== false) sk.hidden = true; }
+  for (const id of new Set((p.pts || []).map(it => it.sk))) {
+    const sk = SK.sketchById(id); if (!sk || S.settings.hideConsumed === false) continue;
+    const used = new Set(p.pts.filter(it => it.sk === id).map(it => SK.regionAt(sk, it.pt)).filter(Boolean));
+    if (SK.regions(sk).every(r => used.has(r))) sk.hidden = true; // other closed shapes in it stay visible for later features
+  }
   S.ed.profiles = [];
 }
 function prepFeature(p) {
@@ -251,7 +255,8 @@ export const bodyBoolean = {
 // ---------- 3D edge fillet / chamfer ----------
 import { edgeBlend, edgeFrame, circleBlend, sphereCorner, featureEdges, straightRun, edgeLoop } from './edges.js';
 function refindEdge(e, W, faces) {
-  if (typeof edgeFrame(W, faces, e.circle ? e.circle.loop[0] : e.a, e.circle ? e.circle.loop[1] : e.b) !== 'string') return;
+  const fr0 = edgeFrame(W, faces, e.circle ? e.circle.loop[0] : e.a, e.circle ? e.circle.loop[1] : e.b);
+  if (typeof fr0 !== 'string') { if (!e.circle) e._w = [fr0.w1, fr0.w2]; return; } // remember which way its two faces run
   const fe = featureEdges(W, faces);
   let best = null;
   if (e.circle) {
@@ -273,8 +278,13 @@ function refindEdge(e, W, faces) {
     if (Math.abs(Math.abs(M.dot(d0, dir)) - 1) > 1e-9) continue;
     const [A, B] = straightRun(W, fe, s.a, s.b);
     const key = [A, B].map(q => q.map(v => v.toFixed(6)).join()).sort().join('|'); if (seen.has(key)) continue; seen.add(key);
-    if (Math.abs(M.dist(A, B) - L) > 1e-6) continue;
-    const d = M.dist(M.mul(M.add(A, B), 0.5), mid);
+    // same pair of faces (directions into them), nearest; the edge may have moved or changed length
+    if (e._w) {
+      const fr = edgeFrame(W, faces, A, B); if (typeof fr === 'string') continue;
+      const same = (x, y) => M.dot(x, y) > 1 - 1e-6;
+      if (!((same(fr.w1, e._w[0]) && same(fr.w2, e._w[1])) || (same(fr.w1, e._w[1]) && same(fr.w2, e._w[0])))) continue;
+    } else if (Math.abs(M.dist(A, B) - L) > 1e-6) continue;
+    const d = M.dist(M.mul(M.add(A, B), 0.5), mid) + Math.abs(M.dist(A, B) - L);
     if (!best || d < best.d) best = { d, A, B };
   }
   if (best) { const flip = M.dot(M.sub(best.B, best.A), dir) < 0; e.a = flip ? best.B : best.A; e.b = flip ? best.A : best.B; }

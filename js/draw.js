@@ -219,7 +219,8 @@ function gripDown(x, y) {
         const ref = { e: e.id, k: kp.k }, orig = kp.p.slice(), skId = s.id;
         const def = F.sketchOp('Move point', skId, (sk2, p) => { SK.movePoint(sk2, ref, [p.x, p.y]); }, [{ key: 'x', label: 'X', kind: 'len' }, { key: 'y', label: 'Y', kind: 'len' }]);
         if (!runOp(def, { x: orig[0], y: orig[1] }, { interactive: true })) return false;
-        st.grip = { orig };
+        // snap against the sketch as it was, without the entity being dragged (its own moving points would fight the finger)
+        st.grip = { orig, still: { ...s, ents: s.ents.filter(q => q.id !== e.id).map(q => JSON.parse(JSON.stringify(q))) } };
         return true;
       }
     }
@@ -227,7 +228,9 @@ function gripDown(x, y) {
   return false;
 }
 function gripMove(x, y) {
-  const r = snapAt(x, y, null, st.grip.orig);
+  const s = sk(), raw = planePt(x, y), wpp = view.worldPerPixel(SK.toW(s.plane, raw));
+  const r = SK.snapPoint(st.grip.still, raw, { pxTol: 20, wpp, from: null, refPts: [], exclude: st.grip.orig, osnap: S.settings.osnap !== false, polar: false, ortho: false });
+  st.snap = r; st.preview = r.p;
   updateOp({ x: r.p[0], y: r.p[1] });
   view.render();
 }

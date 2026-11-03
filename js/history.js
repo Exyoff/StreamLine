@@ -134,6 +134,12 @@ export function applyRollbackVisibility() {
     const future = i >= end;
     if (future && !sk._rb) { sk._rb = { hidden: sk.hidden }; sk.hidden = true; }
     else if (!future && sk._rb) { sk.hidden = sk._rb.hidden; delete sk._rb; }
+    if (future) continue;
+    // a sketch hidden because a feature used it reappears while that feature is rolled back
+    const users = h.map((r, j) => (r.kind !== 'sketch' && r.params && new RegExp(`"sk":${sk.id}[,}]`).test(JSON.stringify(r.params)) ? j : -1)).filter(j => j >= 0);
+    const onlyFuture = users.length && users.every(j => j >= end);
+    if (onlyFuture && sk.hidden && !sk._rbShown) { sk._rbShown = true; sk.hidden = false; }
+    else if (!onlyFuture && sk._rbShown) { sk.hidden = true; delete sk._rbShown; }
   }
 }
 
