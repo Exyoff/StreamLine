@@ -219,6 +219,11 @@ try {
   await p.evaluate(async () => { const m = await import('./js/ops.js'); m.updateOp({ distance: 35 }); m.commit(); });
   const vF2 = await st(id => StreamLine.M.meshVolume(StreamLine.S.doc.objects.find(o => o.id === id).mesh), cube.id);
   check(!(await st(() => StreamLine.H.hist().some(r => r.err))) && Math.abs(vF2 - vF - 20 * 20 * 5) < 1e-6, `a fillet follows its edge when an earlier extrude grows (+${(vF2 - vF).toFixed(3)} mm³)`);
+  // moving the sketch sideways moves the filleted edge too; the fillet follows
+  const cubeSk = await st(() => StreamLine.H.hist().filter(r => r.kind === 'sketch').at(-2).sk);
+  await st(id => { const L = StreamLine; L.runOp(L.F.sketchOp('Shift', id, k => { const r = k.ents.find(e => e.t === 'rect'); r.y -= 5; r.h += 2; })); }, cubeSk);
+  const vF3 = await st(id => StreamLine.M.meshVolume(StreamLine.S.doc.objects.find(o => o.id === id).mesh), cube.id);
+  check(!(await st(() => StreamLine.H.hist().some(r => r.err))) && Math.abs(vF3 - vF2 - 20 * 2 * 35) < 1e-6, `a fillet follows its edge when the sketch moves it sideways (+${(vF3 - vF2).toFixed(3)} mm³)`);
   // edit a sketch from the timeline: editing mode with a Finish command
   await p.tap('#ws-seg [data-pick=edge]'); await p.waitForTimeout(150); // already in Edge mode: the bar must still switch
   await st(() => { const r = StreamLine.H.hist().find(x => x.kind === 'sketch'); StreamLine.BR.editStep(r.id); });

@@ -387,3 +387,6 @@ body.ws-model #lastop .field .val { height: 38px; }
 @media (orientation: landscape) and (max-height: 500px) {
   #keypad { left: auto; width: min(430px, 56vw); border-left: 1px solid var(--line); border-radius: 14px 0 0 0; }
 }
+
+#hud .rbwarn { display: inline-block; color: #ffcf8a; background: rgba(60,40,10,.75); border: 1px solid rgba(255,154,31,.5); border-radius: 6px; padding: 1px 6px; margin-bottom: 3px; pointer-events: none; }
+.tl-chip.sk { background: #262c33; border-color: #34404d; color: #b9d6f2; }
