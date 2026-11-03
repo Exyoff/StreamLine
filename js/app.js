@@ -88,7 +88,7 @@ function enterSketchView(sk, instant) {
   if (!pts.length) { view.lookAlong(sk.plane.n, sk.plane.o); return; }
   const b = new THREE.Box3(); pts.forEach(q => b.expandByPoint(new THREE.Vector3(...q)));
   const rad = Math.max(5, b.getSize(new THREE.Vector3()).length() / 2);
-  view.lookAlong(sk.plane.n, b.getCenter(new THREE.Vector3()).toArray(), rad * 3.2);
+  view.lookAlong(sk.plane.n, b.getCenter(new THREE.Vector3()).toArray(), rad * (S.ed.editingSketch != null ? 4.4 : 3.2));
 }
 function setWorkspace(ws, pick) {
   if (ws === 'draw' || ws === 'cad') ws = 'model'; // the studio replaces the separate workspaces
@@ -141,18 +141,22 @@ function facePickTap(x, y) {
   toast(`Sketching on the face · ${loops.length} edge loop${loops.length === 1 ? '' : 's'} projected`);
   refresh();
 }
+let camBeforeEdit = null;
 function finishSketchEdit() {
   const id = S.ed.editingSketch, sk = SK.sketchById(id);
   S.ed.editingSketch = null; S.ed.drawSel = new Set(); S.ed.profiles = [];
   if (sk && sk._wasHidden) { sk.hidden = true; delete sk._wasHidden; }
   if (S.ed.tool !== 'select') setTool('select');
-  view.cam.lock2D = false; view.setView('iso');
+  view.cam.lock2D = false;
+  if (camBeforeEdit) view.restoreCam(camBeforeEdit); else view.setView('iso');
+  camBeforeEdit = null;
   setPick('solid');
 }
 function activateSketch(id) {
   const sk = SK.sketchById(id); if (!sk) return;
   if (S.ed.editingSketch != null && S.ed.editingSketch !== id) { const o = SK.sketchById(S.ed.editingSketch); if (o && o._wasHidden) { o.hidden = true; delete o._wasHidden; } }
   if (sk.hidden) sk._wasHidden = true;
+  if (S.ed.editingSketch == null) camBeforeEdit = view.saveCam();
   S.ed.editingSketch = id; S.ed.pick = 'edge'; S.ed.faces = []; S.ed.edges = []; S.ed.selected = new Set();
   S.ed.sketch = id; sk.hidden = false;
   if (S.ed.workspace !== 'model') setWorkspace('model');
@@ -203,12 +207,13 @@ function faceTap(x, y) {
   S.ed.selected = new Set([o.id]); S.ed.active = o.id;
   selectionChanged();
 }
+// while a sketch is being edited only its own curves and regions are pickable
+function tapSketches() { const e = S.ed.editingSketch != null && SK.sketchById(S.ed.editingSketch); return e ? [e] : (S.doc.sketches || []).filter(isShown); }
 function cadTap(x, y) {
   if (S.ed.tool === 'edge') return edgeTap(x, y);
   const ray = view.ray(x, y).ray;
   let best = null;
-  for (const sk of S.doc.sketches || []) {
-    if (!isShown(sk)) continue;
+  for (const sk of tapSketches()) {
     const pl = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(...sk.plane.n), new THREE.Vector3(...sk.plane.o));
     const w = ray.intersectPlane(pl, new THREE.Vector3()); if (!w) continue;
     const t = w.distanceTo(ray.origin);
@@ -216,7 +221,7 @@ function cadTap(x, y) {
     const r = SK.regionAt(sk, p2);
     if (r && (!best || t < best.t)) best = { sk, p2, t, r };
   }
-  const hit = view.pickObject(x, y);
+  const hit = S.ed.editingSketch != null ? null : view.pickObject(x, y); // bodies are ghosted while a sketch is edited
   if (best && (!hit || best.t <= hit.distance + Math.max(1e-3, hit.distance * 1e-4))) {
     const i = S.ed.profiles.findIndex(q => q.sk === best.sk.id && SK.regionAt(best.sk, q.pt) === best.r);
     if (i >= 0) S.ed.profiles.splice(i, 1);
@@ -251,14 +256,13 @@ document.addEventListener('click', e => {
 function curveOrEdgeTap(x, y) {
   const ray = view.ray(x, y).ray;
   let best = null;
-  for (const k of S.doc.sketches || []) {
-    if (!isShown(k)) continue;
+  for (const k of tapSketches()) {
     const pl = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(...k.plane.n), new THREE.Vector3(...k.plane.o));
     const w = ray.intersectPlane(pl, new THREE.Vector3()); if (!w) continue;
     const p2 = SK.toP(k.plane, w.toArray()), e = SK.pickEntity(k, p2, 16 * view.worldPerPixel(w.toArray()));
     if (e && e.t !== 'hatch' && (!best || w.distanceTo(ray.origin) < best.t)) best = { k, e, t: w.distanceTo(ray.origin) };
   }
-  const hit = view.pickObject(x, y);
+  const hit = S.ed.editingSketch != null ? null : view.pickObject(x, y); // bodies are ghosted while a sketch is edited
   if (best && (!hit || best.t <= hit.distance + view.worldPerPixel(hit.point) * 8)) {
     if (S.ed.sketch !== best.k.id || !S.ed.multi) S.ed.drawSel = new Set();
     S.ed.sketch = best.k.id;
@@ -267,20 +271,20 @@ function curveOrEdgeTap(x, y) {
     return selectionChanged();
   }
   if (!S.ed.multi) S.ed.drawSel = new Set();
+  if (S.ed.editingSketch != null) return selectionChanged();
   return edgeTap(x, y);
 }
 // Face mode: sketch regions first (nearest along the ray), else body faces
 function regionOrFaceTap(x, y) {
   const ray = view.ray(x, y).ray;
   let best = null;
-  for (const k of S.doc.sketches || []) {
-    if (!isShown(k)) continue;
+  for (const k of tapSketches()) {
     const pl = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(...k.plane.n), new THREE.Vector3(...k.plane.o));
     const w = ray.intersectPlane(pl, new THREE.Vector3()); if (!w) continue;
     const p2 = SK.toP(k.plane, w.toArray()), r = SK.regionAt(k, p2);
     if (r && (!best || w.distanceTo(ray.origin) < best.t)) best = { k, p2, r, t: w.distanceTo(ray.origin) };
   }
-  const hit = view.pickObject(x, y);
+  const hit = S.ed.editingSketch != null ? null : view.pickObject(x, y); // bodies are ghosted while a sketch is edited
   if (best && (!hit || best.t <= hit.distance + view.worldPerPixel(hit.point) * 8)) {
     const i = S.ed.profiles.findIndex(q => q.sk === best.k.id && SK.regionAt(best.k, q.pt) === best.r);
     if (i >= 0) S.ed.profiles.splice(i, 1);
@@ -289,6 +293,7 @@ function regionOrFaceTap(x, y) {
     return selectionChanged();
   }
   if (!S.ed.multi) S.ed.profiles = [];
+  if (S.ed.editingSketch != null) return selectionChanged();
   return faceTap(x, y);
 }
 function onTap(x, y) {
@@ -472,7 +477,7 @@ const TOOLS = {
   draw: [['select', 'Select', I.select], ['line', 'Line', I.line], ['rect', 'Rect', I.rect], ['circle', 'Circle', I.circle], ['arc', 'Arc', I.arc], ['corner', 'Fillet', I.corner], ['trim', 'Trim', I.trim], ['dim', 'Dim', I.dim]],
   cad: [['select', 'Select', I.select], ['edge', 'Edge', I.edgeSel], ['measure', 'Measure', I.measure]],
   model: [['select', 'Select', I.select], ['move', 'Move', I.move], ['rotate', 'Rotate', I.rotate], ['scale', 'Scale', I.scale],
-    ['line', 'Line', I.line], ['rect', 'Rect', I.rect], ['circle', 'Circle', I.circle], ['arc', 'Arc', I.arc], ['spline', 'Spline', I.arc], ['polygon', 'Polygon', I.cube],
+    ['line', 'Line', I.line], ['rect', 'Rect', I.rect], ['circle', 'Circle', I.circle], ['arc', 'Arc', I.arc], ['spline', 'Spline', I.spline], ['polygon', 'Polygon', I.polygon],
     ['corner', 'Fillet', I.corner], ['trim', 'Trim', I.trim], ['dim', 'Dim', I.dim], ['measure', 'Measure', I.measure]],
 };
 function renderTools() {
@@ -582,7 +587,7 @@ function renderActions() {
       act(I.fill, 'Hatch', () => acadTool('hatch')),
       act(I.circle, 'Ellipse', () => acadTool('ellipse')),
       act(I.arc, 'Spline', () => acadTool('spline')),
-      act(I.cube, 'Polygon', () => acadTool('polygon')),
+      act(I.polygon, 'Polygon', () => acadTool('polygon')),
       act(I.array, 'Array', () => acadTool('arrayrect')),
       act(I.revolve, 'Polar array', () => acadTool('arraypolar')),
       act(I.array, 'Explode', () => acadTool('explode')),
@@ -830,7 +835,7 @@ function renderLastOp() {
     const cls = f.label.length === 1 ? AXC['XYZ'.indexOf(f.label)] || '' : '';
     if (f.kind === 'choice') return choice({ label: f.label, options: f.options, value: op.params[f.key], onChange: v => updateOp({ [f.key]: v }), cls: 'wide' });
     if (f.kind === 'int' && f.key === 'segs') return field({ label: f.label, kind: 'int', value: op.params[f.key], min: f.min, max: f.max, onCommit: v => updateOp({ [f.key]: v }) });
-    if (f.kind === 'bool') return choice({ label: f.label, options: [[true, 'Yes'], [false, 'No']], value: !!op.params[f.key], onChange: v => updateOp({ [f.key]: v }) });
+    if (f.kind === 'bool') return choice({ label: f.label, options: [[true, 'Yes'], [false, 'No']], value: !!op.params[f.key], onChange: v => updateOp({ [f.key]: v }), cls: 'half' });
     return field({ label: f.label, kind: f.kind, value: op.params[f.key], min: f.min, max: f.max, cls, onCommit: v => updateOp({ [f.key]: v }) });
   });
   el.classList.toggle('collapsed', lastCollapsed);

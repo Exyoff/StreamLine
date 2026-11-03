@@ -239,7 +239,8 @@ body.has-cmd #viewport { --cmdh: 122px; }
 @media (orientation: landscape) and (max-height: 500px) {
   #topbar { padding-top: 4px; padding-bottom: 4px; }
   .act { min-width: 52px; padding-top: 4px; }
-  .act span:last-child, .tool span:last-child { display: none; }
+  .tool span:last-child { display: none; }
+  .act span:last-child { font-size: 9.5px; }
   .tool { padding: 7px 0; }
   body.has-cmd #viewport { --cmdh: 88px; }
   #statusbar { display: none; }
@@ -363,3 +364,15 @@ body.ws-model #lastop { max-height: calc(100% - 76px - var(--tlh) - var(--cmdh) 
   #hud, body.ws-model #lastop { left: calc(var(--sal) + 110px); }
   #draw-card { left: auto; right: calc(var(--sar) + 10px); top: 8px; }
 }
+
+/* op dialog: yes/no options share a row so the dialog stays short */
+body.ws-model #lastop .fields { grid-template-columns: 1fr 1fr; }
+body.ws-model #lastop .fields > * { grid-column: 1 / -1; }
+body.ws-model #lastop .fields > .half { grid-column: auto; flex-direction: column; align-items: stretch; gap: 2px; }
+body.ws-model #lastop .fields > .half .seg button { height: 36px; flex: 1; }
+#lastop .seg button { min-height: 40px; }
+#topbar .ib { min-height: 44px; }
+/* never let a status toast cover an open menu */
+body:has(#popover:not([hidden])) #toast { opacity: 0; }
+.objrow .meta { font-family: var(--font); font-size: 11px; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: none; }
+@media (min-width: 768px) { .tl-chip { max-width: 240px; } }

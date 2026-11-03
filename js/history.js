@@ -3,7 +3,7 @@
 // parameters of an earlier feature, replays everything after it so later features follow the change.
 // A rollback marker hides the features after it; new work is inserted at the marker.
 import { S, emit } from './state.js';
-import { cloneObj } from './scene.js';
+import { cloneObj, worldVerts } from './scene.js';
 import { PolyMesh } from './mesh.js';
 
 const REG = new Map();      // op name -> def
@@ -84,23 +84,26 @@ export function regenerate(from = 0) {
   const base = cps[start] || { objects: [], nextId: 1 };
   if (start === 0 && !cps[0]) cps[0] = base;
   S.doc.objects = base.objects.map(o => cloneObj(o)); S.doc.nextId = base.nextId;
-  const failed = [];
+  const failed = [], moved = new Map();
   for (let i = start; i < end; i++) {
     cps[i] = snapObjs();
     const rec = h[i];
     delete rec.err;
-    if (rec.off || rec.kind === 'sketch') continue;
+    if (rec.kind === 'sketch') { followFace(rec.sk, moved); continue; }
+    if (rec.off) continue;
     const def = defOf(rec);
     if (!def) { rec.err = 'Unknown operation'; failed.push(rec); continue; }
     setEd(rec.sel);
     let r;
     try { r = def.apply(rec.params, { handle: null, replay: true }); } catch (err) { console.error(err); r = err.message || 'Failed'; }
+    if (typeof r === 'string' && /^Edge must|found 0|no longer exists/.test(r)) r = 'The edge or face it used has changed — edit or delete this step';
     if (typeof r === 'string') { rec.err = r; failed.push(rec); S.doc.objects = cps[i].objects.map(o => cloneObj(o)); S.doc.nextId = cps[i].nextId; }
   }
   cps[end] = snapObjs();
   cps.length = end + 1;
   for (const o of S.doc.objects) { const p = pres.get(o.id); if (p) for (const k of PRES) if (p[k] !== undefined) o[k] = p[k]; }
   S.doc.sketches = JSON.parse(keepSk);
+  for (const [id, pl] of moved) { const k = S.doc.sketches.find(q => q.id === id); if (k) k.plane = pl; }
   S.doc.nextId = Math.max(keepNext, S.doc.nextId);
   setEd(keepEd);
   const ids = new Set(S.doc.objects.map(o => o.id));
@@ -132,4 +135,45 @@ export function applyRollbackVisibility() {
     if (future && !sk._rb) { sk._rb = { hidden: sk.hidden }; sk.hidden = true; }
     else if (!future && sk._rb) { sk.hidden = sk._rb.hidden; delete sk._rb; }
   }
+}
+
+// A sketch drawn on a body face follows that face when earlier steps move it: find the face of the
+// body (as rebuilt so far) with the same normal under the sketch's curves, and slide the plane onto it.
+function followFace(skId, moved) {
+  const sk = (S.doc.sketches || []).find(k => k.id === skId);
+  if (!sk || !sk.face || sk.face.obj == null) return;
+  const o = S.doc.objects.find(q => q.id === sk.face.obj); if (!o) return;
+  const pl = sk.plane, n = pl.n, dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const pts = [];
+  for (const e of sk.ents) {
+    if (e.t === 'line') pts.push(e.a, e.b); else if (e.t === 'circle' || e.t === 'arc' || e.t === 'ellipse') pts.push(e.c);
+    else if (e.t === 'rect') pts.push([e.x + e.w / 2, e.y + e.h / 2]); else if (e.pts) pts.push(...e.pts);
+  }
+  if (!pts.length) return;
+  const c2 = [pts.reduce((s, q) => s + q[0], 0) / pts.length, pts.reduce((s, q) => s + q[1], 0) / pts.length];
+  const w0 = dot(n, pl.o);
+  const W = worldVerts(o);
+  let best = null;
+  for (const f of o.mesh.f) {
+    if (f.length < 3) continue;
+    const P = f.map(i => W[i]);
+    // Newell normal
+    const fn = [0, 0, 0];
+    for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length]; fn[0] += (a[1] - b[1]) * (a[2] + b[2]); fn[1] += (a[2] - b[2]) * (a[0] + b[0]); fn[2] += (a[0] - b[0]) * (a[1] + b[1]); }
+    const L = Math.hypot(...fn); if (L < 1e-12) continue;
+    if (dot(fn, n) / L < 1 - 1e-6) continue;
+    const w = dot(n, P[0]), dw = Math.abs(w - w0);
+    if (best && dw >= best.dw) continue;
+    // centroid of the curves inside this face (2D in the sketch's u/v)
+    const Q = P.map(q => [dot(pl.u, q) - dot(pl.u, pl.o), dot(pl.v, q) - dot(pl.v, pl.o)]);
+    let inside = false;
+    for (let i = 0, j = Q.length - 1; i < Q.length; j = i++) {
+      if ((Q[i][1] > c2[1]) !== (Q[j][1] > c2[1]) && c2[0] < (Q[j][0] - Q[i][0]) * (c2[1] - Q[i][1]) / (Q[j][1] - Q[i][1]) + Q[i][0]) inside = !inside;
+    }
+    if (inside) best = { w, dw };
+  }
+  if (!best || best.dw < 1e-9) return;
+  const d = best.w - w0;
+  sk.plane = { ...pl, o: [pl.o[0] + n[0] * d, pl.o[1] + n[1] * d, pl.o[2] + n[2] * d] };
+  moved.set(sk.id, sk.plane);
 }

@@ -61,6 +61,11 @@ export function openKeypad({ label, kind = 'len', value = 0, min = null, max = n
     h('div', { class: 'kd' }, h('span', { class: 'kl' }, label || ''), h('div', { class: 'kexpr' })),
     h('div', { class: 'kprev' }), grid);
   el.hidden = false;
+  // keep the field being edited visible: lift its card above the keypad
+  if (anchor) {
+    const card = anchor.closest('.card'), kt = el.getBoundingClientRect().top, ab = anchor.getBoundingClientRect().bottom;
+    if (card && ab > kt - 8) { card.style.transform = `translateY(${-Math.min(ab - kt + 12, card.getBoundingClientRect().top)}px)`; kp.lifted = card; }
+  }
   grid.addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; e.preventDefault(); if (performance.now() - openedAt < 450) return; /* ghost click from the tap that opened us */ press(b.dataset.k); });
   renderKp();
 }
@@ -98,6 +103,7 @@ export function closeKeypad(commit) {
   const k = kp; kp = null;
   $('#keypad').hidden = true;
   k.anchor && k.anchor.classList.remove('editing');
+  if (k.lifted) k.lifted.style.transform = '';
   if (commit) {
     let v = k.value;
     if (v == null || !isFinite(v)) { toast('Invalid value'); return; }
