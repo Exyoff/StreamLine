@@ -35,12 +35,13 @@ function boot() {
   initMeasureOverlay();
   buildStatic();
   if (!loadAutosave()) defaultScene();
+  S.ed.workspace = 'model'; // the studio: one 3D space for curves, regions and solids
   resetHistory();
   bindEvents();
-  S.ed.tool = S.ed.tools[S.ed.workspace] || 'select';
+  S.ed.tool = S.ed.tool && TOOLS.model.some(t => t[0] === S.ed.tool) ? S.ed.tool : 'select';
   refresh();
-  if (S.ed.workspace === 'draw' && SK.activeSketch()) enterSketchView(SK.activeSketch(), true);
-  else view.frame(S.doc.objects.length ? S.doc.objects.flatMap(worldVerts) : []);
+  view.cam.ortho = false; view.cam.lock2D = false;
+  view.frame(S.doc.objects.flatMap(worldVerts).concat(allSketchPoints()));
   if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !/localhost|127\.0\.0\.1/.test(location.hostname)) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
@@ -48,9 +49,11 @@ function boot() {
 function defaultScene() {
   S.doc.objects = []; S.doc.sketches = []; S.doc.nextId = 1;
   S.ed.tools = { draw: 'line', cad: 'select', model: 'select' };
-  runOp(F.newSketch, { plane: 'XY' });
-  S.ed.workspace = 'draw'; S.ed.tool = 'line';
+  S.ed.workspace = 'model'; S.ed.tool = 'select'; S.ed.sketch = null;
 }
+function allSketchPoints() { return (S.doc.sketches || []).filter(k => !k.hidden).flatMap(k => k.ents.flatMap(e => SK.keyPoints(e).map(q => SK.toW(k.plane, q.p)))); }
+const GIZMO_TOOLS = new Set(['move', 'rotate', 'scale', 'measure', 'edge']);
+const studioDraws = () => S.ed.workspace === 'model' && S.ed.mode === 'object' && !GIZMO_TOOLS.has(S.ed.tool);
 
 // ---------- drag routing: gizmo first, then drawing tools ----------
 function routeDrag() {
@@ -59,7 +62,7 @@ function routeDrag() {
   view.handlers.dragStart = (x, y, e) => {
     if (keypadOpen()) closeKeypad(false);
     if (gz.start(x, y, e)) { owner = gz; return true; }
-    if (S.ed.workspace === 'draw' && !S.ed.pickFace && Draw.down(x, y, e)) { owner = 'draw'; return true; }
+    if ((S.ed.workspace === 'draw' || studioDraws()) && !S.ed.pickFace && Draw.down(x, y, e)) { owner = 'draw'; return true; }
     return false;
   };
   view.handlers.dragMove = (x, y, e) => (owner === 'draw' ? Draw.move(x, y) : owner && owner.move(x, y, e));
@@ -79,6 +82,7 @@ function enterSketchView(sk, instant) {
   view.lookAlong(sk.plane.n, b.getCenter(new THREE.Vector3()).toArray(), rad * 3.2);
 }
 function setWorkspace(ws, pick) {
+  if (ws === 'draw' || ws === 'cad') ws = 'model'; // the studio replaces the separate workspaces
   if (pick) { S.ed.pick = pick; S.ed.faces = []; S.ed.edges = []; }
   if (ws === S.ed.workspace && !(ws === 'draw' && !SK.activeSketch())) { if (pick) selectionChanged(); return; }
   const prev = S.ed.workspace;
@@ -123,7 +127,7 @@ function facePickTap(x, y) {
   // frame the face, looking straight at it
   const pts = loops.flat(), b = new THREE.Box3(); pts.forEach(q => b.expandByPoint(new THREE.Vector3(...q)));
   const ctr = b.getCenter(new THREE.Vector3()).toArray(), rad = Math.max(1, b.getSize(new THREE.Vector3()).length() / 2);
-  view.cam.lock2D = true;
+  view.cam.lock2D = S.ed.workspace !== 'model';
   view.lookAlong(plane.n, ctr, rad * 4.2);
   toast(`Sketching on the face · ${loops.length} edge loop${loops.length === 1 ? '' : 's'} projected`);
   refresh();
@@ -222,6 +226,50 @@ let lastViewportTap = 0;
 document.addEventListener('click', e => {
   if (performance.now() - lastViewportTap < 450 && e.target.closest && e.target.closest('#draw-card, #lastop, #measure-card, #popover, #sheet, #actions, #tools')) { e.stopPropagation(); e.preventDefault(); }
 }, true);
+// Edge mode: sketch curves first (nearest along the ray), else body edges
+function curveOrEdgeTap(x, y) {
+  const ray = view.ray(x, y).ray;
+  let best = null;
+  for (const k of S.doc.sketches || []) {
+    if (k.hidden) continue;
+    const pl = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(...k.plane.n), new THREE.Vector3(...k.plane.o));
+    const w = ray.intersectPlane(pl, new THREE.Vector3()); if (!w) continue;
+    const p2 = SK.toP(k.plane, w.toArray()), e = SK.pickEntity(k, p2, 16 * view.worldPerPixel(w.toArray()));
+    if (e && e.t !== 'hatch' && (!best || w.distanceTo(ray.origin) < best.t)) best = { k, e, t: w.distanceTo(ray.origin) };
+  }
+  const hit = view.pickObject(x, y);
+  if (best && (!hit || best.t <= hit.distance + view.worldPerPixel(hit.point) * 8)) {
+    if (S.ed.sketch !== best.k.id || !S.ed.multi) S.ed.drawSel = new Set();
+    S.ed.sketch = best.k.id;
+    S.ed.drawSel.has(best.e.id) ? S.ed.drawSel.delete(best.e.id) : S.ed.drawSel.add(best.e.id);
+    if (!S.ed.multi) { S.ed.edges = []; S.ed.profiles = []; S.ed.faces = []; }
+    return selectionChanged();
+  }
+  if (!S.ed.multi) S.ed.drawSel = new Set();
+  return edgeTap(x, y);
+}
+// Face mode: sketch regions first (nearest along the ray), else body faces
+function regionOrFaceTap(x, y) {
+  const ray = view.ray(x, y).ray;
+  let best = null;
+  for (const k of S.doc.sketches || []) {
+    if (k.hidden) continue;
+    const pl = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(...k.plane.n), new THREE.Vector3(...k.plane.o));
+    const w = ray.intersectPlane(pl, new THREE.Vector3()); if (!w) continue;
+    const p2 = SK.toP(k.plane, w.toArray()), r = SK.regionAt(k, p2);
+    if (r && (!best || w.distanceTo(ray.origin) < best.t)) best = { k, p2, r, t: w.distanceTo(ray.origin) };
+  }
+  const hit = view.pickObject(x, y);
+  if (best && (!hit || best.t <= hit.distance + view.worldPerPixel(hit.point) * 8)) {
+    const i = S.ed.profiles.findIndex(q => q.sk === best.k.id && SK.regionAt(best.k, q.pt) === best.r);
+    if (i >= 0) S.ed.profiles.splice(i, 1);
+    else if (S.ed.multi) S.ed.profiles.push({ sk: best.k.id, pt: best.p2 });
+    else { S.ed.profiles = [{ sk: best.k.id, pt: best.p2 }]; S.ed.faces = []; S.ed.drawSel = new Set(); S.ed.edges = []; }
+    return selectionChanged();
+  }
+  if (!S.ed.multi) S.ed.profiles = [];
+  return faceTap(x, y);
+}
 function onTap(x, y) {
   lastViewportTap = performance.now();
   if (keypadOpen()) { closeKeypad(false); return; }
@@ -229,8 +277,10 @@ function onTap(x, y) {
   if (S.ed.tool === 'measure') return measureTap(x, y);
   if (S.ed.workspace === 'draw') return Draw.tap(x, y);
   if (S.ed.workspace === 'cad') return cadTap(x, y);
-  if (S.ed.mode === 'object' && S.ed.pick === 'edge') return edgeTap(x, y);
-  if (S.ed.mode === 'object' && S.ed.pick === 'face') return faceTap(x, y);
+  if (S.ed.mode === 'object' && (Draw.EDIT_TOOLS.has(S.ed.tool) || ['trim', 'dim', 'corner', 'extend'].includes(S.ed.tool))) return Draw.tap(x, y);
+  if (S.ed.mode === 'object' && Draw.tapLabel(x, y)) return;
+  if (S.ed.mode === 'object' && S.ed.pick === 'edge') return curveOrEdgeTap(x, y);
+  if (S.ed.mode === 'object' && S.ed.pick === 'face') return regionOrFaceTap(x, y);
   if (S.ed.mode === 'object') {
     const hit = view.pickObject(x, y);
     if (hit) {
@@ -296,6 +346,7 @@ function acadTool(t) { setTool(t); Draw.startCommand(); refresh(); }
 function setTool(t) {
   S.ed.tool = t; S.ed.tools[S.ed.workspace] = t;
   Draw.resetTool();
+  if (Draw.EDIT_TOOLS.has(t)) Draw.startCommand();
   if (t === 'measure') S.ed.measure = [];
   if (getLast() && getLast().handle) clearLast();
   refresh(); view.render();
@@ -399,7 +450,9 @@ function drawOverlays() {
 const TOOLS = {
   draw: [['select', 'Select', I.select], ['line', 'Line', I.line], ['rect', 'Rect', I.rect], ['circle', 'Circle', I.circle], ['arc', 'Arc', I.arc], ['corner', 'Fillet', I.corner], ['trim', 'Trim', I.trim], ['dim', 'Dim', I.dim]],
   cad: [['select', 'Select', I.select], ['edge', 'Edge', I.edgeSel], ['measure', 'Measure', I.measure]],
-  model: [['select', 'Select', I.select], ['move', 'Move', I.move], ['rotate', 'Rotate', I.rotate], ['scale', 'Scale', I.scale], ['measure', 'Measure', I.measure]],
+  model: [['select', 'Select', I.select], ['move', 'Move', I.move], ['rotate', 'Rotate', I.rotate], ['scale', 'Scale', I.scale],
+    ['line', 'Line', I.line], ['rect', 'Rect', I.rect], ['circle', 'Circle', I.circle], ['arc', 'Arc', I.arc], ['spline', 'Spline', I.arc], ['polygon', 'Polygon', I.cube],
+    ['corner', 'Fillet', I.corner], ['trim', 'Trim', I.trim], ['dim', 'Dim', I.dim], ['measure', 'Measure', I.measure]],
 };
 function renderTools() {
   const row = $('#tools');
@@ -410,6 +463,7 @@ function renderTools() {
   document.querySelectorAll('.tool').forEach(b => b.classList.toggle('on', b.dataset.tool === S.ed.tool));
 }
 function buildStatic() {
+  $('#btn-cmd').innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></svg>';
   $('#btn-menu').innerHTML = I.menu; $('#btn-undo').innerHTML = I.undo; $('#btn-redo').innerHTML = I.redo; $('#btn-props').innerHTML = I.sliders;
   $('#sheet-close').innerHTML = I.close;
   $('#btn-frame').innerHTML = I.frame; $('#btn-snap').innerHTML = I.magnet; $('#btn-xray').innerHTML = I.xray;
@@ -418,7 +472,8 @@ function buildStatic() {
 
 function bindEvents() {
   view.handlers.tap = onTap;
-  $('#ws-seg').addEventListener('click', e => { const b = e.target.closest('button'); b && setWorkspace(b.dataset.ws); });
+  $('#ws-seg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setPick(b.dataset.pick); });
+  $('#btn-cmd').onclick = () => openPalette();
   $('#btn-undo').onclick = () => undo();
   $('#btn-redo').onclick = () => redo();
   $('#btn-props').onclick = () => toggleSheet();
@@ -457,7 +512,7 @@ function refresh() {
   document.body.classList.toggle('ws-model', S.ed.workspace === 'model');
   document.body.classList.toggle('ws-draw', S.ed.workspace === 'draw');
   document.body.classList.toggle('ws-cad', S.ed.workspace === 'cad');
-  view.bg = S.ed.workspace === 'model' ? 0x1d1e22 : 0x212830; // Plasticity-dark vs AutoCAD model space
+  view.bg = S.ed.workspace === 'model' ? 0x2b2c30 : 0x212830; // Plasticity-grey studio vs AutoCAD model space
   Cmd.render();
   renderTop(); renderTools(); renderActions(); renderHud(); renderDrawCard(); renderLastOp(); renderMeasureCard(); renderViewButtons();
   if (sheetOpen && !gizmoActive()) renderSheet();
@@ -465,7 +520,7 @@ function refresh() {
 }
 
 function renderTop() {
-  document.querySelectorAll('#ws-seg button').forEach(b => b.classList.toggle('on', b.dataset.ws === S.ed.workspace));
+  document.querySelectorAll('#ws-seg button').forEach(b => b.classList.toggle('on', S.ed.mode === 'edit' ? b.dataset.pick === 'mesh' : b.dataset.pick === S.ed.pick));
   $('#btn-undo').disabled = !canUndo(); $('#btn-redo').disabled = !canRedo();
   $('#btn-snap').classList.toggle('on', S.settings.snap);
   $('#btn-xray').classList.toggle('on', S.settings.xray);
@@ -481,7 +536,7 @@ function renderViewButtons() {
 function act(icon, label, fn, cls = '') { return h('button', { class: 'act ' + cls, onclick: fn }, h('span', { html: icon }), h('span', {}, label)); }
 function renderActions() {
   const row = $('#actions');
-  const key = S.ed.workspace + S.ed.mode + S.ed.selectMode + S.ed.pick;
+  const key = S.ed.workspace + S.ed.mode + S.ed.selectMode + S.ed.pick + [S.ed.drawSel.size, S.ed.profiles.length, S.ed.faces.length, S.ed.edges.length, S.ed.pick === 'solid' ? S.ed.selected.size : 0].join();
   if (row.dataset.k === key) return;
   row.dataset.k = key;
   if (S.ed.workspace === 'draw') {
@@ -530,31 +585,22 @@ function renderActions() {
     );
     return;
   }
-  const pickNow = S.ed.mode === 'edit' ? 'mesh' : S.ed.pick || 'solid';
-  const modeSeg = h('div', { class: 'ctxseg' },
-    h('div', { class: 'seg' }, ...[['solid', 'Solid'], ['face', 'Face'], ['edge', 'Edge'], ['mesh', 'Mesh']].map(([m, l]) => h('button', { class: pickNow === m ? 'on' : '', onclick: () => setPick(m) }, l))),
-    S.ed.mode === 'edit' ? h('div', { class: 'seg icons' }, ...['vert', 'edge', 'face'].map(sm => h('button', { class: S.ed.selectMode === sm ? 'on' : '', 'aria-label': sm, html: I[sm], onclick: () => setSelectMode(sm) }))) : null);
+  const modeSeg = S.ed.mode === 'edit' ? h('div', { class: 'ctxseg' },
+    h('div', { class: 'seg icons' }, ...['vert', 'edge', 'face'].map(sm => h('button', { class: S.ed.selectMode === sm ? 'on' : '', 'aria-label': sm, html: I[sm], onclick: () => setSelectMode(sm) }))),
+    h('button', { class: 'act', onclick: () => setPick('solid') }, h('span', { html: I.check }), h('span', {}, 'Done'))) : null;
   if (S.ed.mode === 'object') {
-    row.replaceChildren(modeSeg,
-      act(I.face, 'Sketch on face', () => startFacePick()),
-      act(I.fillet, 'Fillet', () => modifier('fillet'), 'primary'),
-      act(I.chamfer, 'Chamfer', () => modifier('chamfer')),
-      act(I.extrude, 'Push/Pull', () => modifier('pushpull')),
-      act(I.inset, 'Shell', () => modifier('shell')),
-      act(I.flip, 'Mirror', () => modifier('mirror')),
-      act(I.union, 'Boolean', e => openBoolMenu(e.currentTarget)),
-      act(I.subdiv, 'Slice', () => runOp(F.sliceOp)),
-      act(I.revolve, 'Pattern', () => runOp(F.polarPattern)),
-      act(I.plane, 'Thicken', () => runOp(F.thickenOp)),
-      act(I.cone, 'Draft', () => { if (!S.ed.faces.length) { setPick('face'); toast('Tap the side faces to draft, then Draft'); return; } runOp(F.draftOp); }),
-      act(I.plus, 'Add', e => openAddMenu(e.currentTarget)),
-      act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; toast('Duplicated — drag the gizmo or type an offset'); refresh(); } }),
-      act(I.array, 'Array', () => runOp(OPS.arrayOp)),
-      act(I.join, 'Join', () => runOp(OPS.joinObjs)),
-      act(I.apply, 'Apply', () => runOp(OPS.applyXf)),
-      act(I.origin, 'Origin', () => runOp(OPS.setOrigin)),
-      act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'),
-    );
+    // Plasticity-style: the bar shows the commands that apply to what is selected
+    const curves = S.ed.drawSel.size, prof = S.ed.profiles.length, faces = S.ed.faces.length, edges = S.ed.edges.length;
+    const solids = S.ed.pick === 'solid' ? S.ed.selected.size : 0;
+    const c = [];
+    if (prof) c.push(act(I.extrude, 'Extrude', () => runOp(F.extrude), 'primary'), act(I.revolve, 'Revolve', () => runOp(F.revolve)), ...(prof >= 2 ? [act(I.cone, 'Loft', () => runOp(F.loftOp))] : []), act(I.arc, 'Sweep', () => runOp(F.sweepOp)));
+    if (faces) c.push(act(I.extrude, 'Push/Pull', () => modifier('pushpull'), prof ? '' : 'primary'), act(I.inset, 'Shell', () => modifier('shell')), act(I.cone, 'Draft', () => runOp(F.draftOp)), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)));
+    if (edges) c.push(act(I.fillet, 'Fillet', () => modifier('fillet'), 'primary'), act(I.chamfer, 'Chamfer', () => modifier('chamfer')));
+    if (curves) c.push(act(I.move, 'Move', () => acadTool('move')), act(I.dup, 'Copy', () => acadTool('copy')), act(I.rotate, 'Rotate', () => acadTool('rotate')), act(I.flip, 'Mirror', () => acadTool('mirror')), act(I.scale, 'Scale', () => acadTool('scale')), act(I.inset, 'Offset', () => acadTool('offset')), act(I.array, 'Array', () => acadTool('arrayrect')), act(I.constrain, 'Constrain', e => openConstrainMenu(e.currentTarget)), act(I.line, 'Construction', () => Draw.toggleConstruction()), act(I.trash, 'Delete', () => Draw.deleteSelected(), 'danger'));
+    if (solids) c.push(act(I.union, 'Boolean', e => openBoolMenu(e.currentTarget), c.length ? '' : 'primary'), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.inset, 'Shell', () => runOp(F.shellOp)), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)), act(I.revolve, 'Pattern', () => runOp(F.polarPattern)), act(I.plane, 'Thicken', () => runOp(F.thickenOp)),
+      act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; toast('Duplicated — drag the gizmo or type an offset'); refresh(); } }), act(I.array, 'Array', () => runOp(OPS.arrayOp)), act(I.join, 'Join', () => runOp(OPS.joinObjs)), act(I.apply, 'Apply', () => runOp(OPS.applyXf)), act(I.origin, 'Origin', () => runOp(OPS.setOrigin)), act(I.subdiv, 'Edit mesh', () => setPick('mesh')), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'));
+    if (!c.length) c.push(act(I.plus, 'Add solid', e => openAddMenu(e.currentTarget), 'primary'), act(I.line, 'Line', () => setTool('line')), act(I.rect, 'Rectangle', () => setTool('rect')), act(I.circle, 'Circle', () => setTool('circle')), act(I.measure, 'Inquiry', e => openInquiryMenu(e.currentTarget)), act(I.help, 'Commands', () => openPalette()));
+    row.replaceChildren(...c);
   } else {
     row.replaceChildren(modeSeg,
       act(I.extrude, 'Extrude', () => runOp(OPS.extrude), 'primary'),
@@ -573,7 +619,7 @@ function renderActions() {
 function setPick(m) {
   if (m === 'mesh') { S.ed.faces = []; S.ed.edges = []; setMode('edit'); return; }
   if (S.ed.mode === 'edit') setMode('object');
-  S.ed.pick = m; S.ed.faces = []; S.ed.edges = [];
+  S.ed.pick = m; S.ed.faces = []; S.ed.edges = []; S.ed.profiles = []; S.ed.drawSel = new Set();
   selectionChanged();
 }
 // Plasticity-style modifiers: if the needed selection is missing, switch to that selection mode
@@ -619,6 +665,14 @@ function renderHud() {
     return;
   }
   if (S.ed.pickFace) { $('#hud').innerHTML = '<b>Sketch on face</b><br>Tap a flat face of a body'; return; }
+  if (S.ed.workspace === 'model' && S.ed.mode === 'object') {
+    const drawing = !GIZMO_TOOLS.has(S.ed.tool) && S.ed.tool !== 'select';
+    const sel = [[S.ed.drawSel.size, 'curve'], [S.ed.profiles.length, 'region'], [S.ed.faces.length, 'face'], [S.ed.edges.length, 'edge'], [S.ed.pick === 'solid' ? S.ed.selected.size : 0, 'solid']].filter(q => q[0]).map(([n, w]) => `${n} ${w}${n === 1 ? '' : 's'}`);
+    parts.push(drawing ? `<b>${S.ed.tool[0].toUpperCase() + S.ed.tool.slice(1)}</b> · draw on the grid or on any face` : `<b>${{ edge: 'Edge', face: 'Face', solid: 'Solid' }[S.ed.pick]} select</b>${sel.length ? ' · ' + sel.join(', ') : ''}`);
+    parts.push(drawing ? `${S.ed.sketch && SK.activeSketch() ? esc(SK.activeSketch().name) + ' · ' : ''}${Draw.dofText ? Draw.dofText() : ''}` : 'Space or 🔍 for commands · 2 Edge · 3 Face · 4 Solid');
+    $('#hud').innerHTML = parts.join('<br>');
+    return;
+  }
   if (S.ed.workspace === 'model' && S.ed.mode === 'object' && S.ed.pick !== 'solid') {
     parts.push(`<b>${S.ed.pick === 'face' ? 'Face' : 'Edge'} select</b> · ${S.ed.pick === 'face' ? S.ed.faces.length + ' face' + (S.ed.faces.length === 1 ? '' : 's') : S.ed.edges.length + ' edge' + (S.ed.edges.length === 1 ? '' : 's')}`);
     parts.push(S.ed.pick === 'face' ? 'Push/Pull · Shell · Mirror · Move/Rotate/Scale the face' : 'Fillet · Chamfer · Move the edge');
@@ -637,10 +691,63 @@ function renderHud() {
 function planeName(sk) { for (const [k, p] of Object.entries(SK.PLANES)) if (p.n.every((c, i) => Math.abs(c - sk.plane.n[i]) < 1e-9)) { const off = M.dot(sk.plane.o, p.n); return p.label + (Math.abs(off) > 1e-9 ? ` +${fmtLen(off)}` : ''); } return 'custom plane'; }
 function renderDrawCard() {
   const el = $('#draw-card');
-  const content = S.ed.workspace === 'draw' && !gizmoActive() ? Draw.cardContent() : null;
+  const content = (S.ed.workspace === 'draw' || (S.ed.workspace === 'model' && S.ed.mode === 'object' && (!GIZMO_TOOLS.has(S.ed.tool) && (S.ed.tool !== 'select' || S.ed.drawSel.size)))) && !gizmoActive() ? Draw.cardContent() : null;
   el.hidden = !content;
   if (content) el.replaceChildren(content);
   renderLastOp();
+}
+// ---------- Plasticity-style command palette ----------
+function commands() {
+  const C = (name, keys, run, words = '') => ({ name, keys, run, words });
+  const tool = t => () => setTool(t);
+  return [
+    C('Line', 'L', tool('line'), 'polyline pline draw'), C('Rectangle', '⇧R', tool('rect'), 'rect box draw'), C('Circle', 'C', tool('circle'), 'draw'), C('Arc', '', tool('arc'), 'draw'),
+    C('Spline', '', tool('spline'), 'curve'), C('Polygon', '', tool('polygon'), 'hexagon'), C('Ellipse', '', () => acadTool('ellipse')), C('Text', '', () => acadTool('text')), C('Hatch', '', () => acadTool('hatch')),
+    C('Curve fillet / chamfer', '', tool('corner'), 'corner round'), C('Trim curve', '', tool('trim')), C('Extend curve', '', () => setTool('extend')), C('Offset curve', '', () => acadTool('offset')), C('Dimension', '', tool('dim'), 'dim measure constraint'),
+    C('Extrude', 'E', () => (S.ed.profiles.length ? runOp(F.extrude) : modifier('pushpull')), 'push pull'), C('Revolve', '', () => runOp(F.revolve)), C('Loft', '', () => runOp(F.loftOp)), C('Sweep', '', () => runOp(F.sweepOp)),
+    C('Fillet edges', 'F', () => modifier('fillet'), 'round'), C('Chamfer edges', '⇧C', () => modifier('chamfer'), 'bevel'), C('Push / pull face (offset face)', 'O', () => modifier('pushpull'), 'offset face move face'),
+    C('Shell', 'H', () => modifier('shell'), 'hollow'), C('Draft', '', () => runOp(F.draftOp), 'taper'), C('Thicken', '', () => runOp(F.thickenOp)), C('Mirror', 'M', () => modifier('mirror')), C('Slice', '', () => runOp(F.sliceOp), 'cut split'),
+    C('Pattern (polar)', '', () => runOp(F.polarPattern), 'array circular'), C('Union', '', () => runOp(F.bodyBoolean, { kind: 'union' }), 'boolean join add'), C('Subtract', '', () => runOp(F.bodyBoolean, { kind: 'subtract' }), 'boolean difference cut'), C('Intersect', '', () => runOp(F.bodyBoolean, { kind: 'intersect' }), 'boolean'),
+    C('Move', 'G', tool('move'), 'grab translate'), C('Rotate', 'R', tool('rotate')), C('Scale', 'S', tool('scale')), C('Duplicate', '⇧D', () => runOp(OPS.duplicate), 'copy'), C('Delete', 'X', () => deleteSelection(), 'erase remove'),
+    ...OPS.PRIM_TYPES.map(([t, l]) => C(`Add ${l}`, '', () => runOp(OPS.addPrim, { type: t }), 'primitive solid box')),
+    C('Select: Edge mode', '2', () => setPick('edge'), 'curve'), C('Select: Face mode', '3', () => setPick('face'), 'region'), C('Select: Solid mode', '4', () => setPick('solid'), 'body'), C('Edit mesh (polygons)', 'Tab', () => setPick('mesh')),
+    C('Measure distance', '', () => acadTool('dist'), 'dist inquiry'), C('Measure angle', '', () => acadTool('angle')), C('Measure area', '', () => acadTool('area')), C('Measure (3D)', '', tool('measure')),
+    C('Construction plane: Top (XY)', '', () => { S.ed.cplane = null; toast('Drawing plane: XY'); }, 'cplane'), C('Construction plane: Front (XZ)', '', () => { S.ed.cplane = SK.PLANES.XZ; toast('Drawing plane: XZ'); }, 'cplane'), C('Construction plane: Right (YZ)', '', () => { S.ed.cplane = SK.PLANES.YZ; toast('Drawing plane: YZ'); }, 'cplane'),
+    C('Toggle construction curves', '', () => Draw.toggleConstruction()), C('Toggle snapping', '', () => $('#btn-snap').click(), 'snap'), C('Toggle X-ray', '', () => $('#btn-xray').click()), C('Toggle perspective / ortho', '5', () => view.toggleOrtho()),
+    C('View: Top', '7', () => view.setView('top')), C('View: Front', '1', () => view.setView('front')), C('View: Right', '3', () => view.setView('right')), C('View: Isometric', '0', () => view.setView('iso')), C('Frame all', 'Home', () => view.frame(S.doc.objects.flatMap(worldVerts).concat(allSketchPoints()))),
+    C('AutoCAD command line', '', () => { S.settings.cmdline = !S.settings.cmdline; saveSettings(); refresh(); }, 'acad typed coordinates'),
+    C('Undo', '⌘Z', () => undo()), C('Redo', '⇧⌘Z', () => redo()), C('Save project', '⌘S', () => saveProject()), C('Open / import', '', () => $('#file-input').click(), 'stl obj'), C('Export STL', '', () => exportAs('stl')), C('Export OBJ', '', () => exportAs('obj')), C('Export DXF', '', () => exportDXF()), C('New scene', '', () => { if (confirm('Start a new scene?')) newScene(); }),
+  ];
+}
+function deleteSelection() {
+  if (S.ed.mode === 'edit') return runOp(OPS.deleteGeom);
+  if (S.ed.drawSel.size) return Draw.deleteSelected();
+  if (S.ed.selected.size) return runOp(OPS.deleteObjs);
+  toast('Nothing selected');
+}
+function openPalette() {
+  const list = h('div', { class: 'pal-list' }), inp = h('input', { class: 'textin pal-in', placeholder: 'Search commands…', autocomplete: 'off', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'go' });
+  const all = commands();
+  let shown = all, idx = 0;
+  const score = (c, q) => { const n = (c.name + ' ' + c.words).toLowerCase(); if (!q) return 1; if (n.startsWith(q)) return 3; if (n.split(/\s+/).some(w => w.startsWith(q))) return 2; let i = 0; for (const ch of q) { i = n.indexOf(ch, i); if (i < 0) return 0; i++; } return 1; };
+  const draw = () => {
+    const q = inp.value.trim().toLowerCase();
+    shown = all.map(c => [c, score(c, q)]).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]).map(x => x[0]).slice(0, 40);
+    idx = Math.min(idx, Math.max(0, shown.length - 1));
+    list.replaceChildren(...shown.map((c, i) => h('button', { class: 'mi' + (i === idx ? ' hot' : ''), onclick: () => run(c) }, c.name, c.keys ? h('span', { class: 'k' }, c.keys) : null)));
+  };
+  const run = c => { closePopover(); c.run(); refresh(); };
+  inp.addEventListener('input', () => { idx = 0; draw(); });
+  inp.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'ArrowDown') { idx = Math.min(shown.length - 1, idx + 1); draw(); e.preventDefault(); }
+    else if (e.key === 'ArrowUp') { idx = Math.max(0, idx - 1); draw(); e.preventDefault(); }
+    else if (e.key === 'Enter' && shown[idx]) { e.preventDefault(); run(shown[idx]); }
+    else if (e.key === 'Escape') closePopover();
+  });
+  draw();
+  popover($('#btn-cmd'), h('div', { class: 'palette' }, inp, list), { align: 'right' });
+  setTimeout(() => inp.focus(), 30);
 }
 function openInquiryMenu(anchor) {
   const it = (icon, l, t, k, pre) => menuItem(icon, l, () => { if (pre) pre(); acadTool(t); }, k);
@@ -1008,10 +1115,20 @@ function onKey(e) {
     if ((k === 'delete' || k === 'backspace') && S.ed.workspace === 'draw') { Draw.deleteSelected(); return; }
     if (Cmd.key(e)) return;
   }
+  if (S.ed.workspace === 'model' && k === ' ' && !S.settings.cmdline) { e.preventDefault(); openPalette(); return; }
+  if (S.ed.workspace === 'model' && S.settings.cmdline && Cmd.key(e)) return;
   if (S.ed.workspace === 'model' && S.ed.mode === 'object') {
+    const dk = { l: 'line', c: 'circle' };
+    if (!e.shiftKey && dk[k]) { setTool(dk[k]); return; }
+    if (e.shiftKey && k === 'r') { setTool('rect'); return; }
+    if (e.shiftKey && k === 'c') { modifier('chamfer'); return; }
+    if (k === 'e' && !e.shiftKey) { if (S.ed.profiles.length) runOp(F.extrude); else modifier('pushpull'); return; }
+    if ((k === 'escape') && (S.ed.tool !== 'select')) { Draw.resetTool(); setTool('select'); return; }
+    if ((k === 'x' || k === 'delete' || k === 'backspace') && !e.shiftKey) { deleteSelection(); return; }
+    if (k === 'enter' && Draw.enter()) { refresh(); return; }
     const pm = { '2': 'edge', '3': 'face', '4': 'solid' };
     if (pm[k]) { setPick(pm[k]); return; }
-    const mm = { f: 'fillet', c: 'chamfer', o: 'pushpull', h: 'shell', m: 'mirror' };
+    const mm = { f: 'fillet', o: 'pushpull', h: 'shell', m: 'mirror' };
     if (mm[k] && !e.shiftKey) { modifier(mm[k]); return; }
   }
   if (k === 'tab') { e.preventDefault(); if (S.ed.workspace !== 'model') setWorkspace('model'); setMode(S.ed.mode === 'edit' ? 'object' : 'edit'); return; }

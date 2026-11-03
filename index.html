@@ -22,12 +22,13 @@
 <div id="app">
   <header id="topbar">
     <button class="ib" id="btn-menu" aria-label="Menu"></button>
-    <div class="seg" id="ws-seg" role="tablist">
-      <button data-ws="draw">Draw</button>
-      <button data-ws="cad">CAD</button>
-      <button data-ws="model">Model</button>
+    <div class="seg" id="ws-seg" role="tablist" aria-label="Selection mode">
+      <button data-pick="edge" title="Curves and edges (2)">Edge</button>
+      <button data-pick="face" title="Regions and faces (3)">Face</button>
+      <button data-pick="solid" title="Solids (4)">Solid</button>
     </div>
     <div class="spacer"></div>
+    <button class="ib" id="btn-cmd" aria-label="Command palette"></button>
     <button class="ib" id="btn-undo" aria-label="Undo"></button>
     <button class="ib" id="btn-redo" aria-label="Redo"></button>
     <button class="ib" id="btn-props" aria-label="Properties"></button>

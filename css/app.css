@@ -289,3 +289,11 @@ body.ws-model #lastop .field.wide { flex-direction: column; align-items: stretch
 .vlabel.measure { background: #0f2a1c; color: #8fe3b0; border-color: #2f7a52; font-size: 12.5px; }
 
 #cmdin.free { text-transform: none; }
+
+/* command palette */
+.palette { width: min(380px, calc(100vw - 24px)); }
+.pal-in { margin-bottom: 6px; }
+.pal-list { max-height: min(56vh, 460px); overflow-y: auto; }
+.pal-list .mi { height: 40px; font-size: 14px; }
+.pal-list .mi.hot { background: rgba(255,154,31,.16); color: var(--accent); }
+#ws-seg button { padding: 0 11px; }

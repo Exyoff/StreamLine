@@ -1,6 +1,6 @@
 // Draw workspace: 2D drafting tools on the active sketch plane + sketch/profile rendering.
 import * as THREE from 'three';
-import { S, emit } from './state.js';
+import { S, emit, objById } from './state.js';
 import { view, camera } from './viewport.js';
 import * as SK from './sketch.js';
 const ecos = d => { const k = Math.round(d / 90); return Math.abs(d / 90 - k) < 1e-12 ? [1, 0, -1, 0][((k % 4) + 4) % 4] : Math.cos(d * Math.PI / 180); };
@@ -20,8 +20,46 @@ const D = Math.PI / 180;
 export const corner = { kind: 'fillet', size: null };
 let propsOpen = false; // compact entity card by default (AutoCAD-style quick properties)
 export const st = { start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null };
-export function resetTool() { result = null; st.arcMode = false; st.lastDir = null; if (tool() !== 'line') lineOpts.construction = false; Object.assign(st, { cmd: null, last: null, dimLine: null, start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null }); view.render(); emit('drawcard'); }
-const sk = () => SK.activeSketch();
+export function resetTool() { result = null; st.pressed = false; st.arcMode = false; st.lastDir = null; if (tool() !== 'line') lineOpts.construction = false; Object.assign(st, { cmd: null, last: null, dimLine: null, start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null }); view.render(); emit('drawcard'); }
+// In the studio (unified 3D workspace) each stroke draws on the plane under the finger: a body face,
+// or the construction plane (ground). Curves on the same plane share one sketch, created on demand.
+export const studio = () => S.ed.workspace === 'model';
+let target = null; // { skId } | { plane, face } (pending: the sketch is created with the first curve)
+const samePlane = (a, b) => a.n.every((c, i) => Math.abs(c - b.n[i]) < 1e-9) && Math.abs(a.n.reduce((s, c, i) => s + c * (a.o[i] - b.o[i]), 0)) < 1e-6;
+export function cplane() { return S.ed.cplane || SK.PLANES.XY; }
+// typed first points (tool card / command line) refer to the construction plane, like Plasticity
+function setPlaneTarget(plane, face = null) {
+  const ex = (S.doc.sketches || []).find(k => !k.hidden && samePlane(k.plane, plane));
+  if (ex) { target = { skId: ex.id }; S.ed.sketch = ex.id; }
+  else target = { plane: { o: plane.o.slice(), u: plane.u.slice(), v: plane.v.slice(), n: plane.n.slice() }, face };
+}
+function typedTarget() { if (studio() && DRAW_PRIMARY.has(tool()) && waitingFirstPoint() && !st.pressed) setPlaneTarget(cplane()); }
+export function chooseTarget(x, y) {
+  const hit = view.pickObject(x, y);
+  let plane = null, face = null;
+  if (hit && hit.face >= 0) {
+    const o = objById(hit.id), c = view.cam;
+    plane = F.facePlane(o, hit.face, [-Math.sin(c.yaw), Math.cos(c.yaw), 0]);
+    if (plane) face = { obj: o.id };
+  }
+  if (!plane) plane = cplane();
+  setPlaneTarget(plane, face);
+}
+const sk = () => {
+  if (!studio()) return SK.activeSketch();
+  if (target && target.skId) return SK.sketchById(target.skId) || SK.activeSketch();
+  if (target) return { id: null, pending: true, plane: target.plane, face: target.face, ents: [], cons: [] };
+  return SK.activeSketch() || { id: null, pending: true, plane: cplane(), face: null, ents: [], cons: [] };
+};
+export const drawTarget = sk;
+const DRAW_PRIMARY = new Set(['line', 'rect', 'circle', 'arc', 'ellipse', 'spline', 'polygon', 'text']);
+const waitingFirstPoint = () => !st.start && !st.arc && !st.dimA && !(st.cmd && (st.cmd.center || st.cmd.base || (st.cmd.pts && st.cmd.pts.length)));
+// run a sketch edit, creating the sketch first if the target plane has none yet (one undo step)
+function editSketch(label, fn, fields) {
+  const s = sk();
+  if (s.pending) { const ok = runOp(F.sketchOpNew(label, s.plane, s.face, fn, fields)); if (ok) target = { skId: S.ed.sketch }; return ok; }
+  return runOp(F.sketchOp(label, s.id, fn, fields));
+}
 const tool = () => S.ed.tool;
 
 // ---------- geometry helpers ----------
@@ -60,9 +98,8 @@ const ang = (a, b) => Math.atan2(b[1] - a[1], b[0] - a[0]);
 
 // ---------- entity creation ----------
 function add(label, ent, post) {
-  const id = sk().id;
   let made = null;
-  runOp(F.sketchOp(label, id, s => { made = F.addEntity(s, JSON.parse(JSON.stringify(ent))); if (post) post(s, made); }));
+  editSketch(label, s => { made = F.addEntity(s, JSON.parse(JSON.stringify(ent))); if (post) post(s, made); });
   return made;
 }
 const autoHV = (s, e) => {
@@ -102,8 +139,9 @@ function placeArc(c, r, a0, swDeg) {
 
 // ---------- pointer handling (called from app) ----------
 export function down(x, y) {
-  const s = sk(); if (!s) return false;
   const t = tool();
+  if (studio() && DRAW_PRIMARY.has(t) && waitingFirstPoint()) { chooseTarget(x, y); st.pressed = true; }
+  const s = sk(); if (!s) return false;
   if (t === 'select') return gripDown(x, y);
   if (t === 'trim' || t === 'dim' || t === 'corner' || t === 'extend') return false; // handled as taps
   if (EDIT_TOOLS.has(t)) { ensureCmd(); if (!pointStage()) return false; }
@@ -121,7 +159,10 @@ export function move(x, y) {
   view.render(); emit('drawcard');
 }
 export function hover(x, y) {
-  if (S.ed.workspace !== 'draw' || !sk() || ['select', 'trim', 'dim', 'corner', 'extend'].includes(tool())) return;
+  if ((S.ed.workspace !== 'draw' && !studio()) || ['select', 'move', 'rotate', 'scale', 'measure', 'edge', 'trim', 'dim', 'corner', 'extend'].includes(tool())) return;
+  if (studio() && !DRAW_PRIMARY.has(tool()) && !EDIT_TOOLS.has(tool())) return;
+  if (studio() && DRAW_PRIMARY.has(tool()) && waitingFirstPoint()) chooseTarget(x, y);
+  if (!sk()) return;
   if (EDIT_TOOLS.has(tool()) && !pointStage()) return;
   snapAt(x, y, fromPt()); view.render(); emit('drawcard');
 }
@@ -136,6 +177,7 @@ export function up() {
 // A point from a tap, a drag release, or typed in the command line.
 export function commitPoint(p, anchor = null) {
   const t = tool();
+  typedTarget();
   st.last = p.slice();
   if (EDIT_TOOLS.has(t)) { cmdPoint(p); view.render(); emit('drawcard'); return; }
   if (t === 'line') {
@@ -186,6 +228,17 @@ function gripMove(x, y) {
 function gripUp() { commit(); st.grip = null; st.preview = null; st.snap = null; view.render(); emit('drawcard'); }
 
 // ---------- taps (select / trim / dim) ----------
+// tapping a dimension label edits it; tapping a constraint glyph removes it
+export function tapLabel(x, y) {
+  const s = sk(); if (!s || s.pending) return false;
+  for (const L of st.dimLabels || []) if (Math.hypot(L.x - x, L.y - y) < 28) { editDim(L.dim); return true; }
+  for (const G of st.consLabels || []) if (Math.hypot(G.x - x, G.y - y) < 16) {
+    const cid = G.c.id;
+    runOp(F.sketchOp('Remove constraint', s.id, k => { k.cons = (k.cons || []).filter(c => c.id !== cid); }));
+    toast(`Removed ${SK.CONS_LABEL[G.c.t]} constraint`); return true;
+  }
+  return false;
+}
 export function tap(x, y) {
   const s = sk(); if (!s) return;
   const t = tool();
@@ -317,7 +370,7 @@ export function cardContent() {
   const xyFields = (lab, cb) => h('div', { class: 'fields' },
     field({ label: lab + ' X', kind: 'len', value: pv() ? pv()[0] : 0, cls: 'ax-x', onCommit: v => cb([v, pv() ? pv()[1] : 0], 0) }),
     field({ label: lab + ' Y', kind: 'len', value: pv() ? pv()[1] : 0, cls: 'ax-y', onCommit: v => cb([st.typed.x ?? (pv() ? pv()[0] : 0), v], 1) }));
-  const setStart = (p, k) => { if (k === 0) { st.typed.x = p[0]; st.preview = p; emit('drawcard'); view.render(); return; } st.start = p; st.preview = p; st.typed = {}; emit('drawcard'); view.render(); };
+  const setStart = (p, k) => { typedTarget(); if (k === 0) { st.typed.x = p[0]; st.preview = p; emit('drawcard'); view.render(); return; } st.start = p; st.preview = p; st.typed = {}; emit('drawcard'); view.render(); };
   if (t === 'select') {
     const ents = [...S.ed.drawSel].map(id => SK.entById(s, id)).filter(Boolean);
     if (!ents.length) return null;
@@ -471,7 +524,7 @@ function dimGeom(s, d) {
 }
 
 function renderSketches() {
-  const ws = S.ed.workspace, act = SK.activeSketch();
+  const ws = S.ed.workspace, act = studio() ? sk() : SK.activeSketch(), stu = studio();
   const key = [ws, S.ed.sketch, (S.doc.sketches || []).map(s => s.hidden).join(), [...S.ed.drawSel].join(), JSON.stringify(S.ed.profiles), S.settings.showSketches].join('|');
   const sketches = S.doc.sketches || [];
   const entsArr = sketches.map(s => s.ents), prevEnts = sketchGroup.userData.ents || [];
@@ -482,29 +535,29 @@ function renderSketches() {
       clearGroup(sketchGroup);
       for (const s of sketches) {
         if (s.hidden) continue;
-        const isAct = ws === 'draw' && s.id === S.ed.sketch;
-        if (ws === 'model' && S.settings.showSketches === false) continue;
-        const top = isAct;
+        const isAct = stu || (ws === 'draw' && s.id === S.ed.sketch);
+        const top = isAct && !stu;
+        const mine = s.id === S.ed.sketch;
         const fixedSet = isAct ? constrainedEntities(s) : null;
         for (const e of s.ents) {
           if (e.t === 'dim') continue;
-          if (e.t === 'text') { sketchGroup.add(textMesh(s, e, isAct && S.ed.drawSel.has(e.id) ? '#6fb4ff' : isAct ? '#f2f2f2' : '#8d93a0')); continue; }
+          if (e.t === 'text') { sketchGroup.add(textMesh(s, e, mine && S.ed.drawSel.has(e.id) ? '#6fb4ff' : isAct ? '#f2f2f2' : '#8d93a0')); continue; }
           if (e.t === 'hatch') {
             const hl = SK.hatchLines(s, e); if (!hl) continue;
-            const col = isAct && S.ed.drawSel.has(e.id) ? C.sel : isAct ? new THREE.Color('#b9c3cf') : C.other;
+            const col = mine && S.ed.drawSel.has(e.id) ? C.sel : isAct ? new THREE.Color('#b9c3cf') : C.other;
             if (e.pattern === 'SOLID') sketchGroup.add(fillObj(s, hl.region, col, 0.75));
             else if (hl.lines.length) { const pos = hl.lines.flatMap(([a, b]) => [...SK.toW(s.plane, a), ...SK.toW(s.plane, b)]); const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); sketchGroup.add(new THREE.LineSegments(g, matL(col, top, 0.7))); }
             continue;
           }
           const pl = SK.entPolyline(e);
-          const sel = isAct && S.ed.drawSel.has(e.id);
+          const sel = isAct && mine && S.ed.drawSel.has(e.id);
           const col = isAct ? (sel ? C.sel : e.construction ? C.constr : e.proj ? C.proj : fixedSet.has(e.id) ? C.fixed : C.line) : C.other;
           const dashed = sel || e.construction;
-          const obj = lineObj(pl.pts.map(p => SK.toW(s.plane, p)), dashed ? new THREE.LineDashedMaterial({ color: col, depthTest: false, dashSize: 1, gapSize: 0.6, transparent: true, opacity: e.construction && !sel ? 0.8 : 1 }) : matL(col, top, ws === 'model' ? 0.5 : 1), pl.closed);
+          const obj = lineObj(pl.pts.map(p => SK.toW(s.plane, p)), dashed ? new THREE.LineDashedMaterial({ color: col, depthTest: false, dashSize: 1, gapSize: 0.6, transparent: true, opacity: e.construction && !sel ? 0.8 : 1 }) : matL(col, top, 1), pl.closed);
           if (dashed) { obj.userData.dashed = true; obj.computeLineDistances(); }
           sketchGroup.add(obj);
         }
-        if (isAct) {
+        if (isAct && mine) {
           // endpoints
           const pts = [];
           for (const e of s.ents) if (S.ed.drawSel.has(e.id)) for (const kp of SK.keyPoints(e)) if (kp.m || kp.center || kp.k === 'mid') pts.push(...SK.toW(s.plane, kp.p));
@@ -514,9 +567,9 @@ function renderSketches() {
           // dims
           for (const d of s.ents) if (d.t === 'dim') { const g = dimGeom(s, d); if (g) sketchGroup.add(lineObj(g.pts.map(p => SK.toW(s.plane, p)), matL(0x4f8ff7, true, g.noLine ? 0.35 : 0.9))); }
         }
-        if (ws === 'draw' && isAct || ws === 'cad') {
+        if (ws === 'draw' && isAct || ws === 'cad' || stu) {
           const selRegs = new Set(S.ed.profiles.filter(q => q.sk === s.id).map(q => SK.regionAt(s, q.pt)).filter(Boolean));
-          for (const r of SK.regions(s)) sketchGroup.add(fillObj(s, r, selRegs.has(r) ? 0xff9a1f : 0x4f8ff7, selRegs.has(r) ? 0.55 : ws === 'cad' ? 0.16 : 0.08));
+          for (const r of SK.regions(s)) sketchGroup.add(fillObj(s, r, selRegs.has(r) ? 0xff9a1f : 0x4f8ff7, selRegs.has(r) ? 0.55 : ws === 'cad' || stu ? 0.14 : 0.08));
         }
       }
     }
@@ -526,7 +579,7 @@ function renderSketches() {
   sketchGroup.traverse(o => { if (o.userData.dashed && Math.abs(o.material.dashSize - dash) > dash * 0.05) { o.material.dashSize = dash; o.material.gapSize = dash * 0.6; } });
   // per-frame labels for dims + preview
   st.dimLabels = [];
-  if (ws === 'draw' && act) {
+  if ((ws === 'draw' || stu) && act && !act.pending) {
     for (const d of act.ents) if (d.t === 'dim') {
       const g = dimGeom(act, d); if (!g) continue;
       const w = SK.toW(act.plane, g.mid); view.label(w, g.text, 'dim');
@@ -543,7 +596,7 @@ function renderSketches() {
       view.labelAt(q.x + 14 + n * 20, q.y + 16, lab, 'cons');
       st.consLabels.push({ c, x: q.x + 14 + n * 20, y: q.y + 16 });
     }
-    drawAxes(act);
+    if (stu) clearGroup(previewGroup); else drawAxes(act);
   } else clearGroup(previewGroup);
   drawPreview(act);
 }
@@ -555,7 +608,7 @@ function drawAxes(s) {
   previewGroup.add(lineObj([SK.toW(s.plane, [0, 0]), SK.toW(s.plane, [0, L])], matL(0x7cc243, true, 0.9)));
 }
 function drawPreview(s) {
-  if (S.ed.workspace !== 'draw' || !s) return;
+  if ((S.ed.workspace !== 'draw' && !studio()) || !s) return;
   const t = tool(), p = st.preview, W = q => SK.toW(s.plane, q);
   const m = matL(C.prev, true);
   const from = st.start || st.pressAnchor;
@@ -726,7 +779,7 @@ function cmdPoint(p) {
     if (c.stage === 'center') { c.center = p; c.stage = 'vertex'; }
     else if (c.stage === 'vertex') {
       const center = c.center, n = acad.polySides;
-      runOp(F.sketchOp(`Polygon (${n})`, sk().id, k => { const r = SK.addPolygon(k, center, p, n); if (typeof r === 'string') return r; }));
+      editSketch(`Polygon (${n})`, k => { const r = SK.addPolygon(k, center, p, n); if (typeof r === 'string') return r; });
       c.stage = 'center';
     }
     return;
@@ -802,6 +855,7 @@ export function enter() {
 import { evalExpr } from './units.js';
 export function typed(raw) {
   const str = raw.trim(); if (!str) return false;
+  typedTarget();
   const t = tool(), c = st.cmd;
   const num = (x, kind = 'len') => evalExpr(x, kind);
   // options

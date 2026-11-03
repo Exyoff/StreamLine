@@ -24,7 +24,7 @@ export const newSketch = {
     let nextEnt = 1;
     if (p.face && p.face.loops) for (const L of p.face.loops) for (const e of projectLoop(L.map(w => SK.toP(plane, w)))) ents.push({ id: ++nextEnt, ...e, proj: true });
     S.doc.sketches.push({ id: p._id, name: `Sketch ${p._n}`, plane, ents, face: p.face ? { obj: p.face.obj } : null, hidden: false, nextEnt });
-    S.ed.sketch = p._id; S.ed.workspace = 'draw'; S.ed.drawSel = new Set(); S.ed.profiles = [];
+    S.ed.sketch = p._id; if (S.ed.workspace !== 'model') S.ed.workspace = 'draw'; S.ed.drawSel = new Set(); S.ed.profiles = [];
   },
 };
 
@@ -56,6 +56,21 @@ export function sketchOp(label, skId, fn, fields = null) {
     apply(p) { const sk = SK.sketchById(skId); if (!sk) return 'Sketch missing'; return fn(sk, p); },
   };
 }
+// Sketch edit on a plane that has no sketch yet: create it in the same operation (one undo step).
+export function sketchOpNew(label, plane, face, fn, fields = null) {
+  return {
+    label: () => label, touch: () => ({ ids: [] }),
+    fields: fields ? () => fields : undefined,
+    prepare(p) { p._id ??= S.doc.nextId; p._n ??= (S.doc.sketches || []).length + 1; },
+    apply(p) {
+      if (p._id >= S.doc.nextId) S.doc.nextId = p._id + 1;
+      const sk = { id: p._id, name: `Sketch ${p._n}`, plane: JSON.parse(JSON.stringify(plane)), ents: [], face: face ? { obj: face.obj } : null, hidden: false, nextEnt: 1 };
+      S.doc.sketches.push(sk);
+      S.ed.sketch = sk.id;
+      return fn(sk, p);
+    },
+  };
+}
 export function addEntity(sk, ent) { sk.nextEnt = (sk.nextEnt || 1) + 1; const e = { id: sk.nextEnt, ...ent }; sk.ents.push(e); return e; }
 
 // face of a body -> plane
@@ -76,8 +91,10 @@ export function facePlane(obj, fi, camRight) {
   // drafting convention: X runs left→right on top/bottom and front/back faces, Y on side faces
   if (Math.abs(n[2]) > 0.999 || Math.abs(n[1]) > 0.999) u = [1, 0, 0];
   else if (Math.abs(n[0]) > 0.999) u = [0, Math.sign(n[0]), 0];
-  const d = M.dot(n, P[0]);
-  return { o: M.mul(n, d), u, v: M.cross(n, u), n };
+  // snap float noise from the world transform (0.9999999999999999 → 1) so face planes are exact
+  const cl = v => { const q = Math.round(v * 1e9) / 1e9; return Math.abs(v - q) < 1e-11 ? (q === 0 ? 0 : q) : v; };
+  const nn = n.map(cl), uu = u.map(cl), d = cl(M.dot(nn, P[0]));
+  return { o: M.mul(nn, d).map(cl), u: uu, v: M.cross(nn, uu).map(cl), n: nn };
 }
 
 // ---------- profiles ----------

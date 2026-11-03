@@ -1,10 +1,19 @@
 # StreamLine
 
-A modelling pipeline that runs in the browser, designed for iPhone and iPad first. It follows the order a real design is made in:
+A Plasticity-style 3D modeller in the browser, built for iPhone and iPad first, with CAD precision.
 
-1. **Draw**: 2D CAD drafting on a sketch plane (XY, XZ, YZ, or any flat face of a body). Lines and polylines, rectangles, circles, arcs, trim, and dimensions you can edit to resize the geometry. Snaps to endpoints, midpoints, centres, quadrants, exact intersections, body vertices, the grid and polar angles. While drawing you can type a length and angle, a width and height, or a radius. Exports DXF.
-2. **CAD**: tap closed regions (holes are detected automatically), then **Extrude** or **Revolve** them as New, Join, Cut or Intersect. Union, subtract and intersect between bodies. The booleans run in double precision and produce clean, watertight meshes. Sketching on a face of a body targets that body automatically.
-3. **Model**: Blender-style Object and Edit modes (Z-up, extrude and inset, a redo panel) for final shaping of the solids.
+**One 3D studio, no modes to manage:**
+- **Draw anywhere.** Pick Line, Rect, Circle, Arc, Spline or Polygon from the tool rail on the left, then draw on the grid, or press on any face of a body to draw on that face. Curves on the same plane share a sketch automatically, so their closed shapes become **regions**.
+- **Select like Plasticity.** The top bar switches between **Edge** (curves and edges, key `2`), **Face** (regions and faces, `3`) and **Solid** (bodies, `4`).
+- **The command bar follows the selection.**
+  - Regions: Extrude, Revolve, Loft, Sweep.
+  - Faces: Push/Pull, Shell, Draft, Mirror, Slice.
+  - Edges: Fillet, Chamfer.
+  - Curves: Move, Offset, Constrain, and so on.
+  - Solids: Boolean, Mirror, Shell, Pattern, Thicken.
+- **Command palette.** Press `Space` or tap 🔍 to search every command, for example "fil" for Fillet.
+- **Keys:** `G`/`R`/`S` move, rotate and scale (on faces and edges too), `E` extrude, `F` fillet, `⇧C` chamfer, `O` push/pull, `H` shell, `M` mirror, `L` line, `C` circle, `⇧R` rectangle, `X` delete.
+- Every operation opens a compact dialog with exact values and a live drag handle. The AutoCAD command line (typed coordinates, DIST, etc.) is optional; switch it on from the palette.
 
 **No build step, no dependencies to install.** Serve the folder with any static server:
 
