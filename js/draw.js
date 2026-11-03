@@ -35,6 +35,7 @@ function setPlaneTarget(plane, face = null) {
 }
 const editTarget = () => { const e = S.ed.editingSketch != null && SK.sketchById(S.ed.editingSketch); if (e) { target = { skId: e.id }; S.ed.sketch = e.id; } return !!e; };
 function typedTarget() { if (editTarget()) return; if (studio() && DRAW_PRIMARY.has(tool()) && waitingFirstPoint() && !st.pressed) setPlaneTarget(cplane()); }
+export function clearTarget() { target = null; }
 export function chooseTarget(x, y) {
   if (editTarget()) return;
   const hit = view.pickObject(x, y);
@@ -49,6 +50,9 @@ export function chooseTarget(x, y) {
 }
 const sk = () => {
   if (!studio()) return SK.activeSketch();
+  // the sketch being edited always wins; picked curves (select / edit commands) live in the active sketch
+  if (S.ed.editingSketch != null && SK.sketchById(S.ed.editingSketch)) return SK.sketchById(S.ed.editingSketch);
+  if (!DRAW_PRIMARY.has(tool()) && S.ed.sketch != null && SK.activeSketch()) return SK.activeSketch();
   if (target && target.skId) return SK.sketchById(target.skId) || SK.activeSketch();
   if (target) return { id: null, pending: true, plane: target.plane, face: target.face, ents: [], cons: [] };
   return SK.activeSketch() || { id: null, pending: true, plane: cplane(), face: null, ents: [], cons: [] };
@@ -532,7 +536,7 @@ function dimGeom(s, d) {
 
 function renderSketches() {
   const ws = S.ed.workspace, act = studio() ? sk() : SK.activeSketch(), stu = studio();
-  const key = [ws, S.ed.sketch, (S.doc.sketches || []).map(s => isShown(s)).join(), [...S.ed.drawSel].join(), JSON.stringify(S.ed.profiles), S.settings.showSketches].join('|');
+  const key = [ws, S.ed.sketch, S.ed.editingSketch, (S.doc.sketches || []).map(s => isShown(s)).join(), [...S.ed.drawSel].join(), JSON.stringify(S.ed.profiles), S.settings.showSketches].join('|');
   const sketches = S.doc.sketches || [];
   const entsArr = sketches.map(s => s.ents), prevEnts = sketchGroup.userData.ents || [];
   const changed = key !== renderKey || entsArr.length !== prevEnts.length || entsArr.some((e, i) => e !== prevEnts[i]);
@@ -542,7 +546,7 @@ function renderSketches() {
       clearGroup(sketchGroup);
       for (const s of sketches) {
         if (!isShown(s)) continue;
-        const isAct = stu || (ws === 'draw' && s.id === S.ed.sketch);
+        const isAct = stu ? (S.ed.editingSketch == null || s.id === S.ed.editingSketch) : (ws === 'draw' && s.id === S.ed.sketch); // other sketches dim while one is edited
         const top = isAct && !stu;
         const mine = s.id === S.ed.sketch;
         const fixedSet = isAct ? constrainedEntities(s) : null;

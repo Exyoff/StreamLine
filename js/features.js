@@ -249,7 +249,36 @@ export const bodyBoolean = {
 };
 
 // ---------- 3D edge fillet / chamfer ----------
-import { edgeBlend, edgeFrame, circleBlend, sphereCorner } from './edges.js';
+import { edgeBlend, edgeFrame, circleBlend, sphereCorner, featureEdges, straightRun, edgeLoop } from './edges.js';
+function refindEdge(e, W, faces) {
+  if (typeof edgeFrame(W, faces, e.circle ? e.circle.loop[0] : e.a, e.circle ? e.circle.loop[1] : e.b) !== 'string') return;
+  const fe = featureEdges(W, faces);
+  let best = null;
+  if (e.circle) {
+    const seen = new Set();
+    for (const s of fe) {
+      const c = edgeLoop(W, fe, s.a, s.b); if (!c) continue;
+      const key = c.c.map(v => v.toFixed(5)).join(); if (seen.has(key)) continue; seen.add(key);
+      if (Math.abs(c.R - e.circle.R) > 1e-6 || Math.abs(Math.abs(M.dot(c.n, e.circle.n)) - 1) > 1e-9) continue;
+      const d = M.dist(c.c, e.circle.c);
+      if (!best || d < best.d) best = { d, circle: c };
+    }
+    if (best) { e.circle = best.circle; e.a = best.circle.loop[0]; e.b = best.circle.loop[1]; }
+    return;
+  }
+  const dir = M.norm(M.sub(e.b, e.a)), L = M.dist(e.a, e.b), mid = M.mul(M.add(e.a, e.b), 0.5);
+  const seen = new Set();
+  for (const s of fe) {
+    const d0 = M.norm(M.sub(W[s.b], W[s.a]));
+    if (Math.abs(Math.abs(M.dot(d0, dir)) - 1) > 1e-9) continue;
+    const [A, B] = straightRun(W, fe, s.a, s.b);
+    const key = [A, B].map(q => q.map(v => v.toFixed(6)).join()).sort().join('|'); if (seen.has(key)) continue; seen.add(key);
+    if (Math.abs(M.dist(A, B) - L) > 1e-6) continue;
+    const d = M.dist(M.mul(M.add(A, B), 0.5), mid);
+    if (!best || d < best.d) best = { d, A, B };
+  }
+  if (best) { const flip = M.dot(M.sub(best.B, best.A), dir) < 0; e.a = flip ? best.B : best.A; e.b = flip ? best.A : best.B; }
+}
 import { faceRegion, findRegion, regionCentroid, pushPull, shell, mirrorMesh } from './modifiers.js';
 export const edgeBlendOp = {
   label: p => (p.kind === 'fillet' ? 'Fillet' : 'Chamfer') + ` · ${p.edges.length} edge${p.edges.length === 1 ? '' : 's'}`,
@@ -275,6 +304,8 @@ export const edgeBlendOp = {
     for (const id of p._objs) {
       const o = objById(id); if (!o) return 'Body missing';
       let W = worldVerts(o), faces = o.mesh.f;
+      // after an earlier step changed the body, re-find each edge (same direction/length or same circle, nearest)
+      for (const e of p.edges.filter(x => x.obj === id)) refindEdge(e, W, faces);
       for (const e of p.edges.filter(x => x.obj === id)) {
         // Distance 2 follows Distance 1 until it is edited on its own
         if (p.size2 == null || p.size2 === p._size1) p.size2 = p.size;
