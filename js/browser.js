@@ -215,3 +215,14 @@ export function browserTab(group) {
   }) : [h('p', { class: 'note' }, 'Every sketch and feature is recorded here in order. Change an early sketch and the features after it rebuild.')]));
   return [layers, skG, bodies, tl];
 }
+
+// always-visible layer indicator (top-right of the view): active layer, hidden-layer count; opens the Layers panel
+export function renderLayerPill() {
+  const el = $('#layerpill'); if (!el) return;
+  const L = S.doc.layers || [], act = L.find(l => l.id === S.doc.layer) || L[0];
+  const hidden = L.filter(l => l.visible === false).length;
+  const key = [act?.name, hidden, L.length].join('|');
+  if (el.dataset.k === key) return;
+  el.dataset.k = key;
+  el.replaceChildren(...[h('span', { class: 'ic', html: I.layers }), h('span', { class: 'nm' }, act ? act.name : 'Layers'), hidden ? h('span', { class: 'hid' }, `${hidden} hidden`) : null].filter(Boolean));
+}

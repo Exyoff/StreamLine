@@ -47,8 +47,10 @@ Each sketch and feature is a step on the **timeline** strip along the bottom, st
 - **Roll back** to just before or just after a step. The orange marker shows where you are, and steps after it are greyed out and ignored. New work is inserted at the marker; **To end** rolls forward again.
 - **Suppress** or **delete** a step. A step that can no longer be rebuilt turns red and explains why.
 
-Sketches a feature has used are hidden automatically. The **Browser** (sliders button → Browser) lists layers, sketches and bodies, each with an eye toggle.
+Sketches are hidden automatically once features have used all their closed shapes. The **Browser** (sliders button → Browser) lists layers, sketches and bodies, each with an eye toggle.
 Tap a layer to make it active (new sketches and bodies go there), rename it or delete it. Use a row's layer tag to move a sketch or body to another layer.
+The pill in the top-right corner of the view shows the active layer (and how many are hidden); tap it to open the Layers panel.
+**Extrude** and **Push/Pull** start at 0: drag the arrow (snapping gets finer as you zoom in) or type the distance.
 Visibility, names, colours and layers are not history steps, so they survive rebuilds and never break them.
 
 ## Sketching on faces

@@ -499,6 +499,8 @@ function lineObj(pts3, mat, closed) {
     const pts = closed ? [...pts3, pts3[0]] : pts3;
     const g = new LineGeometry(); g.setPositions(pts.flat());
     const fm = view.fatMat({ color: mat.color.getHex(), opacity: mat.opacity, depthTest: mat.depthTest, width: 1.5 });
+    // sketch curves win over the body edges and faces they lie on (no flicker where they coincide)
+    fm.polygonOffset = true; fm.polygonOffsetFactor = -4; fm.polygonOffsetUnits = -12;
     mat.dispose();
     const l = new Line2(g, fm); l.renderOrder = mat.depthTest ? 0 : 5;
     return l;

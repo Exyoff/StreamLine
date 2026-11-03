@@ -82,8 +82,12 @@ try {
   let c = await projW([-12, -8, 0]); await tapV(c.x, c.y);
   check(await st(() => StreamLine.S.ed.profiles.length) === 1, 'Face mode: tapping inside the outline picks the region');
   check((await ctxBar()).includes('Extrude'), 'region selected: the command bar shows Extrude / Revolve / Sweep');
-  await p.locator('#actions .act', { hasText: 'Extrude' }).tap();
+  await p.locator('#actions .act', { hasText: 'Extrude' }).tap(); await p.waitForTimeout(200);
+  check(await st(() => StreamLine.S.doc.objects.length === 0 && StreamLine.getLast().params.distance === 0 && !!StreamLine.getLast().handle && !StreamLine.H.hist().some(r => r.op === 'F.extrude')),
+    'Extrude starts at 0: no body and no timeline step until a distance is given, arrow shown');
+  check(await p.locator('#layerpill').isVisible() && /Default/.test(await p.textContent('#layerpill')), 'the active layer is always shown in the view');
   await p.tap('#lastop .field .val'); await keypad('8');
+  check(await st(() => StreamLine.H.hist().filter(r => r.op === 'F.extrude').length === 1), 'typing the distance builds the body and records one Extrude step');
   const area = 1200 - 0.5 * 64 * 25 * Math.sin(2 * Math.PI / 64);
   const v0 = await vol();
   check(Math.abs(v0 - area * 8) < 1e-6, `extruded plate is exactly area × 8 (${v0.toFixed(3)} mm³)`);
@@ -188,7 +192,8 @@ try {
   check(await st(id => !StreamLine.S.doc.objects.find(o => o.id === id), box.id), 'suppressing a step removes its result');
   await st(() => { const r = StreamLine.H.hist().findLast(x => x.op === 'F.extrude'); StreamLine.BR.toggleStep(r.id); });
   // layers + visibility
-  await p.tap('#btn-props'); await p.tap('#sheet-tabs [data-tab=objects]'); await p.waitForTimeout(200);
+  await p.tap('#layerpill'); await p.waitForTimeout(250);
+  check(await p.locator('#sheet.open').count() === 1 && await p.locator('#sheet-tabs [data-tab=objects].on').count() === 1, 'the layer pill opens the Layers panel');
   check(await p.locator('#sheet-body h3', { hasText: 'Layers' }).count() === 1 && await p.locator('#sheet-body h3', { hasText: 'Timeline' }).count() === 1, 'Browser shows Layers, Sketches, Bodies and the Timeline');
   await st(() => StreamLine.runOp({ label: () => 'Add layer', presentation: true, touch: () => 'all', apply() { StreamLine.S.doc.layers.push({ id: 2, name: 'Parts', visible: true }); StreamLine.S.doc.layer = 2; } }));
   await st(id => StreamLine.runOp({ label: () => 'mv', presentation: true, touch: () => 'all', apply() { StreamLine.S.doc.objects.find(o => o.id === id).layer = 2; } }), box.id);
