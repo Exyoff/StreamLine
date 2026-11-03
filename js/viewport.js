@@ -82,7 +82,7 @@ view.size = () => ({ w: container.clientWidth, h: container.clientHeight });
 view.render = () => { needsRender = true; };
 
 export function applyXray() {
-  const x = S.settings.xray;
+  const x = S.settings.xray || !!view.xrayFor; // sketch editing ghosts the bodies so the sketch shows through
   matMesh.transparent = x; matMesh.opacity = x ? 0.3 : 1; matMesh.depthWrite = !x;
   for (const m of [matEdgeEdit, matPoints]) m.depthTest = !x;
   matMesh.needsUpdate = true;
@@ -345,7 +345,7 @@ view.pickObject = (x, y) => {
   return { id: hit.object.userData.objId, face: tf ? tf[hit.faceIndex] : -1, point: hit.point.toArray(), distance: hit.distance };
 };
 function occluded(world, rc) {
-  if (S.settings.xray) return false;
+  if (S.settings.xray || view.xrayFor) return false;
   const cam = camera();
   const P = new THREE.Vector3(...world);
   let dir, origin;

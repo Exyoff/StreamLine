@@ -146,7 +146,7 @@ export function down(x, y) {
   if (t === 'trim' || t === 'dim' || t === 'corner' || t === 'extend') return false; // handled as taps
   if (EDIT_TOOLS.has(t)) { ensureCmd(); if (!pointStage()) return false; }
   st.press = { x, y, moved: false };
-  snapAt(x, y);
+  snapAt(x, y); st.press.p = st.preview;
   view.render(); emit('drawcard');
   return true;
 }
@@ -154,7 +154,7 @@ export function move(x, y) {
   if (st.grip) return gripMove(x, y);
   if (!st.press) return;
   if (Math.hypot(x - st.press.x, y - st.press.y) > 6) st.press.moved = true;
-  if (!st.start && !(tool() === 'arc' && st.arc) && st.press.moved && !st.pressAnchor) st.pressAnchor = st.preview; // drag-to-draw from press point
+  if (!st.start && !(tool() === 'arc' && st.arc) && st.press.moved && !st.pressAnchor) st.pressAnchor = st.press.p || st.preview; // drag-to-draw from press point
   snapAt(x, y, fromPt() || st.pressAnchor);
   view.render(); emit('drawcard');
 }

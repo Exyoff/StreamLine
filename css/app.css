@@ -296,14 +296,14 @@ body.ws-model #lastop .field.wide { flex-direction: column; align-items: stretch
 .pal-in { margin-bottom: 6px; }
 .pal-list { max-height: min(56vh, 460px); overflow-y: auto; }
 .pal-list .mi { height: 40px; font-size: 14px; }
-.pal-list .mi.hot { background: rgba(255,154,31,.16); color: var(--accent); }
+.pal-list .mi.hot { background: #3b3024; color: var(--accent); }
 #ws-seg button { padding: 0 11px; }
 
 /* ---------- parametric timeline ---------- */
-#timeline { position: absolute; z-index: 3; left: 0; right: 0; bottom: calc(var(--cmdh) + var(--sabv)); height: var(--tlh); display: none;
-  align-items: center; gap: 4px; padding: 4px 8px 4px calc(var(--sal) + 8px); background: rgba(24,25,28,.92); border-top: 1px solid var(--line); border-bottom: 0; }
+#timeline { position: absolute; z-index: 3; left: 0; right: 0; bottom: calc(var(--cmdh) + var(--sabv)); height: var(--tlh); display: none; overflow: hidden !important;
+  align-items: center; gap: 4px; padding: 4px 0 4px calc(var(--sal) + 8px); background: rgba(24,25,28,.92); border-top: 1px solid var(--line); border-bottom: 0; }
 body.has-tl #timeline { display: flex; }
-.tl-title { position: sticky; left: -8px; z-index: 1; align-self: stretch; display: flex; align-items: center; padding: 0 6px 0 4px; background: rgb(24,25,28); flex: none; font: 700 10px var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-right: 4px; }
+.tl-title { align-self: stretch; display: flex; align-items: center; padding: 0 6px 0 0; flex: none; font: 700 10px var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-right: 4px; }
 .tl-chip { flex: none; display: flex; align-items: center; gap: 4px; height: 36px; max-width: 150px; padding: 0 8px 0 6px; border-radius: 8px;
   background: #2c2e34; border: 1px solid #3a3d45; font-size: 12px; font-weight: 600; color: var(--text); }
 .tl-chip .ic { display: grid; place-items: center; width: 18px; height: 18px; flex: none; }
@@ -343,3 +343,23 @@ body.ws-model #lastop { max-height: calc(100% - 76px - var(--tlh) - var(--cmdh) 
 }
 @media (pointer: coarse) { .kbhint { display: none; } }
 #toolrail #tools { overflow-y: auto; scrollbar-width: none; mask-image: linear-gradient(#000 calc(100% - 18px), transparent); -webkit-mask-image: linear-gradient(#000 calc(100% - 18px), transparent); }
+
+.tl-row { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; height: 100%; overflow-x: auto; scrollbar-width: none; padding-right: 8px;
+  mask-image: linear-gradient(90deg, transparent, #000 10px, #000 calc(100% - 14px), transparent); -webkit-mask-image: linear-gradient(90deg, transparent, #000 10px, #000 calc(100% - 14px), transparent); }
+.tl-row::-webkit-scrollbar { display: none; }
+.tl-row > :first-child { margin-left: 8px; }
+.tl-chip.open { background: #3b3024; border-color: var(--accent); }
+/* phone portrait: the op dialog docks at the bottom, above the timeline, leaving the model in view */
+@media (max-width: 500px) {
+  body.ws-model #lastop { top: auto; bottom: calc(var(--cmdh) + var(--tlh) + var(--sabv) + 6px); left: calc(var(--sal) + 70px); right: calc(var(--sar) + 8px); width: auto; max-height: 34%;
+    box-shadow: 0 -6px 24px rgba(0,0,0,.5); }
+  body.ws-model.has-lastop #vtools-r, body.ws-model.has-lastop #nav { visibility: hidden; }
+}
+/* phone landscape: two-column icon rail so every tool stays reachable; draw card on the right */
+@media (orientation: landscape) and (max-height: 500px) {
+  #toolrail { width: 96px; }
+  #toolrail #tools { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; align-content: start; }
+  #toolrail #vtools-l { flex-direction: row; justify-content: center; }
+  #hud, body.ws-model #lastop { left: calc(var(--sal) + 110px); }
+  #draw-card { left: auto; right: calc(var(--sar) + 10px); top: 8px; }
+}
