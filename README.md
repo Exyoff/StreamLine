@@ -34,8 +34,14 @@ On iPhone, open the page in Safari, then Share → **Add to Home Screen**. It th
 - Statistics: surface area, volume and a watertight check.
 
 ## Layout
-- The Draw / CAD / Model switcher, undo/redo and properties sit in the top bar. Under it is the **station bar** with the actions for the current workspace: Constrain, Modify commands, Extrude, Fillet and so on.
-- **Tools** are in a vertical rail on the left of the viewport. View controls (the axis navigator and the persp/frame/snap/x-ray buttons) are bottom-right. The AutoCAD command line runs along the bottom in Draw and CAD.
+The interface follows the iOS "Liquid Glass" design language. The 3D view fills the whole screen, and every control floats over it as translucent glass:
+- **Top:** the menu button, the Edge / Face / Solid selector, and a capsule with undo, redo and the inspector.
+- **Bottom:** the command capsule shows the actions for the current selection (Extrude, Fillet, Boolean and so on). The search button beside it opens the command palette.
+- **Above the command capsule:** the history timeline.
+- **Left:** the tool rail.
+- **Bottom right:** the view controls (persp/ortho, frame, snap, x-ray) and the axis navigator.
+- **Top right:** the layer pill.
+- The inspector / layers / settings sheet, the menus and the keypad are glass panels with large rounded corners.
 
 ## Parametric timeline, layers and visibility
 
