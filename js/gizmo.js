@@ -6,6 +6,7 @@ import { runOp, updateOp, commit, cancelOp, getLast } from './ops.js';
 import * as OPS from './operators.js';
 import { fmtLen, fmtAng, fmtNum } from './units.js';
 import * as M from './mesh.js';
+import { xfFor } from './scene.js';
 
 const AX = [
   { k: 'x', v: [1, 0, 0], col: '#f2545b' },
@@ -205,7 +206,11 @@ function dragStart(x, y) {
   const k = kind();
   if (k === 'handle') {
     const last = getLast(), h = last.handle;
-    drag = { part, k, v0: last.params[h.key], t0: axisParam(x, y, M.add(h.origin, M.mul(h.dir, last.params[h.key])), h.dir) ?? 0, h };
+    drag = { part, k, v0: last.params[h.key], t0: axisParam(x, y, M.add(h.origin, M.mul(h.dir, last.params[h.key])), h.dir) ?? 0, h, x0: x, y0: y };
+    // screen-space gain: how many pixels one mm along the arrow moves on screen (stable at any view angle)
+    const O = M.add(h.origin, M.mul(h.dir, drag.v0)), A = view.project(O), B = view.project(M.add(O, h.dir));
+    const sx = B.x - A.x, sy = B.y - A.y, ppm = Math.hypot(sx, sy);
+    if (A.front && B.front && ppm * view.worldPerPixel(O) > 0.2) { drag.sdir = [sx / ppm, sy / ppm]; drag.ppm = ppm; }
     view.render(); return true;
   }
   const mode = k;
@@ -232,9 +237,9 @@ function dragMove(x, y) {
   const pv = drag.pivot;
   if (drag.k === 'handle') {
     const h = drag.h;
-    const t = axisParam(x, y, M.add(h.origin, M.mul(h.dir, drag.v0)), h.dir);
-    if (t == null) return;
-    let v = drag.v0 + (t - drag.t0);
+    let v;
+    if (drag.sdir) v = drag.v0 + ((x - drag.x0) * drag.sdir[0] + (y - drag.y0) * drag.sdir[1]) / drag.ppm;
+    else { const t = axisParam(x, y, M.add(h.origin, M.mul(h.dir, drag.v0)), h.dir); if (t == null) return; v = drag.v0 + (t - drag.t0); }
     if (snapOn()) v = stepSnap(v, fineStep());
     if (h.min != null) v = Math.max(h.min, v);
     updateOp({ [h.key]: v });
@@ -292,6 +297,11 @@ function dragMove(x, y) {
 function dragEnd() {
   if (!drag) return;
   if (drag.k !== 'handle') commit();
+  else { // the part grew past the screen edge: bring it back into view
+    const pts = S.doc.objects.filter(o => !o.hidden && o.mesh.v.length).flatMap(o => { const W = o.mesh.v.map(xfFor(o).toW), b = M.bbox(W); return [b.min, b.max, [b.min[0], b.max[1], b.min[2]], [b.max[0], b.min[1], b.max[2]]]; });
+    const { w, h } = view.size();
+    if (pts.some(q => { const s = view.project(q); return !s.front || s.x < 0 || s.y < 0 || s.x > w || s.y > h; })) view.frame(pts);
+  }
   drag = null; readout = null; snapMarker.visible = false;
   emit('lastop', getLast());
   view.render();

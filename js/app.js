@@ -516,6 +516,9 @@ function drawOverlays() {
   // selected body edges (CAD)
   drawFaceHighlights();
   edgeGroup.clear();
+  // while a fillet / chamfer dialog is open, keep showing the edges it works on
+  const lop = getLast(), opEdges = !S.ed.edges.length && lop && lop.committed && lop.def === F.edgeBlendOp && !$('#lastop').hidden ? (lop.sel?.edges || []).filter(e => e.pts) : [];
+  for (const e of opEdges) edgeGroup.add(Draw.fatLine(e.pts, 0xff9a1f, 1.8, false));
   if ((S.ed.workspace === 'cad' || S.ed.workspace === 'model') && S.ed.edges.length) {
     for (const e of S.ed.edges) {
       const pts = e.pts || (e.circle ? e.circle.loop : [e.a, e.b]);
