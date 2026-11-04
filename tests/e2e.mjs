@@ -158,6 +158,20 @@ try {
   check(Math.abs(await vol() - v1) < 1e-9, 'undo returns to the state before the fillet exactly');
   await shot('4-final');
 
+  // --- drawing modes: rectangle (2 corners / centre / 3 points), circle (centre / 2 points / 3 points), arc (3 points)
+  const drawWith = (t, m, pts) => st(([t, m, pts]) => { const L = StreamLine; L.S.ed.tool = t; L.Draw.setDrawMode(t, m); for (const q of pts) L.Draw.commitPoint(q); const sk = L.S.doc.sketches.find(k => k.id === L.S.ed.sketch); return sk.ents.slice(-4); }, [t, m, pts]);
+  let e4 = await drawWith('rect', 'center', [[100, 100], [105, 103]]);
+  check(e4.at(-1).t === 'rect' && e4.at(-1).x === 95 && e4.at(-1).y === 97 && e4.at(-1).w === 10 && e4.at(-1).h === 6, 'Rectangle · centre + corner');
+  e4 = await drawWith('rect', '3pt', [[200, 0], [210, 10], [200, 20]]);
+  check(e4.every(e => e.t === 'line') && Math.abs(Math.hypot(e4[1].b[0] - e4[1].a[0], e4[1].b[1] - e4[1].a[1]) - Math.SQRT2 * 10) < 1e-9, 'Rectangle · three points makes a rotated rectangle (4 lines)');
+  e4 = await drawWith('circle', '2pt', [[120, 0], [130, 0]]);
+  check(e4.at(-1).t === 'circle' && e4.at(-1).c[0] === 125 && e4.at(-1).r === 5, 'Circle · two points (diameter)');
+  e4 = await drawWith('circle', '3pt', [[310, 0], [300, 10], [290, 0]]);
+  check(e4.at(-1).t === 'circle' && Math.abs(e4.at(-1).c[0] - 300) < 1e-9 && Math.abs(e4.at(-1).r - 10) < 1e-9, 'Circle · three points');
+  e4 = await drawWith('arc', '3pt', [[410, 0], [390, 0], [400, 10]]);
+  check(e4.at(-1).t === 'arc' && Math.abs(e4.at(-1).r - 10) < 1e-9 && Math.abs(e4.at(-1).a1 - e4.at(-1).a0 - Math.PI) < 1e-9, 'Arc · start, end, through');
+  await st(() => { StreamLine.Draw.setDrawMode('rect', 'corner'); StreamLine.Draw.setDrawMode('circle', 'center'); StreamLine.Draw.setDrawMode('arc', 'center'); StreamLine.S.ed.tool = 'select'; });
+
   // --- parametric timeline: every step recorded; editing a sketch rebuilds later features
   const tl = await st(() => StreamLine.H.hist().map(r => r.kind === 'sketch' ? 'sketch' : r.op));
   check(tl[0] === 'sketch' && tl.includes('F.extrude'), `timeline records sketches and features in order (${tl.join(' → ')})`);
