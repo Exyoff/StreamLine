@@ -22,7 +22,6 @@
 <div id="app">
   <main id="viewport">
     <div id="hud"></div>
-    <button id="layerpill" class="glass" aria-label="Layers"></button>
     <canvas id="nav" aria-label="View axes"></canvas>
     <div class="vcol glass" id="vtools-r">
       <button class="fab" id="btn-persp" aria-label="Perspective / orthographic"></button>
@@ -60,32 +59,34 @@
   <!-- floating Liquid Glass chrome over the full-screen view -->
   <header id="topbar">
     <button class="ib glass circ" id="btn-menu" aria-label="Menu"></button>
-    <div class="seg glass" id="ws-seg" role="tablist" aria-label="Selection mode">
-      <button data-pick="edge" title="Curves and edges (2)">Edge</button>
-      <button data-pick="face" title="Regions and faces (3)">Face</button>
-      <button data-pick="solid" title="Solids (4)">Solid</button>
-    </div>
     <div class="spacer"></div>
-    <div class="glass capsule">
-      <button class="ib" id="btn-undo" aria-label="Undo"></button>
-      <button class="ib" id="btn-redo" aria-label="Redo"></button>
-      <button class="ib" id="btn-props" aria-label="Inspector and layers"></button>
-    </div>
+    <button id="layerpill" class="glass" aria-label="Layers and items"></button>
+    <button class="ib glass circ" id="btn-history" aria-label="History"></button>
+    <button class="ib glass circ" id="btn-props" aria-label="Settings"></button>
   </header>
 
   <div id="stationbar">
     <div id="actions" class="scrollrow glass"></div>
-    <button class="ib glass circ" id="btn-cmd" aria-label="Search commands"></button>
+    <div class="botrow">
+      <div class="glass capsule" id="undo-cap">
+        <button class="ib" id="btn-undo" aria-label="Undo"></button>
+        <button class="ib" id="btn-redo" aria-label="Redo"></button>
+      </div>
+      <div class="seg glass" id="ws-seg" role="tablist" aria-label="Selection mode">
+        <button data-pick="edge" title="Curves and edges (2)">Edge</button>
+        <button data-pick="face" title="Regions and faces (3)">Face</button>
+        <button data-pick="solid" title="Solids (4)">Solid</button>
+      </div>
+      <button class="ib glass circ" id="btn-cmd" aria-label="Search commands"></button>
+    </div>
   </div>
 
-
-
   <section id="sheet" class="glass" aria-hidden="true">
-    <div class="grab"></div>
-    <div class="sheet-head">
+        <div class="sheet-head">
       <div class="seg" id="sheet-tabs">
-        <button data-tab="item">Item</button>
-        <button data-tab="objects">Layers</button>
+        <button data-tab="history">History</button>
+        <button data-tab="objects">Items</button>
+        <button data-tab="item">Info</button>
         <button data-tab="settings">Settings</button>
       </div>
       <button class="ib" id="sheet-close" aria-label="Close"></button>

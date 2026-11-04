@@ -34,14 +34,16 @@ On iPhone, open the page in Safari, then Share → **Add to Home Screen**. It th
 - Statistics: surface area, volume and a watertight check.
 
 ## Layout
-The interface follows the iOS "Liquid Glass" design language. The 3D view fills the whole screen, and every control floats over it as translucent glass:
-- **Top:** the menu button, the Edge / Face / Solid selector, and a capsule with undo, redo and the inspector.
-- **Bottom:** the command capsule shows the actions for the current selection (Extrude, Fillet, Boolean and so on). The search button beside it opens the command palette.
-- **Above the command capsule:** the history timeline.
+The interface follows the iOS "Liquid Glass" design language. The 3D view fills the whole screen, and every control floats over it as glass.
+- **Top left:** the menu button.
+- **Top right:** the layer pill, **History** and **Settings**.
+  - History opens a panel that slides in from the right, listing every step in order. Tap a step to edit it, roll back to it, suppress it or delete it.
+  - The same panel has tabs for **Items** (layers, sketches, bodies), **Info** (properties of the selection) and **Settings**.
+  - The History button shows an orange dot while you are rolled back and a red dot if a step failed.
+- **Bottom:** the command capsule for the current selection. Under it are undo/redo (bottom left), the **Edge / Face / Solid** switch and the command search.
 - **Left:** the tool rail.
-- **Bottom right:** the view controls (persp/ortho, frame, snap, x-ray) and the axis navigator.
-- **Top right:** the layer pill.
-- The inspector / layers / settings sheet, the menus and the keypad are glass panels with large rounded corners.
+- **Bottom right:** the view controls and the axis navigator.
+- The old history strip along the bottom can be turned back on in Settings.
 
 ## Parametric timeline, layers and visibility
 

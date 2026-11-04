@@ -161,7 +161,10 @@ try {
   // --- parametric timeline: every step recorded; editing a sketch rebuilds later features
   const tl = await st(() => StreamLine.H.hist().map(r => r.kind === 'sketch' ? 'sketch' : r.op));
   check(tl[0] === 'sketch' && tl.includes('F.extrude'), `timeline records sketches and features in order (${tl.join(' → ')})`);
-  check(await p.locator('#timeline .tl-chip').count() >= 3, 'the timeline strip shows a chip per step');
+  await p.tap('#btn-history'); await p.waitForTimeout(450);
+  check(await p.locator('#sheet.open').count() === 1 && await p.locator('#sheet-body .tlrow').count() >= 3, 'History slides in from the right with a row per step');
+  await p.tap('#btn-history'); await p.waitForTimeout(450);
+  check(await p.locator('#sheet.open').count() === 0, 'tapping History again slides it away');
   // fresh part: rectangle 40×20 extruded 10, then grow the rectangle → the body follows
   await st(() => { StreamLine.S.doc.objects.forEach(o => (o.hidden = true)); });
   await st(() => StreamLine.addSketchedPrim('cube'));
@@ -184,7 +187,10 @@ try {
   await st(() => { const i = StreamLine.H.hist().findLastIndex(x => x.op === 'F.extrude'); StreamLine.BR.rollTo(i); });
   check(await st(() => StreamLine.S.doc.objects.length) === nObj - 1, 'rolling the marker back before the extrude removes its body');
   await p.waitForTimeout(200);
-  check(await p.locator('#timeline .tl-chip.future').count() >= 1, 'steps after the marker are greyed in the timeline');
+  check(await p.locator('#btn-history.b-rb').count() === 1, 'the History button shows a rolled-back badge');
+  await p.tap('#btn-history'); await p.waitForTimeout(450);
+  check(await p.locator('#sheet-body .hmarker').count() === 1 && await p.locator('#sheet-body .tlrow.dim').count() >= 1, 'History shows the rollback marker and greys the steps after it');
+  await p.tap('#btn-history'); await p.waitForTimeout(400);
   await st(() => StreamLine.BR.rollTo(1e9));
   check(await st(id => !!StreamLine.S.doc.objects.find(o => o.id === id), box.id), 'rolling to the end brings it back');
   // suppress / failure display
@@ -194,7 +200,7 @@ try {
   // layers + visibility
   await p.tap('#layerpill'); await p.waitForTimeout(250);
   check(await p.locator('#sheet.open').count() === 1 && await p.locator('#sheet-tabs [data-tab=objects].on').count() === 1, 'the layer pill opens the Layers panel');
-  check(await p.locator('#sheet-body h3', { hasText: 'Layers' }).count() === 1 && await p.locator('#sheet-body h3', { hasText: 'Timeline' }).count() === 1, 'Browser shows Layers, Sketches, Bodies and the Timeline');
+  check(await p.locator('#sheet-body h3', { hasText: 'Layers' }).count() === 1 && await p.locator('#sheet-body h3', { hasText: 'Bodies' }).count() === 1, 'Items shows Layers, Sketches and Bodies');
   await st(() => StreamLine.runOp({ label: () => 'Add layer', presentation: true, touch: () => 'all', apply() { StreamLine.S.doc.layers.push({ id: 2, name: 'Parts', visible: true }); StreamLine.S.doc.layer = 2; } }));
   await st(id => StreamLine.runOp({ label: () => 'mv', presentation: true, touch: () => 'all', apply() { StreamLine.S.doc.objects.find(o => o.id === id).layer = 2; } }), box.id);
   await st(() => StreamLine.runOp({ label: () => 'hide', presentation: true, touch: () => 'all', apply() { StreamLine.S.doc.layers.find(l => l.id === 2).visible = false; } }));
@@ -206,7 +212,7 @@ try {
   check(await st(() => StreamLine.S.doc.layers.some(l => l.name === 'Fixtures' ) && StreamLine.S.doc.layers.find(l => l.id === StreamLine.S.doc.layer).name === 'Fixtures'), 'New layer uses an in-app name field and becomes active');
   await st(() => { const L = StreamLine.S.doc; L.layer = 1; });
   check(await p.locator('#sheet-body .objrow.act').count() === 0 && await p.locator('#sheet-body .objrow.cur').count() >= 1, 'Browser rows use their own "current" style (no clash with the command bar)');
-  await tapV(220, 120);
+  await tapV(24, 300);
   check(!(await p.locator('#sheet.open').count()), 'tapping the viewport closes the Browser sheet on a phone');
   // Plasticity-style hole: on a face, pushing the extrude into the body cuts automatically
   await st(() => StreamLine.addSketchedPrim('cube'));
@@ -237,7 +243,7 @@ try {
   await p.tap('#ws-seg [data-pick=edge]'); await p.waitForTimeout(150); // already in Edge mode: the bar must still switch
   await st(() => { const r = StreamLine.H.hist().find(x => x.kind === 'sketch'); StreamLine.BR.editStep(r.id); });
   await p.waitForTimeout(250);
-  check(/Editing/.test(await p.textContent('#hud')) && (await ctxBar()).includes('Finish') && await p.locator('#timeline .tl-chip.cur').count() === 1, 'Edit sketch: HUD says Editing, chip highlighted, Finish offered');
+  check(/Editing/.test(await p.textContent('#hud')) && (await ctxBar()).includes('Finish'), 'Edit sketch: HUD says Editing, Finish offered');
   check(await st(() => StreamLine.view.xrayFor === true), 'bodies are ghosted while a sketch is edited');
   await p.tap('#actions .act.primary'); await p.waitForTimeout(200);
   check(await st(() => StreamLine.S.ed.editingSketch) == null, 'Finish leaves sketch editing');

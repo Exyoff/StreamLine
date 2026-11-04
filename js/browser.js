@@ -28,7 +28,7 @@ function recIcon(rec) {
 const when = t => { if (!t) return ''; const d = new Date(t); return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' · ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }); };
 const idxOf = id => H.hist().findIndex(r => r.id === id);
 let focusErr = false, lastEnd = -1;
-function failNote(failed) { if (failed.length) { focusErr = true; toast(`⚠ ${failed.length} later step${failed.length > 1 ? 's' : ''} failed — tap the red chip`, 3200); } }
+function failNote(failed) { if (failed.length) { focusErr = true; toast(`⚠ ${failed.length} later step${failed.length > 1 ? 's' : ''} failed — see History`, 3200); } }
 
 // ---------- timeline actions (all undoable, none recorded) ----------
 export function rollTo(k) {
@@ -87,8 +87,8 @@ export function deleteStep(id) {
 export function renderTimeline() {
   const el = $('#timeline'); if (!el) return;
   const hist = H.hist(), end = H.markerIndex();
-  document.body.classList.toggle('has-tl', hist.length > 0 && S.settings.timeline !== false);
-  if (!hist.length || S.settings.timeline === false) { el.replaceChildren(); lastEnd = -1; return; }
+  document.body.classList.toggle('has-tl', hist.length > 0 && S.settings.timeline === true);
+  if (!hist.length || S.settings.timeline !== true) { el.replaceChildren(); lastEnd = -1; return; }
   const kids = [];
   hist.forEach((rec, i) => {
     if (i === end) kids.push(h('span', { class: 'tl-marker', title: 'Rollback marker' }));
@@ -206,14 +206,7 @@ export function browserTab(group) {
     row.onclick = () => ctx.selectObj(o.id);
     return row;
   }) : [h('p', { class: 'note' }, 'No bodies yet — tap a closed sketch region, then Extrude or Revolve.')]));
-  const hist = H.hist();
-  const tl = group(`Timeline · ${hist.length} step${hist.length === 1 ? '' : 's'}`, ...(hist.length ? hist.map((rec, i) => {
-    const row = h('div', { class: 'objrow tlrow' + (i >= end ? ' dim' : '') + (rec.err ? ' err' : '') + (rec.off ? ' off' : '') },
-      h('span', { html: recIcon(rec) }), h('span', { class: 'nm' }, `${i + 1}. ${recLabel(rec)}`), h('span', { class: 'meta' }, rec.err ? '⚠ failed' : rec.off ? 'suppressed' : when(rec.t).split(' · ')[1] || ''));
-    row.onclick = () => stepMenu(row, rec, i);
-    return row;
-  }) : [h('p', { class: 'note' }, 'Every sketch and feature is recorded here in order. Change an early sketch and the features after it rebuild.')]));
-  return [layers, skG, bodies, tl];
+  return [layers, skG, bodies];
 }
 
 // always-visible layer indicator (top-right of the view): active layer, hidden-layer count; opens the Layers panel
@@ -225,4 +218,33 @@ export function renderLayerPill() {
   if (el.dataset.k === key) return;
   el.dataset.k = key;
   el.replaceChildren(...[h('span', { class: 'ic', html: I.layers }), h('span', { class: 'nm' }, act ? act.name : 'Layers'), hidden ? h('span', { class: 'hid' }, `${hidden} hidden`) : null].filter(Boolean));
+}
+
+// History panel (slide-over from the right): every step in order, the rollback marker between rows
+export function historyTab(group) {
+  const hist = H.hist(), end = H.markerIndex();
+  if (!hist.length) return [h('p', { class: 'note' }, 'Every sketch and feature you make is recorded here, in order, with the time it was made. Edit an early sketch or feature and everything after it rebuilds.')];
+  const rows = [];
+  hist.forEach((rec, i) => {
+    if (i === end) rows.push(h('div', { class: 'hmarker' }, h('span', {}, 'Rolled back here — later steps are not applied')));
+    const row = h('div', { class: 'objrow tlrow' + (i >= end ? ' dim' : '') + (rec.err ? ' err' : '') + (rec.off ? ' off' : '') + (rec.kind === 'sketch' && rec.sk === S.ed.editingSketch ? ' cur' : ''), 'data-id': rec.id },
+      h('span', { class: 'hic' + (rec.kind === 'sketch' ? ' sk' : ''), html: recIcon(rec) }),
+      h('span', { class: 'nm' }, recLabel(rec), rec.err ? h('small', { class: 'herr' }, rec.err) : null),
+      h('span', { class: 'meta' }, rec.err ? '⚠' : rec.off ? 'off' : (when(rec.t).split(' · ')[1] || '')),
+      h('span', { class: 'chev', html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>' }));
+    row.onclick = () => stepMenu(row, rec, i);
+    rows.push(row);
+  });
+  const failed = hist.filter(r => r.err).length;
+  return [
+    end < hist.length ? h('button', { class: 'btn primary wide', onclick: () => rollTo(hist.length) }, `Roll to end · apply ${hist.length - end} step${hist.length - end === 1 ? '' : 's'}`) : null,
+    failed ? h('p', { class: 'note err' }, `⚠ ${failed} step${failed === 1 ? '' : 's'} could not be rebuilt — tap to edit, suppress or delete.`) : null,
+    group(`${hist.length} step${hist.length === 1 ? '' : 's'}`, ...rows),
+  ].filter(Boolean);
+}
+// badge on the History button: red when a step failed, orange while rolled back
+export function renderHistoryBadge() {
+  const el = document.querySelector('#btn-history'); if (!el) return;
+  const hist = H.hist(), st = hist.some(r => r.err) ? 'err' : H.markerIndex() < hist.length ? 'rb' : '';
+  if (el.dataset.st !== st) { el.dataset.st = st; el.classList.toggle('b-err', st === 'err'); el.classList.toggle('b-rb', st === 'rb'); }
 }
