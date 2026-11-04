@@ -20,7 +20,17 @@ const D = Math.PI / 180;
 export const corner = { kind: 'fillet', size: null };
 let propsOpen = false; // compact entity card by default (AutoCAD-style quick properties)
 export const st = { start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null };
-export function resetTool() { result = null; st.pressed = false; st.arcMode = false; st.lastDir = null; if (tool() !== 'line') lineOpts.construction = false; Object.assign(st, { cmd: null, last: null, dimLine: null, start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null }); view.render(); emit('drawcard'); }
+// drawing modes (Fusion / Plasticity style variants of the same tool)
+export const MODES = {
+  rect: [['corner', 'Two corners', '2 corners'], ['center', 'Centre + corner', 'centre'], ['3pt', 'Three points (rotated)', '3 points']],
+  circle: [['center', 'Centre + radius', 'centre'], ['2pt', 'Two points (diameter)', '2 points'], ['3pt', 'Three points', '3 points']],
+  arc: [['center', 'Centre, start, end', 'centre'], ['3pt', 'Start, end, through', '3 points']],
+};
+export const drawMode = { rect: 'corner', circle: 'center', arc: 'center' };
+export function setDrawMode(t, m) { if (!MODES[t] || !MODES[t].some(x => x[0] === m)) return; drawMode[t] = m; resetTool(); }
+const mode = t => drawMode[t] || (MODES[t] && MODES[t][0][0]);
+const modeName = t => (MODES[t] || []).find(x => x[0] === mode(t))?.[1] || '';
+export function resetTool() { result = null; st.p2 = null; st.pressed = false; st.arcMode = false; st.lastDir = null; if (tool() !== 'line') lineOpts.construction = false; Object.assign(st, { cmd: null, last: null, dimLine: null, start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null }); view.render(); emit('drawcard'); }
 // In the studio (unified 3D workspace) each stroke draws on the plane under the finger: a body face,
 // or the construction plane (ground). Curves on the same plane share one sketch, created on demand.
 export const studio = () => S.ed.workspace === 'model';
@@ -131,6 +141,31 @@ function placeRect(a, b) {
   add('Rectangle', { t: 'rect', x: Math.min(a[0], b[0]), y: Math.min(a[1], b[1]), w, h: hh });
   st.start = null; st.typed = {};
 }
+// rectangle from a side (a→b, any angle) and a signed height: 4 lines
+function placeRect3(a, b, hgt) {
+  const L = SK.d2(a, b);
+  if (L < 1e-9 || Math.abs(hgt) < 1e-9) { toast('Rectangle needs a side and a height'); return; }
+  const n = [-(b[1] - a[1]) / L * hgt, (b[0] - a[0]) / L * hgt];
+  const P = [a, b, [b[0] + n[0], b[1] + n[1]], [a[0] + n[0], a[1] + n[1]]];
+  if (Math.abs(n[0]) < 1e-12 || Math.abs(n[1]) < 1e-12) { placeRect(a, P[2]); return; } // axis aligned: a real rectangle entity
+  editSketch('Rectangle', s => { for (let i = 0; i < 4; i++) F.addEntity(s, { t: 'line', a: P[i].slice(), b: P[(i + 1) % 4].slice() }); });
+  st.start = null; st.p2 = null; st.typed = {};
+}
+const rectHeight = (a, b, p) => { const L = SK.d2(a, b); return L < 1e-12 ? 0 : ((p[0] - a[0]) * -(b[1] - a[1]) + (p[1] - a[1]) * (b[0] - a[0])) / L; };
+// circle through three points (null if collinear)
+export function circle3(a, b, c) {
+  const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+  if (Math.abs(d) < 1e-12) return null;
+  const s = q => q[0] * q[0] + q[1] * q[1];
+  const cx = (s(a) * (b[1] - c[1]) + s(b) * (c[1] - a[1]) + s(c) * (a[1] - b[1])) / d, cy = (s(a) * (c[0] - b[0]) + s(b) * (a[0] - c[0]) + s(c) * (b[0] - a[0])) / d;
+  return { c: [cx, cy], r: Math.hypot(a[0] - cx, a[1] - cy) };
+}
+// arc from start to end passing through a third point
+function arc3(a, b, m) {
+  const C = circle3(a, b, m); if (!C) return null;
+  const A = ang(C.c, a), B = ang(C.c, b), Mm = ang(C.c, m), T = 2 * Math.PI, ccw = (x, y) => ((y - x) % T + T) % T;
+  return ccw(A, Mm) < ccw(A, B) ? { c: C.c, r: C.r, a0: A, sw: ccw(A, B) } : { c: C.c, r: C.r, a0: B, sw: ccw(B, A) };
+}
 function placeCircle(c, r) {
   if (!(r > 1e-9)) return;
   add('Circle', { t: 'circle', c, r }); st.start = null; st.typed = {};
@@ -191,13 +226,36 @@ export function commitPoint(p, anchor = null) {
     else if (!st.start) { st.start = p; }
     else placeLine(st.start, p);
   } else if (t === 'rect') {
-    if (!st.start && anchor) placeRect(anchor, p);
-    else if (!st.start) st.start = p;
-    else placeRect(st.start, p);
+    const m = mode('rect');
+    if (m === '3pt') {
+      if (!st.start && anchor) { st.start = anchor; st.p2 = p; }
+      else if (!st.start) st.start = p;
+      else if (!st.p2) { if (SK.d2(st.start, p) > 1e-9) st.p2 = p; }
+      else placeRect3(st.start, st.p2, rectHeight(st.start, st.p2, p));
+    } else {
+      const a = !st.start && anchor ? anchor : st.start;
+      if (!a) st.start = p;
+      else if (m === 'center') placeRect([2 * a[0] - p[0], 2 * a[1] - p[1]], p);
+      else placeRect(a, p);
+    }
   } else if (t === 'circle') {
-    if (!st.start && anchor) placeCircle(anchor, SK.d2(anchor, p));
+    const m = mode('circle');
+    if (m === '3pt') {
+      if (!st.start && anchor) { st.start = anchor; st.p2 = p; }
+      else if (!st.start) st.start = p;
+      else if (!st.p2) { if (SK.d2(st.start, p) > 1e-9) st.p2 = p; }
+      else { const C = circle3(st.start, st.p2, p); if (!C) toast('The three points are in a line'); else { placeCircle(C.c, C.r); st.p2 = null; } }
+    } else {
+      const a = !st.start && anchor ? anchor : st.start;
+      if (!a) st.start = p;
+      else if (m === '2pt') placeCircle([(a[0] + p[0]) / 2, (a[1] + p[1]) / 2], SK.d2(a, p) / 2);
+      else placeCircle(a, SK.d2(a, p));
+    }
+  } else if (t === 'arc' && mode('arc') === '3pt') {
+    if (!st.start && anchor) { st.start = anchor; st.p2 = p; }
     else if (!st.start) st.start = p;
-    else placeCircle(st.start, SK.d2(st.start, p));
+    else if (!st.p2) { if (SK.d2(st.start, p) > 1e-9) st.p2 = p; }
+    else { const A = arc3(st.start, st.p2, p); if (!A) toast('The three points are in a line'); else { placeArc(A.c, A.r, A.a0, A.sw / D); st.start = null; st.p2 = null; } }
   } else if (t === 'arc') {
     if (!st.arc) { st.arc = { c: anchor || p }; if (anchor) { st.arc.r = SK.d2(anchor, p); st.arc.a0 = ang(anchor, p); } }
     else if (st.arc.r == null) { st.arc.r = SK.d2(st.arc.c, p); st.arc.a0 = ang(st.arc.c, p); if (st.arc.r < 1e-9) st.arc.r = null; }
@@ -412,25 +470,51 @@ export function cardContent() {
         h('button', { class: 'btn', onclick: () => resetTool() }, 'Finish')));
   }
   if (t === 'rect') {
-    if (!st.start) return h('div', {}, title('Rectangle', 'two corners · or type the first'), xyFields('Corner', (p, k) => setStart(p, k)));
-    const W = st.typed.w ?? (pv() ? pv()[0] - st.start[0] : 0), H = st.typed.h ?? (pv() ? pv()[1] - st.start[1] : 0);
-    const go = () => placeRect(st.start, [st.start[0] + (st.typed.w ?? W), st.start[1] + (st.typed.h ?? H)]);
-    return h('div', {}, title('Rectangle', 'second corner'),
+    const m = mode('rect'), bar = modeBar('rect');
+    if (!st.start) return h('div', {}, title('Rectangle', m === 'center' ? 'tap the centre · or type it' : m === '3pt' ? 'first corner of the base side' : 'two corners · or type the first'), bar, xyFields(m === 'center' ? 'Centre' : 'Corner', (p, k) => setStart(p, k)));
+    if (m === '3pt') {
+      if (!st.p2) {
+        const L = pv() ? SK.d2(st.start, pv()) : 0, A = st.typed.ang ?? (pv() && L > 1e-9 ? ang(st.start, pv()) / D : 0);
+        return h('div', {}, title('Rectangle', 'end of the base side'), bar, h('div', { class: 'fields' },
+          field({ label: 'Side length', kind: 'len', value: L, min: 0, onCommit: v => { const a2 = (st.typed.ang ?? A) * D; st.p2 = [st.start[0] + v * Math.cos(a2), st.start[1] + v * Math.sin(a2)]; emit('drawcard'); view.render(); } }),
+          field({ label: 'Angle', kind: 'ang', value: A, onCommit: v => { st.typed.ang = v; emit('drawcard'); } })));
+      }
+      const H = pv() ? rectHeight(st.start, st.p2, pv()) : 0;
+      return h('div', {}, title('Rectangle', 'height'), bar, h('div', { class: 'fields' },
+        field({ label: 'Height', kind: 'len', value: H, onCommit: v => { placeRect3(st.start, st.p2, v); emit('drawcard'); view.render(); } })));
+    }
+    const k = m === 'center' ? 2 : 1;
+    const W = st.typed.w ?? (pv() ? (pv()[0] - st.start[0]) * k : 0), H = st.typed.h ?? (pv() ? (pv()[1] - st.start[1]) * k : 0);
+    const go = () => { const w = st.typed.w ?? W, hh = st.typed.h ?? H; if (m === 'center') placeRect([st.start[0] - w / 2, st.start[1] - hh / 2], [st.start[0] + w / 2, st.start[1] + hh / 2]); else placeRect(st.start, [st.start[0] + w, st.start[1] + hh]); };
+    return h('div', {}, title('Rectangle', m === 'center' ? 'a corner' : 'second corner'), bar,
       h('div', { class: 'fields' },
         field({ label: 'Width', kind: 'len', value: W, cls: 'ax-x', onCommit: v => { st.typed.w = v; if (st.typed.h != null) go(); emit('drawcard'); view.render(); } }),
         field({ label: 'Height', kind: 'len', value: H, cls: 'ax-y', onCommit: v => { st.typed.h = v; if (st.typed.w != null) go(); emit('drawcard'); view.render(); } })),
       h('div', { class: 'btnrow' }, h('button', { class: 'btn primary', onclick: () => { go(); emit('drawcard'); view.render(); } }, 'Place')));
   }
   if (t === 'circle') {
-    if (!st.start) return h('div', {}, title('Circle', 'centre, then radius · or type'), xyFields('Centre', (p, k) => setStart(p, k)));
+    const m = mode('circle'), bar = modeBar('circle');
+    if (!st.start) return h('div', {}, title('Circle', m === 'center' ? 'centre, then radius · or type' : m === '2pt' ? 'one end of the diameter' : 'first point on the circle'), bar, m === 'center' ? xyFields('Centre', (p, k) => setStart(p, k)) : xyFields('Point', (p, k) => setStart(p, k)));
+    if (m === '3pt') return h('div', {}, title('Circle', st.p2 ? 'third point' : 'second point'), bar);
+    if (m === '2pt') {
+      const Dm = pv() ? SK.d2(st.start, pv()) : 0, A = st.typed.ang ?? (pv() && Dm > 1e-9 ? ang(st.start, pv()) / D : 0);
+      return h('div', {}, title('Circle', 'other end of the diameter'), bar, h('div', { class: 'fields' },
+        field({ label: 'Diameter', kind: 'len', value: Dm, min: 0, onCommit: v => { const a2 = (st.typed.ang ?? A) * D; placeCircle([st.start[0] + v / 2 * Math.cos(a2), st.start[1] + v / 2 * Math.sin(a2)], v / 2); emit('drawcard'); view.render(); } }),
+        field({ label: 'Angle', kind: 'ang', value: A, onCommit: v => { st.typed.ang = v; emit('drawcard'); } })));
+    }
     const R = pv() ? SK.d2(st.start, pv()) : 0;
-    return h('div', {}, title('Circle', 'radius point'),
+    return h('div', {}, title('Circle', 'radius point'), bar,
       h('div', { class: 'fields' },
         field({ label: 'Radius', kind: 'len', value: R, min: 0, onCommit: v => { placeCircle(st.start, v); emit('drawcard'); view.render(); } }),
         field({ label: 'Diameter', kind: 'len', value: 2 * R, min: 0, onCommit: v => { placeCircle(st.start, v / 2); emit('drawcard'); view.render(); } })));
   }
+  if (t === 'arc' && mode('arc') === '3pt') {
+    const bar = modeBar('arc');
+    if (!st.start) return h('div', {}, title('Arc', 'start point'), bar, xyFields('Start', (p, k) => setStart(p, k)));
+    return h('div', {}, title('Arc', st.p2 ? 'a point the arc passes through' : 'end point'), bar);
+  }
   if (t === 'arc') {
-    if (!st.arc) return h('div', {}, title('Arc', 'centre → start → end (CCW)'), xyFields('Centre', (p, k) => { if (k === 0) { st.typed.x = p[0]; st.preview = p; } else { st.arc = { c: p }; st.typed = {}; } emit('drawcard'); view.render(); }));
+    if (!st.arc) return h('div', {}, title('Arc', 'centre → start → end (CCW)'), modeBar('arc'), xyFields('Centre', (p, k) => { if (k === 0) { st.typed.x = p[0]; st.preview = p; } else { st.arc = { c: p }; st.typed = {}; } emit('drawcard'); view.render(); }));
     const c = st.arc.c;
     if (st.arc.r == null) {
       const R = st.typed.r ?? (pv() ? SK.d2(c, pv()) : 0), A0 = st.typed.a0 ?? (pv() ? ang(c, pv()) / D : 0);
@@ -445,6 +529,11 @@ export function cardContent() {
       h('div', { class: 'fields' }, field({ label: 'Sweep (CCW)', kind: 'ang', value: SW, onCommit: v => { placeArc(c, st.arc.r, st.arc.a0, v); emit('drawcard'); view.render(); } })));
   }
   return null;
+}
+// mode switch shown at the top of the draw card (two corners / centre / 3 points …)
+function modeBar(t) {
+  const list = MODES[t]; if (!list) return null;
+  return h('div', { class: 'seg modebar' }, ...list.map(([k, , short]) => h('button', { class: mode(t) === k ? 'on' : '', onclick: () => { setDrawMode(t, k); emit('drawcard'); view.render(); } }, short)));
 }
 function entTitle(e) { return { line: 'Line', rect: 'Rectangle', circle: 'Circle', arc: 'Arc', dim: 'Dimension' }[e.t] || e.t; }
 function entFields(s, e) {
@@ -629,9 +718,23 @@ function drawPreview(s) {
   const m = matL(C.prev, true);
   const from = st.start || st.pressAnchor;
   if (p && from && t === 'line') { previewGroup.add(lineObj([W(from), W(p)], m)); const L = SK.d2(from, p); if (L > 1e-9) view.label(W([(from[0] + p[0]) / 2, (from[1] + p[1]) / 2]), `${fmtLen(L)} ∠ ${fmtAng(((ang(from, p) / D) + 360) % 360)}`, 'readout'); }
-  if (p && from && t === 'rect') { previewGroup.add(lineObj([from, [p[0], from[1]], p, [from[0], p[1]]].map(W), m, true)); view.label(W(p), `${fmtLen(Math.abs(p[0] - from[0]), false)} × ${fmtLen(Math.abs(p[1] - from[1]))}`, 'readout'); }
-  if (p && from && t === 'circle') { const r = SK.d2(from, p); const pl = SK.entPolyline({ t: 'circle', c: from, r }); previewGroup.add(lineObj(pl.pts.map(W), m, true), lineObj([W(from), W(p)], matL(C.prev, true, 0.5))); view.label(W(p), `R ${fmtLen(r)}`, 'readout'); }
-  if (t === 'arc' && (st.arc || st.pressAnchor) && p) {
+  if (p && from && t === 'rect' && mode('rect') === 'center') {
+    const q = [2 * from[0] - p[0], 2 * from[1] - p[1]];
+    previewGroup.add(lineObj([q, [p[0], q[1]], p, [q[0], p[1]]].map(W), m, true), lineObj([W(from), W(p)], matL(C.prev, true, 0.4)));
+    view.label(W(p), `${fmtLen(2 * Math.abs(p[0] - from[0]), false)} × ${fmtLen(2 * Math.abs(p[1] - from[1]))}`, 'readout');
+  } else if (p && from && t === 'rect' && mode('rect') === '3pt') {
+    if (!st.p2) { previewGroup.add(lineObj([W(from), W(p)], m)); view.label(W(p), `${fmtLen(SK.d2(from, p))} ∠ ${fmtAng(((ang(from, p) / D) + 360) % 360)}`, 'readout'); }
+    else { const hg = rectHeight(from, st.p2, p), L = SK.d2(from, st.p2), n = [-(st.p2[1] - from[1]) / L * hg, (st.p2[0] - from[0]) / L * hg];
+      previewGroup.add(lineObj([from, st.p2, [st.p2[0] + n[0], st.p2[1] + n[1]], [from[0] + n[0], from[1] + n[1]]].map(W), m, true)); view.label(W(p), `${fmtLen(L, false)} × ${fmtLen(Math.abs(hg))}`, 'readout'); }
+  } else if (p && from && t === 'rect') { previewGroup.add(lineObj([from, [p[0], from[1]], p, [from[0], p[1]]].map(W), m, true)); view.label(W(p), `${fmtLen(Math.abs(p[0] - from[0]), false)} × ${fmtLen(Math.abs(p[1] - from[1]))}`, 'readout'); }
+  if (p && from && t === 'circle' && mode('circle') === '2pt') { const c = [(from[0] + p[0]) / 2, (from[1] + p[1]) / 2], r = SK.d2(from, p) / 2; const pl = SK.entPolyline({ t: 'circle', c, r }); previewGroup.add(lineObj(pl.pts.map(W), m, true), lineObj([W(from), W(p)], matL(C.prev, true, 0.5))); view.label(W(p), `Ø ${fmtLen(2 * r)}`, 'readout'); }
+  else if (p && from && (t === 'circle' || t === 'arc') && mode(t) === '3pt') {
+    if (!st.p2) { previewGroup.add(lineObj([W(from), W(p)], m)); view.label(W(p), fmtLen(SK.d2(from, p)), 'readout'); }
+    else if (t === 'circle') { const Cc = circle3(from, st.p2, p); if (Cc) { previewGroup.add(lineObj(SK.entPolyline({ t: 'circle', c: Cc.c, r: Cc.r }).pts.map(W), m, true)); view.label(W(p), `R ${fmtLen(Cc.r)}`, 'readout'); } }
+    else { const A = arc3(from, st.p2, p); if (A) { previewGroup.add(lineObj(SK.entPolyline({ t: 'arc', c: A.c, r: A.r, a0: A.a0, a1: A.a0 + A.sw }).pts.map(W), m)); view.label(W(p), `R ${fmtLen(A.r)}`, 'readout'); } }
+  }
+  else if (p && from && t === 'circle') { const r = SK.d2(from, p); const pl = SK.entPolyline({ t: 'circle', c: from, r }); previewGroup.add(lineObj(pl.pts.map(W), m, true), lineObj([W(from), W(p)], matL(C.prev, true, 0.5))); view.label(W(p), `R ${fmtLen(r)}`, 'readout'); }
+  if (t === 'arc' && mode('arc') !== '3pt' && (st.arc || st.pressAnchor) && p) {
     const c = st.arc ? st.arc.c : st.pressAnchor;
     if (!st.arc || st.arc.r == null) { previewGroup.add(lineObj([W(c), W(p)], m)); view.label(W(p), `R ${fmtLen(SK.d2(c, p))}`, 'readout'); }
     else { let sw = ang(c, p) - st.arc.a0; sw = ((sw % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) || 2 * Math.PI; const pl = SK.entPolyline({ t: 'arc', c, r: st.arc.r, a0: st.arc.a0, a1: st.arc.a0 + sw }); previewGroup.add(lineObj(pl.pts.map(W), m)); view.label(W(p), fmtAng(sw / D), 'readout'); }

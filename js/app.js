@@ -371,7 +371,10 @@ function selectAllToggle() {
   selectionChanged();
 }
 function acadTool(t) { setTool(t); Draw.startCommand(); refresh(); }
-function setTool(t) {
+function setTool(t, m) {
+  // tapping the active Rectangle / Circle / Arc tool again cycles its mode
+  if (!m && t === S.ed.tool && Draw.MODES[t]) { const L = Draw.MODES[t], i = L.findIndex(x => x[0] === Draw.drawMode[t]); m = L[(i + 1) % L.length][0]; toast(`${({ rect: 'Rectangle', circle: 'Circle', arc: 'Arc' })[t]} · ${L.find(x => x[0] === m)[1]}`); }
+  if (m) Draw.drawMode[t] = m;
   S.ed.tool = t; S.ed.tools[S.ed.workspace] = t;
   Draw.resetTool();
   if (Draw.EDIT_TOOLS.has(t)) Draw.startCommand();
@@ -757,6 +760,7 @@ function commands() {
   const tool = t => () => setTool(t);
   return [
     C('Line', 'L', tool('line'), 'polyline pline draw'), C('Rectangle', '⇧R', tool('rect'), 'rect box draw'), C('Circle', 'C', tool('circle'), 'draw'), C('Arc', '', tool('arc'), 'draw'),
+    ...Object.entries(Draw.MODES).flatMap(([t, L]) => L.map(([m, label]) => C(`${({ rect: 'Rectangle', circle: 'Circle', arc: 'Arc' })[t]} · ${label}`, '', () => setTool(t, m), 'draw mode ' + m))),
     C('Spline', '', tool('spline'), 'curve'), C('Polygon', '', tool('polygon'), 'hexagon'), C('Ellipse', '', () => acadTool('ellipse')), C('Text', '', () => acadTool('text')), C('Hatch', '', () => acadTool('hatch')),
     C('Curve fillet / chamfer', '', tool('corner'), 'corner round'), C('Trim curve', '', tool('trim')), C('Extend curve', '', () => setTool('extend')), C('Offset curve', '', () => acadTool('offset')), C('Dimension', '', tool('dim'), 'dim measure constraint'),
     C('Extrude', 'E', () => (S.ed.profiles.length ? startExtrude() : modifier('pushpull')), 'push pull'), C('Revolve', '', () => runOp(F.revolve)), C('Loft', '', () => runOp(F.loftOp)), C('Sweep', '', () => runOp(F.sweepOp)),

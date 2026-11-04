@@ -449,3 +449,7 @@ body:has(#popover:not([hidden])) #toast { opacity: 0; }
 .hmarker { display: flex; align-items: center; gap: 8px; padding: 8px 4px; font-size: 12px; font-weight: 600; color: var(--accent); }
 .hmarker::before, .hmarker::after { content: ''; height: 2px; flex: 1; background: var(--accent); border-radius: 1px; }
 .note.err { color: #ffb3ad; }
+
+/* tool mode switch at the top of the draw card */
+.modebar { margin: 0 0 10px; }
+.modebar button { flex: 1; height: 32px; font-size: 12.5px; padding: 0 6px; }
