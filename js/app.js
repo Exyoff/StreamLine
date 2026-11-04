@@ -42,6 +42,8 @@ function boot() {
   resetHistory();
   bindEvents();
   BR.initBrowser({
+    closePanel() { if (sheetOpen && !document.body.classList.contains('sheet-docked')) toggleSheet(false); },
+    editingStepId: () => getLast()?.def?.stepId,
     activateSketch,
     selectionChanged,
     selectObj(id) { if (S.ed.mode === 'edit') setMode('object'); if (S.ed.multi) S.ed.selected.add(id); else S.ed.selected = new Set([id]); S.ed.active = id; if (S.ed.pick !== 'solid') S.ed.pick = 'solid'; selectionChanged(); },
@@ -478,11 +480,11 @@ function drawOverlays() {
 // static UI
 // =====================================================================
 const TOOLS = {
-  draw: [['select', 'Select', I.select], ['line', 'Line', I.line], ['rect', 'Rect', I.rect], ['circle', 'Circle', I.circle], ['arc', 'Arc', I.arc], ['corner', 'Fillet', I.corner], ['trim', 'Trim', I.trim], ['dim', 'Dim', I.dim]],
+  draw: [['select', 'Select', I.select], ['line', 'Line', I.line], ['rect', 'Rect', I.rect], ['circle', 'Circle', I.circle], ['arc', 'Arc', I.arc], ['corner', 'Corner', I.corner], ['trim', 'Trim', I.trim], ['dim', 'Dim', I.dim]],
   cad: [['select', 'Select', I.select], ['edge', 'Edge', I.edgeSel], ['measure', 'Measure', I.measure]],
   model: [['select', 'Select', I.select], ['move', 'Move', I.move], ['rotate', 'Rotate', I.rotate], ['scale', 'Scale', I.scale],
     ['line', 'Line', I.line], ['rect', 'Rect', I.rect], ['circle', 'Circle', I.circle], ['arc', 'Arc', I.arc], ['spline', 'Spline', I.spline], ['polygon', 'Polygon', I.polygon],
-    ['corner', 'Fillet', I.corner], ['trim', 'Trim', I.trim], ['dim', 'Dim', I.dim], ['measure', 'Measure', I.measure]],
+    ['corner', 'Corner', I.corner], ['trim', 'Trim', I.trim], ['dim', 'Dim', I.dim], ['measure', 'Measure', I.measure]],
 };
 function renderTools() {
   const row = $('#tools');
@@ -750,7 +752,7 @@ function planeName(sk) { for (const [k, p] of Object.entries(SK.PLANES)) if (p.n
 function renderDrawCard() {
   const el = $('#draw-card');
   const content = (S.ed.workspace === 'draw' || (S.ed.workspace === 'model' && S.ed.mode === 'object' && (!GIZMO_TOOLS.has(S.ed.tool) && (S.ed.tool !== 'select' || S.ed.drawSel.size)))) && !gizmoActive() ? Draw.cardContent() : null;
-  el.hidden = !content;
+  el.hidden = !content; document.body.classList.toggle('has-drawcard', !!content);
   if (content) el.replaceChildren(content);
   renderLastOp();
 }

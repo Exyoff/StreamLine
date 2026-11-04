@@ -5,6 +5,7 @@ import * as M from './mesh.js';
 import { toPolys, boolean, polysToMesh, extrudeRegions, revolveRegions } from './csg.js';
 import { newObject, xfFor, worldVerts } from './scene.js';
 import { defSize } from './operators.js';
+import { fmtLen } from './units.js';
 
 const lenF = (key, label) => ({ key, label, kind: 'len' });
 const MODES = [['new', 'New'], ['join', 'Join'], ['cut', 'Cut'], ['intersect', 'Intersect']];
@@ -325,6 +326,8 @@ export const edgeBlendOp = {
       let W = worldVerts(o), faces = o.mesh.f;
       // after an earlier step changed the body, re-find each edge (same direction/length or same circle, nearest)
       for (const e of p.edges.filter(x => x.obj === id)) refindEdge(e, W, faces);
+      const v0 = Math.abs(M.meshVolume(new M.PolyMesh(W, faces)));
+      let budget = 0; // the most material a blend of this size can add or remove along these edges
       for (const e of p.edges.filter(x => x.obj === id)) {
         // Distance 2 follows Distance 1 until it is edited on its own
         if (p.size2 == null || p.size2 === p._size1) p.size2 = p.size;
@@ -335,7 +338,10 @@ export const edgeBlendOp = {
           : edgeBlend(W, faces, e.a, e.b, p.size, p.kind, Math.max(1, Math.round(p.segs)), p.kind === 'chamfer' ? p.size2 : null, !!p.swap);
         if (typeof r === 'string') return r;
         W = r.v; faces = r.f;
+        budget += (e.circle ? 2 * Math.PI * (e.circle.R + p.size) : M.dist(e.a, e.b) + 2 * p.size) * p.size * Math.max(p.size, p.size2 || 0);
       }
+      // a size larger than the faces it rolls on produces garbage geometry: refuse it instead
+      if (Math.abs(Math.abs(M.meshVolume(new M.PolyMesh(W, faces))) - v0) > 1.05 * budget + 1e-6) return `${p.kind === 'fillet' ? 'Radius' : 'Distance'} ${fmtLen(p.size)} is too large for ${p.edges.length === 1 ? 'this edge' : 'these edges'}`;
       // corners where three selected straight edges meet at right angles get a spherical patch
       if (p.kind === 'fillet') {
         const straight = p.edges.filter(x => x.obj === id && !x.circle), seen = new Set();
