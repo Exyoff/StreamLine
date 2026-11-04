@@ -118,7 +118,7 @@ import * as K from './kernel.js';
 const R = K.R;
 // OpenCascade reports failures as exceptions: turn them into a message for the dialog / History
 function guard(fn, msg) {
-  try { return fn(); } catch (e) { console.warn(e); const m = e && e.message || ''; return typeof m === 'string' && m.length < 120 && !/^\d+$/.test(m) ? `${msg} (${m})` : msg; }
+  try { return fn(); } catch (e) { console.warn(e); const m = e && e.message || ''; return typeof m === 'string' && m.trim() && m.length < 120 && !/^\d+$/.test(m) ? `${msg} (${m})` : msg; }
 }
 const solidOnly = o => (o && o.shape ? null : o ? `“${o.name}” is an imported mesh — this works on solids` : 'Body missing');
 // a direction / point in an object's local frame
@@ -358,6 +358,7 @@ function findFaces(o, list) {
     const pl = xf.toL(f.p), nl = locDir(xf, f.p, f.n);
     const hit = K.faceAt(o.shape, pl, nl);
     if (!hit) return null;
+    if (hit.q) { const pw = xf.toW(hit.q); Object.assign(f, { p: pw, w: M.dot(f.n, pw) }); } // follow the moved face
     out.push(hit.f);
   }
   return out;

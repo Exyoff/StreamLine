@@ -609,10 +609,15 @@ export function initDraw() {
   previewGroup = new THREE.Group(); view.overlayScene.add(previewGroup);
   view.renderHooks.push(renderSketches);
 }
+// highlight line: hidden parts are drawn faint, visible parts strong (depth tested, pulled forward)
 export function fatLine(pts3, color, width, closed) {
   const pts = closed ? [...pts3, pts3[0]] : pts3;
+  const grp = new THREE.Group();
   const g = new LineGeometry(); g.setPositions(pts.flat());
-  const l = new Line2(g, view.fatMat({ color, depthTest: false, width })); l.renderOrder = 6; return l;
+  const back = new Line2(g, view.fatMat({ color, depthTest: false, width: width * 0.6, opacity: 0.28 })); back.renderOrder = 5;
+  const fm = view.fatMat({ color, depthTest: true, width }); fm.polygonOffset = true; fm.polygonOffsetFactor = -6; fm.polygonOffsetUnits = -20;
+  const front = new Line2(g, fm); front.renderOrder = 6;
+  grp.add(back, front); return grp;
 }
 function lineObj(pts3, mat, closed) {
   if (mat && mat.isLineBasicMaterial && !mat.isLineDashedMaterial) {

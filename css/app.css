@@ -493,3 +493,19 @@ body:has(#popover:not([hidden])) #toast { opacity: 0; }
 #boot.done { opacity: 0; pointer-events: none; }
 #boot .spin { width: 34px; height: 34px; border-radius: 50%; border: 3px solid var(--fill-2); border-top-color: var(--accent); animation: bootspin .9s linear infinite; }
 @keyframes bootspin { to { transform: rotate(360deg); } }
+
+/* toasts sit above the bottom controls, clear of the HUD */
+#toast { top: auto; bottom: calc(var(--botH) + var(--sab) + 14px); transform: translate(-50%, 10px) scale(.96); }
+#toast.show { transform: translate(-50%, 0) scale(1); }
+body.has-tl #toast { bottom: calc(var(--botH) + var(--sab) + var(--tlh) + 14px); }
+@media (max-width: 500px) { body.has-lastop #toast { top: calc(var(--topH) + 56px); bottom: auto; } }
+@media (orientation: landscape) and (max-height: 500px) { #toast { bottom: calc(var(--botH) + var(--sab) + 8px); top: auto; } }
+/* wide screens: the mode switch and command bar are centred, not stretched */
+@media (min-width: 768px) {
+  #stationbar .botrow { justify-content: center; }
+  #stationbar .botrow #ws-seg { flex: 0 1 440px; }
+  #actions { align-self: center; width: fit-content; max-width: 100%; }
+}
+/* Items rows: names keep their room */
+.objrow .nm { min-width: 0; flex: 1 1 40%; }
+.objrow .meta { max-width: 22%; }

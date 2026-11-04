@@ -95,7 +95,8 @@ function enterSketchView(sk, instant) {
   if (!pts.length) { view.lookAlong(sk.plane.n, sk.plane.o); return; }
   const b = new THREE.Box3(); pts.forEach(q => b.expandByPoint(new THREE.Vector3(...q)));
   const rad = Math.max(5, b.getSize(new THREE.Vector3()).length() / 2);
-  view.lookAlong(sk.plane.n, b.getCenter(new THREE.Vector3()).toArray(), rad * (S.ed.editingSketch != null ? 4.4 : 3.2));
+  const { w, h: hh } = view.size(), fitW = Math.max(1, hh / Math.max(1, w - 170)); // narrow screens: fit the width beside the rail
+  view.lookAlong(sk.plane.n, b.getCenter(new THREE.Vector3()).toArray(), rad * (S.ed.editingSketch != null ? 3.4 : 3.2) * fitW);
 }
 function setWorkspace(ws, pick) {
   if (ws === 'draw' || ws === 'cad') ws = 'model'; // the studio replaces the separate workspaces
@@ -263,7 +264,7 @@ function faceTap(x, y) {
   const same = q => q.obj === o.id && (() => { const r2 = findRegionObj(o, q); return r2 && r2.faces.includes(hit.face); })();
   const i = S.ed.faces.findIndex(same);
   if (i >= 0) S.ed.faces.splice(i, 1);
-  else { const item = { obj: o.id, n: reg.n, w: reg.w, p: hit.point }; if (S.ed.multi) S.ed.faces.push(item); else S.ed.faces = [item]; }
+  else { const item = { obj: o.id, n: reg.n, w: reg.w, p: hit.point, ...(o.brep && reg.fi != null ? { planar: o.brep.faces[reg.fi]?.type === 'PLANE' } : {}) }; if (S.ed.multi) S.ed.faces.push(item); else S.ed.faces = [item]; }
   S.ed.selected = new Set([o.id]); S.ed.active = o.id;
   selectionChanged();
 }
@@ -518,7 +519,7 @@ function drawOverlays() {
   if ((S.ed.workspace === 'cad' || S.ed.workspace === 'model') && S.ed.edges.length) {
     for (const e of S.ed.edges) {
       const pts = e.pts || (e.circle ? e.circle.loop : [e.a, e.b]);
-      edgeGroup.add(Draw.fatLine(pts, 0xff9a1f, 4, !e.pts && !!e.circle));
+      edgeGroup.add(Draw.fatLine(pts, 0xff9a1f, 2.6, !e.pts && !!e.circle));
       const mk = new THREE.Mesh(new THREE.RingGeometry(0.5, 1, 16), new THREE.MeshBasicMaterial({ color: 0xff9a1f, depthTest: false }));
       const mid = e.p || (e.circle ? e.circle.loop[0] : M.mul(M.add(e.a, e.b), 0.5));
       mk.position.set(...mid); mk.quaternion.copy(camera().quaternion); mk.scale.setScalar(view.worldPerPixel(mid) * 6); edgeGroup.add(mk);
@@ -648,7 +649,7 @@ function renderViewButtons() {
 function act(icon, label, fn, cls = '') { return h('button', { class: 'act ' + cls, onclick: fn }, h('span', { html: icon }), h('span', {}, label)); }
 function renderActions() {
   const row = $('#actions');
-  const key = S.ed.workspace + S.ed.mode + S.ed.selectMode + S.ed.pick + (S.ed.editingSketch ?? '') + [S.ed.drawSel.size, S.ed.profiles.length, S.ed.faces.length, S.ed.edges.length, S.ed.pick === 'solid' ? S.ed.selected.size : 0].join();
+  const key = S.ed.workspace + S.ed.mode + S.ed.selectMode + S.ed.pick + (S.ed.editingSketch ?? '') + S.ed.faces.map(f => f.planar === false ? 'c' : 'f').join('') + [S.ed.drawSel.size, S.ed.profiles.length, S.ed.faces.length, S.ed.edges.length, S.ed.pick === 'solid' ? S.ed.selected.size : 0].join();
   if (row.dataset.k === key) return;
   row.dataset.k = key;
   if (S.ed.workspace === 'draw') {
@@ -705,9 +706,10 @@ function renderActions() {
     const curves = S.ed.drawSel.size, prof = S.ed.profiles.length, faces = S.ed.faces.length, edges = S.ed.edges.length;
     const solids = S.ed.pick === 'solid' ? S.ed.selected.size : 0;
     const c = [];
-    if (S.ed.editingSketch != null && SK.sketchById(S.ed.editingSketch)) c.push(act(I.check, 'Finish', () => finishSketchEdit(), 'primary'));
+    if (S.ed.editingSketch != null && SK.sketchById(S.ed.editingSketch)) c.push(act(I.check, 'Finish', () => finishSketchEdit(), 'primary'), ...(curves ? [] : [act(I.dim, 'Dimension', () => setTool('dim')), act(I.trim, 'Trim', () => setTool('trim')), act(I.line, 'Line', () => setTool('line')), act(I.rect, 'Rectangle', () => setTool('rect')), act(I.circle, 'Circle', () => setTool('circle'))]));
     if (prof) c.push(act(I.extrude, 'Extrude', () => startExtrude(), 'primary'), act(I.revolve, 'Revolve', () => runOp(F.revolve)), ...(prof >= 2 ? [act(I.cone, 'Loft', () => runOp(F.loftOp))] : []), act(I.arc, 'Sweep', () => runOp(F.sweepOp)));
-    if (faces) c.push(act(I.extrude, 'Push/Pull', () => modifier('pushpull'), prof ? '' : 'primary'), act(I.inset, 'Shell', () => modifier('shell')), act(I.cone, 'Draft', () => runOp(F.draftOp)), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)));
+    const flat = S.ed.faces.every(f => f.planar !== false); // push/pull and draft work on flat faces
+    if (faces) c.push(...(flat ? [act(I.extrude, 'Push/Pull', () => modifier('pushpull'), prof ? '' : 'primary')] : []), act(I.inset, 'Shell', () => modifier('shell'), flat || prof ? '' : 'primary'), ...(flat ? [act(I.cone, 'Draft', () => runOp(F.draftOp))] : []), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)));
     if (edges) c.push(act(I.fillet, 'Fillet', () => modifier('fillet'), 'primary'), act(I.chamfer, 'Chamfer', () => modifier('chamfer')));
     if (curves) c.push(act(I.move, 'Move', () => acadTool('move')), act(I.dup, 'Copy', () => acadTool('copy')), act(I.rotate, 'Rotate', () => acadTool('rotate')), act(I.flip, 'Mirror', () => acadTool('mirror')), act(I.scale, 'Scale', () => acadTool('scale')), act(I.inset, 'Offset', () => acadTool('offset')), act(I.array, 'Array', () => acadTool('arrayrect')), act(I.constrain, 'Constrain', e => openConstrainMenu(e.currentTarget)), act(I.line, 'Construction', () => Draw.toggleConstruction()), act(I.trash, 'Delete', () => Draw.deleteSelected(), 'danger'));
     if (solids) c.push(act(I.union, 'Boolean', e => openBoolMenu(e.currentTarget), c.length ? '' : 'primary'), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.inset, 'Shell', () => runOp(F.shellOp)), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)), act(I.revolve, 'Pattern', () => runOp(F.polarPattern)), act(I.plane, 'Thicken', () => runOp(F.thickenOp)),
@@ -1095,12 +1097,12 @@ function openAddMenu(anchor) {
   const grid = h('div', { class: 'addgrid' }, OPS.PRIM_TYPES.map(([t, label]) => h('button', {
     onclick: () => { closePopover(); if (S.ed.mode === 'edit') setMode('object'); addSketchedPrim(t); },
   }, h('span', { html: I[t] }), label)));
-  popover(anchor, h('div', {}, h('div', { class: 'mtitle' }, 'Add mesh'), grid), { above: true });
+  popover(anchor, h('div', {}, h('div', { class: 'mtitle' }, 'Add solid'), grid), { above: true });
 }
 function openMainMenu() {
   popover($('#btn-menu'), h('div', {},
     menuItem(I.file, 'New scene', () => { if (confirm('Start a new scene? Unsaved changes will be lost (undo is available).')) newScene(); }),
-    menuItem(I.folder, 'Open / Import…', () => $('#file-input').click(), 'json stl obj'),
+    menuItem(I.folder, 'Open / Import…', () => $('#file-input').click(), 'json step stl obj'),
     menuItem(I.save, 'Save project', () => saveProject()),
     h('div', { class: 'msep' }),
     menuItem(I.save, 'Export STEP (exact)', () => exportAs('step'), selLabel()),

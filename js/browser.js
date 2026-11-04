@@ -59,7 +59,6 @@ function failNote(failed) { if (failed.length) { focusErr = true; toast(`⚠ ${f
 
 // ---------- timeline actions (all undoable, none recorded) ----------
 export function rollTo(k) {
-  ctx.closePanel?.();
   const len = H.hist().length;
   k = Math.max(0, Math.min(len, k));
   return runOp({
@@ -94,7 +93,6 @@ export function editStep(id) {
   }, JSON.parse(orig));
 }
 export function toggleStep(id) {
-  ctx.closePanel?.();
   runOp({
     label: () => 'Suppress / unsuppress', noRecord: true, touch: () => 'all',
     apply() { const j = idxOf(id), r = H.hist()[j]; if (!r) return 'Step missing'; r.off = !r.off; H.invalidate(j + 1); failNote(H.regenerate(j)); },
@@ -113,7 +111,6 @@ export function askDeleteStep(anchor, id) {
   confirmPop(anchor, `Delete ${recLabel(rec)}?`, note + ' You can undo this.', 'Delete', () => deleteStep(id));
 }
 export function deleteStep(id) {
-  ctx.closePanel?.();
   runOp({
     label: () => 'Delete step', noRecord: true, touch: () => 'all',
     apply() {
@@ -186,7 +183,7 @@ function setLayerOf(kind, id, layer) {
 function askText(anchor, title, value, done) {
   const inp = h('input', { class: 'textin', value, enterkeyhint: 'done', autocomplete: 'off', autocorrect: 'off', spellcheck: 'false' });
   const ok = () => { const v = inp.value.trim(); closePopover(); if (v) done(v); };
-  inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') ok(); if (e.key === 'Escape') closePopover(); });
+  inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Escape') closePopover(); }); // Enter submits the form once
   popover(anchor, h('form', { class: 'askform', onsubmit: e => { e.preventDefault(); ok(); } }, h('div', { class: 'mtitle' }, title), inp,
     h('div', { class: 'btnrow' }, h('button', { type: 'button', class: 'btn', onclick: () => closePopover() }, 'Cancel'), h('button', { type: 'submit', class: 'btn primary' }, 'OK'))));
   setTimeout(() => { inp.focus(); inp.select(); }, 60);
@@ -222,7 +219,7 @@ export function browserTab(group) {
   const layers = group('Layers', ...L.map(l => {
     const row = h('div', { class: 'objrow' + (S.doc.layer === l.id ? ' cur' : '') },
       h('span', { class: 'lyr-dot' + (S.doc.layer === l.id ? ' on' : '') }), h('span', { class: 'nm' }, l.name),
-      h('span', { class: 'meta' }, (() => { const b = S.doc.objects.filter(o => (o.layer ?? 1) === l.id).length, k = S.doc.sketches.filter(x => (x.layer ?? 1) === l.id).length; return `${b} bod${b === 1 ? 'y' : 'ies'} · ${k} sketch${k === 1 ? '' : 'es'}`; })()),
+      h('span', { class: 'meta' }, (() => { const b = S.doc.objects.filter(o => (o.layer ?? 1) === l.id).length, k = S.doc.sketches.filter(x => (x.layer ?? 1) === l.id).length; return `${b} · ${k}`; })()),
       eyeBtn(l.visible !== false, () => presOp(l.visible !== false ? 'Hide layer' : 'Show layer', () => {
         const x = S.doc.layers.find(q => q.id === l.id); x.visible = x.visible === false;
         // new work must not go onto a hidden layer
@@ -237,14 +234,14 @@ export function browserTab(group) {
     const future = H.sketchRecIndex(sk.id) >= end;
     const used = H.firstUsing([sk.id]) >= 0;
     const row = h('div', { class: 'objrow' + (sk.id === S.ed.sketch ? ' cur' : '') + (layerVisible(sk.layer) ? '' : ' dim') + (future ? ' dim' : '') },
-      h('span', { html: I.sketch }), h('span', { class: 'nm' }, sk.name), h('span', { class: 'meta' }, future ? 'rolled back' : used ? 'in a feature' : `${sk.ents.length} curve${sk.ents.length === 1 ? '' : 's'}`),
+      h('span', { html: I.sketch }), h('span', { class: 'nm' }, sk.name), h('span', { class: 'meta' }, future ? 'later' : used ? 'used' : `${sk.ents.length}`),
       layerTag('sketch', sk), eyeBtn(!sk.hidden, () => setVisible('sketch', sk.id, !!sk.hidden)));
     row.onclick = () => { if (future) { toast('This sketch is after the rollback marker'); return; } ctx.activateSketch(sk.id); };
     return row;
   }) : [h('p', { class: 'note' }, 'Draw on the grid or on a face to make a sketch.')]));
   const bodies = group(`Bodies · ${S.doc.objects.length}`, ...(S.doc.objects.length ? S.doc.objects.map(o => {
     const row = h('div', { class: 'objrow' + (S.ed.selected.has(o.id) ? ' sel' : '') + (S.ed.active === o.id ? ' cur' : '') + (layerVisible(o.layer) ? '' : ' dim') },
-      h('span', { class: 'sw', style: `background:${o.color}` }), h('span', { class: 'nm' }, o.name), h('span', { class: 'meta' }, `${o.mesh.f.length} faces`),
+      h('span', { class: 'sw', style: `background:${o.color}` }), h('span', { class: 'nm' }, o.name), h('span', { class: 'meta' }, o.brep ? `${o.brep.faces.length} faces` : `${o.mesh.f.length} tris`),
       layerTag('obj', o), eyeBtn(!o.hidden, () => setVisible('obj', o.id, !!o.hidden)));
     row.onclick = () => ctx.selectObj(o.id);
     return row;
