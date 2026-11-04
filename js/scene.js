@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { S } from './state.js';
 import { PolyMesh } from './mesh.js';
+import * as K from './kernel.js';
 
 const D2R = Math.PI / 180;
 // Blender "XYZ Euler" (X applied first) == three.js order 'ZYX'
@@ -45,21 +46,23 @@ export function uniqueName(base) {
   const root = base.replace(/\.\d{3}$/, '');
   for (let i = 1; ; i++) { const n = `${root}.${String(i).padStart(3, '0')}`; if (!names.has(n)) return n; }
 }
+// solids (o.shape) are immutable values: copies share the shape and its display mesh
 export function cloneObj(o, shareMesh = false) {
-  return { ...o, loc: o.loc.slice(), rot: o.rot.slice(), scl: o.scl.slice(), mesh: shareMesh ? o.mesh : o.mesh.clone() };
+  return { ...o, loc: o.loc.slice(), rot: o.rot.slice(), scl: o.scl.slice(), mesh: shareMesh || o.shape ? o.mesh : o.mesh.clone() };
 }
 
-export function serialize() {
+// light: solids are left out (they are rebuilt from the history on load) — keeps autosave small
+export function serialize(light = false) {
   return {
     format: 'streamline', version: 1, unit: 'mm',
-    doc: { nextId: S.doc.nextId, objects: S.doc.objects.map(o => ({ ...o, mesh: o.mesh.toJSON() })), sketches: S.doc.sketches || [], history: S.doc.history || [], marker: S.doc.marker ?? null, layers: S.doc.layers || defaultLayers(), layer: S.doc.layer ?? 1 },
+    doc: { nextId: S.doc.nextId, objects: S.doc.objects.map(o => objToJSON(o, light)), sketches: S.doc.sketches || [], history: S.doc.history || [], marker: S.doc.marker ?? null, layers: S.doc.layers || defaultLayers(), layer: S.doc.layer ?? 1 },
     ed: { workspace: S.ed.workspace, sketch: S.ed.sketch, drawSel: [...S.ed.drawSel], profiles: S.ed.profiles, mode: S.ed.mode, selectMode: S.ed.selectMode, selected: [...S.ed.selected], active: S.ed.active, editSel: [...S.ed.editSel], selOrder: S.ed.selOrder.slice() },
   };
 }
 export function deserialize(data) {
   const d = typeof data === 'string' ? JSON.parse(data) : data;
   if (!d || !d.doc || !Array.isArray(d.doc.objects)) throw new Error('Not a StreamLine project');
-  S.doc.objects = d.doc.objects.map(o => ({ ...o, loc: o.loc.slice(), rot: o.rot.slice(), scl: o.scl.slice(), mesh: PolyMesh.from(o.mesh) }));
+  S.doc.objects = d.doc.objects.map(objFromJSON);
   S.doc.sketches = JSON.parse(JSON.stringify(d.doc.sketches || []));
   S.doc.nextId = d.doc.nextId || (Math.max(0, ...S.doc.objects.map(o => o.id)) + 1);
   S.doc.layers = JSON.parse(JSON.stringify(d.doc.layers || defaultLayers()));
@@ -83,3 +86,33 @@ export function deserialize(data) {
 }
 
 export const defaultLayers = () => [{ id: 1, name: 'Default', visible: true }];
+
+// solids are saved as OpenCascade BRep text; meshes as vertices/faces
+export function objToJSON(o, light = false) {
+  const { shape, brep, faceOf, ...rest } = o;
+  if (shape && light) return { ...rest, mesh: null, regen: true };
+  return shape ? { ...rest, mesh: null, brepData: K.serialize(shape) } : { ...rest, mesh: o.mesh.toJSON() };
+}
+export function objFromJSON(j) {
+  const o = { ...j, loc: j.loc.slice(), rot: j.rot.slice(), scl: j.scl.slice() };
+  if (j.brepData) { delete o.brepData; K.setShape(o, K.deserialize(j.brepData)); }
+  else if (j.regen) o.mesh = new PolyMesh([], []); // placeholder until the history is replayed
+  else o.mesh = PolyMesh.from(j.mesh);
+  return o;
+}
+// undo snapshots: structural copies that share solids (no serialization)
+export function snapshot() {
+  return {
+    doc: { objects: S.doc.objects.map(o => cloneObj(o)), sketches: JSON.stringify(S.doc.sketches || []), nextId: S.doc.nextId, history: JSON.stringify(S.doc.history || []), marker: S.doc.marker ?? null, layers: JSON.stringify(S.doc.layers || defaultLayers()), layer: S.doc.layer ?? 1 },
+    ed: { workspace: S.ed.workspace, sketch: S.ed.sketch, drawSel: [...S.ed.drawSel], profiles: JSON.stringify(S.ed.profiles), mode: S.ed.mode, selectMode: S.ed.selectMode, selected: [...S.ed.selected], active: S.ed.active, editSel: [...S.ed.editSel], selOrder: S.ed.selOrder.slice() },
+  };
+}
+export function restoreSnapshot(s) {
+  const d = s.doc;
+  S.doc.objects = d.objects.map(o => cloneObj(o)); S.doc.sketches = JSON.parse(d.sketches); S.doc.nextId = d.nextId;
+  S.doc.history = JSON.parse(d.history); S.doc.marker = d.marker; S.doc.layers = JSON.parse(d.layers); S.doc.layer = d.layer;
+  const e = s.ed;
+  S.ed.workspace = e.workspace || 'model'; S.ed.sketch = e.sketch ?? null; S.ed.drawSel = new Set(e.drawSel); S.ed.profiles = JSON.parse(e.profiles);
+  S.ed.mode = e.mode; S.ed.selectMode = e.selectMode; S.ed.selected = new Set(e.selected); S.ed.active = e.active; S.ed.editSel = new Set(e.editSel); S.ed.selOrder = e.selOrder.slice();
+  if (S.ed.mode === 'edit' && !S.doc.objects.some(o => o.id === S.ed.active)) S.ed.mode = 'object';
+}

@@ -271,7 +271,27 @@ function updateGrid() {
 view.gridStep = 1;
 
 // ---------- object visuals ----------
+// a solid: its tessellation with smooth normals, drawn with the true B-rep edges (no triangle edges)
+function buildSolidVisual(o) {
+  const t = o.brep, m = o.mesh, base = new THREE.Color(o.color);
+  const pos = new Float32Array(m.v.length * 3), nor = new Float32Array(m.v.length * 3), col = new Float32Array(m.v.length * 3);
+  m.v.forEach((q, i) => { pos.set(q, i * 3); nor.set(m.n[i] || [0, 0, 1], i * 3); col.set([base.r, base.g, base.b], i * 3); });
+  const idx = new Uint32Array(m.f.length * 3); m.f.forEach((f, i) => idx.set(f, i * 3));
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  g.userData.triFace = null; // triangle index == mesh face index
+  g.computeBoundingSphere();
+  const mesh = new THREE.Mesh(g, matMesh); mesh.userData.objId = o.id;
+  const ep = [];
+  for (const e of t.edges) { if (e.seam) continue; for (let k = 1; k < e.pts.length; k++) ep.push(...e.pts[k - 1], ...e.pts[k]); }
+  const eg = new LineSegmentsGeometry(); eg.setPositions(ep);
+  const edges = new LineSegments2(eg, matEdgeObj);
+  const group = new THREE.Group(); group.add(mesh, edges);
+  return { group, mesh, edges, points: null, meshRef: o.mesh, editing: false };
+}
 function buildVisual(o, editing) {
+  if (o.shape && o.brep) return buildSolidVisual(o);
   const m = o.mesh;
   const pos = [], nor = [], col = [], triFace = [];
   const base = new THREE.Color(o.color);
@@ -351,7 +371,7 @@ view.pickObject = (x, y) => {
   const hit = rc.intersectObjects(meshes, false)[0];
   if (!hit) return null;
   const tf = hit.object.geometry.userData.triFace;
-  return { id: hit.object.userData.objId, face: tf ? tf[hit.faceIndex] : -1, point: hit.point.toArray(), distance: hit.distance };
+  return { id: hit.object.userData.objId, face: tf ? tf[hit.faceIndex] : tf === null ? hit.faceIndex : -1, point: hit.point.toArray(), distance: hit.distance };
 };
 function occluded(world, rc) {
   if (S.settings.xray || view.xrayFor) return false;
@@ -409,7 +429,8 @@ view.pickEdge = (x, y, o, tol = 22) => {
 view.pickFace = (x, y, o) => {
   const v = visuals.get(o.id); if (!v) return -1;
   const hit = view.ray(x, y).intersectObject(v.mesh, false)[0];
-  return hit ? v.mesh.geometry.userData.triFace[hit.faceIndex] : -1;
+  const tf = v.mesh.geometry.userData.triFace;
+  return hit ? (tf ? tf[hit.faceIndex] : hit.faceIndex) : -1;
 };
 // world point on the ground plane (z=0) or along view plane through target
 view.groundPoint = (x, y) => {

@@ -1,10 +1,10 @@
 // Offline support: cache the app shell, serve cache-first and refresh in the background.
-const CACHE = 'streamline-v31';
+const CACHE = 'streamline-v32';
 const ASSETS = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/state.js', 'js/units.js', 'js/mesh.js', 'js/scene.js', 'js/ops.js', 'js/operators.js',
   'js/viewport.js', 'js/gizmo.js', 'js/ui.js', 'js/icons.js', 'js/io.js',
-  'js/sketch.js', 'js/draw.js', 'js/features.js', 'js/csg.js', 'js/edges.js', 'js/constraints.js', 'js/cmdline.js', 'js/modifiers.js', 'js/sweep.js', 'js/history.js', 'js/browser.js',
+  'js/sketch.js', 'js/draw.js', 'js/features.js', 'js/csg.js', 'js/edges.js', 'js/constraints.js', 'js/cmdline.js', 'js/modifiers.js', 'js/sweep.js', 'js/history.js', 'js/browser.js', 'js/kernel.js', 'vendor/occ/replicad.js', 'vendor/occ/casting-c4FpthHM.js', 'vendor/occ/replicad_single.js', 'vendor/occ/replicad_single.wasm',
   'vendor/three.module.min.js', 'vendor/lines/LineSegments2.js', 'vendor/lines/LineSegmentsGeometry.js', 'vendor/lines/LineMaterial.js', 'vendor/lines/Line2.js', 'vendor/lines/LineGeometry.js', 'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 self.addEventListener('install', e => {

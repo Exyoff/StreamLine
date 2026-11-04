@@ -33,6 +33,16 @@ On iPhone, open the page in Safari, then Share → **Add to Home Screen**. It th
 - The Measure tool snaps to vertices, surfaces and the grid, and shows ΔX, ΔY and ΔZ. Edit mode shows the lengths of selected edges.
 - Statistics: surface area, volume and a watertight check.
 
+## Exact geometry (B-rep kernel)
+Solids are exact boundary representations computed by **OpenCascade** (the kernel behind FreeCAD), compiled to WebAssembly and used through **replicad**.
+- **True surfaces:** planes, cylinders, cones, spheres and tori, with rolling-ball fillets and true chamfers. Volumes and measurements are exact (a Ø10 hole is exactly 25π mm² in plan), and edges and corners are perfect at any zoom.
+- **Sketch regions:** the sketch curves split the sketch plane exactly, so arcs and circles stay arcs and circles in the solid.
+- **Selection:** Face mode picks whole faces, including curved ones, and Edge mode picks true edges. Cylinder seams are hidden.
+- **Files:** STEP export (menu → Export STEP) and STEP import (Open… a .step/.stp) carry the exact geometry to other CAD apps. STL/OBJ export uses a fine tessellation.
+- **Autosave** stores only the history and sketches; solids are rebuilt from it on load. Saved projects (.streamline.json) include the exact solids.
+- **Mesh editing:** imported STL/OBJ files stay triangle meshes and keep vertex editing ("Edit mesh"). Solids are changed with features instead.
+- The kernel (about 7 MB compressed) loads once and is then cached for offline use. Licences: OpenCascade LGPL-2.1 and replicad MIT, both in `vendor/occ/`.
+
 ## Layout
 The interface follows the iOS "Liquid Glass" design language. The 3D view fills the whole screen, and every control floats over it as glass.
 - **Top left:** the menu button.

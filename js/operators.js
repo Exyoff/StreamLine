@@ -5,6 +5,11 @@ import * as M from './mesh.js';
 import { newObject, xfFor, rotMatrix, eulerFromMatrix, cloneObj, worldVerts } from './scene.js';
 import { LEN_UNITS } from './units.js';
 import { findRegion } from './modifiers.js';
+import * as K from './kernel.js';
+import { objMatrix } from './scene.js';
+const copyShape = (to, from) => { if (from.shape) { to.shape = from.shape; to.faceOf = from.faceOf; to.brep = from.brep; to.mesh = from.mesh; } return to; };
+// re-express a solid after its placement changed from matrix M0 to the object's current one
+function rebase(o, M0) { if (!o.shape) return; const T = objMatrix(o).clone().invert().multiply(M0); K.setShape(o, K.transformShape(o.shape, T)); }
 
 const DEF_SIZE = { mm: 20, cm: 20, m: 1000, in: 25.4, ft: 304.8 };
 export const defSize = () => DEF_SIZE[S.settings.unit] || 20;
@@ -16,7 +21,7 @@ export function subSelection() {
   if (S.ed.workspace !== 'model' || S.ed.mode !== 'object' || !S.ed.pick || S.ed.pick === 'solid') return null;
   const items = S.ed.pick === 'face' ? S.ed.faces : S.ed.edges;
   if (!items || !items.length) return null;
-  const obj = items[0].obj, o = S.doc.objects.find(x => x.id === obj); if (!o) return null;
+  const obj = items[0].obj, o = S.doc.objects.find(x => x.id === obj); if (!o || o.shape) return null; // solids: use Push/Pull, Fillet… instead of moving vertices
   const W = worldVerts(o), idx = new Set();
   for (const it of items.filter(q => q.obj === obj)) {
     if (S.ed.pick === 'face') { const reg = findRegion(W, o.mesh.f, it.n, it.w, it.p); if (reg) reg.faces.forEach(fi => o.mesh.f[fi].forEach(i => idx.add(i))); }
@@ -32,7 +37,8 @@ export function selectedWorldPoints() {
     const xf = xfFor(o);
     return [...S.ed.editSel].filter(i => i < o.mesh.v.length).map(i => xf.toW(o.mesh.v[i]));
   }
-  return selectedObjs().map(o => o.loc.slice());
+  // objects: the middle of each body's bounds (a solid's placement origin is usually the world origin)
+  return selectedObjs().map(o => { const W = o.mesh.v.length ? o.mesh.v.map(xfFor(o).toW) : [o.loc]; const b = M.bbox(W); return M.mul(M.add(b.min, b.max), 0.5); });
 }
 export function computePivot() {
   const pts = selectedWorldPoints();
@@ -318,7 +324,7 @@ export const duplicate = {
     const src = selectedObjs(); const ids = [];
     src.forEach((o, k) => {
       const c = cloneObj(o); const n = newObject(o.name, c.mesh, M.add(o.loc, [p.x, p.y, p.z]), p._base + k);
-      n.rot = c.rot; n.scl = c.scl; n.color = o.color; S.doc.objects.push(n); ids.push(n.id);
+      n.rot = c.rot; n.scl = c.scl; n.color = o.color; copyShape(n, o); S.doc.objects.push(n); ids.push(n.id);
     });
     S.ed.selected = new Set(ids); S.ed.active = ids[ids.length - 1];
   },
@@ -335,7 +341,7 @@ export const arrayOp = {
     const src = selectedObjs(); let id = p._base; const ids = [...S.ed.selected];
     for (let i = 1; i < n; i++) for (const o of src) {
       const c = cloneObj(o); const d = newObject(o.name, c.mesh, M.add(o.loc, [p.x * i, p.y * i, p.z * i]), id++);
-      d.rot = c.rot; d.scl = c.scl; d.color = o.color; S.doc.objects.push(d); ids.push(d.id);
+      d.rot = c.rot; d.scl = c.scl; d.color = o.color; copyShape(d, o); S.doc.objects.push(d); ids.push(d.id);
     }
     S.ed.selected = new Set(ids);
   },
@@ -359,6 +365,7 @@ export const applyXf = {
   fields: () => [{ key: 'loc', label: 'Location', kind: 'bool' }, { key: 'rot', label: 'Rotation', kind: 'bool' }, { key: 'scale', label: 'Scale', kind: 'bool' }],
   apply(p) {
     for (const o of selectedObjs()) {
+      if (o.shape) { const M0 = objMatrix(o); if (p.loc) o.loc = [0, 0, 0]; if (p.rot) o.rot = [0, 0, 0]; if (p.scale) o.scl = [1, 1, 1]; try { rebase(o, M0); } catch (e) { return e.message; } continue; }
       const before = xfFor(o);
       const w = o.mesh.v.map(before.toW);
       if (p.loc) o.loc = [0, 0, 0];
@@ -384,6 +391,7 @@ export const setOrigin = {
       let t;
       if (p.to === 'world') t = [0, 0, 0];
       else { t = M.mul(M.add(bb.min, bb.max), 0.5); if (p.to === 'bottom') t[2] = bb.min[2]; }
+      if (o.shape) { const M0 = objMatrix(o); o.loc = t; try { rebase(o, M0); } catch (e) { return e.message; } continue; }
       o.loc = t;
       const nx = xfFor(o); o.mesh.v = w.map(nx.toL);
     }
@@ -403,6 +411,14 @@ export const joinObjs = {
   touch: () => ({ ids: [S.ed.active], mesh: true }),
   apply() {
     const target = S.doc.objects.find(o => o.id === S.ed.active) || selectedObjs()[0];
+    const others = selectedObjs().filter(o => o !== target);
+    if (target.shape || others.some(o => o.shape)) {
+      if (!target.shape || others.some(o => !o.shape)) return 'Solids and imported meshes cannot be joined';
+      try { let s = target.shape; for (const o of others) s = s.fuse(K.toLocal(K.worldShape(o), target)); K.setShape(target, s); } catch (e) { return 'Join failed'; }
+      S.doc.objects = S.doc.objects.filter(o => o === target || !S.ed.selected.has(o.id));
+      S.ed.selected = new Set([target.id]); S.ed.active = target.id;
+      return;
+    }
     const txf = xfFor(target);
     for (const o of selectedObjs()) {
       if (o === target) continue;

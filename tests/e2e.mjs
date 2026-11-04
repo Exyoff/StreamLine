@@ -20,7 +20,7 @@ const errors = [];
 p.on('pageerror', e => { errors.push(e.message); console.log('PAGEERR', e.stack); });
 p.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
 await p.goto(`http://localhost:${PORT}/`);
-await p.evaluate(() => localStorage.clear()); await p.reload(); await p.waitForTimeout(1200);
+await p.evaluate(() => localStorage.clear()); await p.reload(); await p.waitForSelector('#boot', { state: 'detached', timeout: 60000 }); await p.waitForTimeout(400);
 const cdp = await ctx.newCDPSession(p);
 const top = await p.evaluate(() => document.querySelector('#gl').getBoundingClientRect().top);
 const st = (fn, arg) => p.evaluate(fn, arg);
@@ -43,7 +43,7 @@ const drag = async pts => {
   }
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await p.waitForTimeout(160);
 };
-const vol = () => st(() => StreamLine.S.doc.objects.length ? StreamLine.M.meshVolume(StreamLine.S.doc.objects[0].mesh) : 0);
+const vol = () => st(() => { const o = StreamLine.S.doc.objects[0]; return o ? (o.shape ? StreamLine.K.volume(o.shape) : StreamLine.K.volume(o.shape)) : 0; });
 const ctxBar = async () => (await p.locator('#actions .act').allTextContents()).map(t => t.trim());
 const closeCard = async () => { if (await p.locator('#lastop .ib[aria-label=Done]').isVisible()) await p.tap('#lastop .ib[aria-label=Done]'); };
 const frame = (lo, hi) => p.evaluate(([lo, hi]) => { StreamLine.view.frame([lo, hi]); }, [lo, hi]).then(() => p.waitForTimeout(450));
@@ -88,9 +88,9 @@ try {
   check(await p.locator('#layerpill').isVisible() && /Default/.test(await p.textContent('#layerpill')), 'the active layer is always shown in the view');
   await p.tap('#lastop .field .val'); await keypad('8');
   check(await st(() => StreamLine.H.hist().filter(r => r.op === 'F.extrude').length === 1), 'typing the distance builds the body and records one Extrude step');
-  const area = 1200 - 0.5 * 64 * 25 * Math.sin(2 * Math.PI / 64);
+  const area = 1200 - Math.PI * 25; // exact: the hole is a true cylinder
   const v0 = await vol();
-  check(Math.abs(v0 - area * 8) < 1e-6, `extruded plate is exactly area × 8 (${v0.toFixed(3)} mm³)`);
+  check(Math.abs(v0 - area * 8) < 1e-6, `extruded plate is exactly (1200 − 25π) × 8 (${v0.toFixed(6)} mm³)`);
   await closeCard();
   await shot('1-extrude');
 
@@ -109,7 +109,7 @@ try {
   const mode = await st(() => StreamLine.getLast().params.mode);
   const v1 = await vol();
   check(mode === 'join' && await st(() => StreamLine.S.doc.objects.length) === 1, 'extrude from a face sketch joins the body automatically');
-  check(Math.abs(v1 - v0 - 0.5 * 64 * r2 * r2 * Math.sin(2 * Math.PI / 64) * 5) < 1e-6, `boss adds exactly πr²·5 (faceted) (${(v1 - v0).toFixed(3)} mm³)`);
+  check(Math.abs(v1 - v0 - Math.PI * r2 * r2 * 5) < 1e-6, `boss adds exactly πr²·5 — a true cylinder (${(v1 - v0).toFixed(6)} mm³)`);
   await closeCard();
   await shot('2-face');
 
@@ -182,11 +182,11 @@ try {
   // fresh part: rectangle 40×20 extruded 10, then grow the rectangle → the body follows
   await st(() => { StreamLine.S.doc.objects.forEach(o => (o.hidden = true)); });
   await st(() => StreamLine.addSketchedPrim('cube'));
-  const box = await st(() => { const o = StreamLine.S.doc.objects.at(-1); return { id: o.id, v: StreamLine.M.meshVolume(o.mesh) }; });
+  const box = await st(() => { const o = StreamLine.S.doc.objects.at(-1); return { id: o.id, v: StreamLine.K.volume(o.shape) }; });
   check(Math.abs(box.v - 20 * 20 * 20) < 1e-6, `Add Cube builds a sketch + Extrude (${box.v.toFixed(3)} mm³)`);
   const hcount = await st(() => StreamLine.H.hist().length);
   await st(() => { const sk = StreamLine.S.doc.sketches.at(-1); StreamLine.runOp(StreamLine.F.sketchOp('Widen', sk.id, k => { const r = k.ents.find(e => e.t === 'rect'); r.w = 40; })); });
-  const boxV2 = await st(id => StreamLine.M.meshVolume(StreamLine.S.doc.objects.find(o => o.id === id).mesh), box.id);
+  const boxV2 = await st(id => StreamLine.K.volume(StreamLine.S.doc.objects.find(o => o.id === id).shape), box.id);
   check(Math.abs(boxV2 - 40 * 20 * 20) < 1e-6, `editing the sketch rebuilds the extrude after it (${boxV2.toFixed(3)} mm³)`);
   check(await st(() => StreamLine.H.hist().length) === hcount, 'a sketch edit is not a new timeline step');
   // edit the extrude's parameters from the timeline
@@ -194,7 +194,7 @@ try {
   await p.waitForTimeout(250);
   check(await p.locator('#lastop').isVisible() && /Edit/.test(await p.textContent('#lastop')), 'Edit parameters opens the step in the floating dialog');
   await p.evaluate(async () => { const m = await import('./js/ops.js'); m.updateOp({ distance: 5 }); });
-  const boxV3 = await st(id => StreamLine.M.meshVolume(StreamLine.S.doc.objects.find(o => o.id === id).mesh), box.id);
+  const boxV3 = await st(id => StreamLine.K.volume(StreamLine.S.doc.objects.find(o => o.id === id).shape), box.id);
   check(Math.abs(boxV3 - 40 * 20 * 5) < 1e-6, `editing the Extrude step from the timeline rebuilds it (${boxV3.toFixed(3)} mm³)`);
   // rollback marker
   const nObj = await st(() => StreamLine.S.doc.objects.length);
@@ -230,28 +230,28 @@ try {
   check(!(await p.locator('#sheet.open').count()), 'tapping the viewport closes the Browser sheet on a phone');
   // Plasticity-style hole: on a face, pushing the extrude into the body cuts automatically
   await st(() => StreamLine.addSketchedPrim('cube'));
-  const cube = await st(() => { const o = StreamLine.S.doc.objects.at(-1); return { id: o.id, v: StreamLine.M.meshVolume(o.mesh) }; });
+  const cube = await st(() => { const o = StreamLine.S.doc.objects.at(-1); return { id: o.id, v: StreamLine.K.volume(o.shape) }; });
   await st(id => { const L = StreamLine; L.runOp(L.F.sketchOpNew('Hole', { o: [0, 0, 20], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }, { obj: id }, k => { L.F.addEntity(k, { t: 'circle', c: [0, 0], r: 3 }); })); }, cube.id);
   await st(() => { const L = StreamLine; L.runOp(L.F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [0, 0] }], distance: -5 }); });
-  const holeV = await st(id => StreamLine.M.meshVolume(StreamLine.S.doc.objects.find(o => o.id === id).mesh), cube.id);
+  const holeV = await st(id => StreamLine.K.volume(StreamLine.S.doc.objects.find(o => o.id === id).shape), cube.id);
   check(holeV < cube.v - 100 && await st(() => StreamLine.getLast().params.mode) === 'cut', `negative extrude from a face sketch cuts a hole (${(cube.v - holeV).toFixed(2)} mm³ removed)`);
   // the hole's face sketch follows the top face when the cube's extrude is made taller
   const removed = cube.v - holeV;
   await st(id => { const L = StreamLine; const r = L.H.hist().filter(x => x.op === 'F.extrude').at(-2); L.BR.editStep(r.id); }, cube.id);
   await p.evaluate(async () => { const m = await import('./js/ops.js'); m.updateOp({ distance: 30 }); m.commit(); });
-  const tall = await st(id => ({ v: StreamLine.M.meshVolume(StreamLine.S.doc.objects.find(o => o.id === id).mesh), z: StreamLine.S.doc.sketches.at(-1).plane.o[2], err: StreamLine.H.hist().some(r => r.err) }), cube.id);
+  const tall = await st(id => ({ v: StreamLine.K.volume(StreamLine.S.doc.objects.find(o => o.id === id).shape), z: StreamLine.S.doc.sketches.at(-1).plane.o[2], err: StreamLine.H.hist().some(r => r.err) }), cube.id);
   check(tall.z === 30 && Math.abs(tall.v - (20 * 20 * 30 - removed)) < 1e-6 && !tall.err, `a sketch on a face follows the face when an earlier step moves it (z=${tall.z}, ${tall.v.toFixed(2)} mm³)`);
   // a fillet on the cube's top edge survives making the cube taller (its edge is re-found)
   await st(id => { const L = StreamLine; L.S.ed.edges = [{ obj: id, a: [-10, -10, 30], b: [10, -10, 30] }]; L.runOp(L.F.edgeBlendOp, { kind: 'fillet', size: 2 }); }, cube.id);
-  const vF = await st(id => StreamLine.M.meshVolume(StreamLine.S.doc.objects.find(o => o.id === id).mesh), cube.id);
+  const vF = await st(id => StreamLine.K.volume(StreamLine.S.doc.objects.find(o => o.id === id).shape), cube.id);
   await st(() => { const L = StreamLine; const r = L.H.hist().filter(x => x.op === 'F.extrude').at(-2); L.BR.editStep(r.id); });
   await p.evaluate(async () => { const m = await import('./js/ops.js'); m.updateOp({ distance: 35 }); m.commit(); });
-  const vF2 = await st(id => StreamLine.M.meshVolume(StreamLine.S.doc.objects.find(o => o.id === id).mesh), cube.id);
+  const vF2 = await st(id => StreamLine.K.volume(StreamLine.S.doc.objects.find(o => o.id === id).shape), cube.id);
   check(!(await st(() => StreamLine.H.hist().some(r => r.err))) && Math.abs(vF2 - vF - 20 * 20 * 5) < 1e-6, `a fillet follows its edge when an earlier extrude grows (+${(vF2 - vF).toFixed(3)} mm³)`);
   // moving the sketch sideways moves the filleted edge too; the fillet follows
   const cubeSk = await st(() => StreamLine.H.hist().filter(r => r.kind === 'sketch').at(-2).sk);
   await st(id => { const L = StreamLine; L.runOp(L.F.sketchOp('Shift', id, k => { const r = k.ents.find(e => e.t === 'rect'); r.y -= 5; r.h += 2; })); }, cubeSk);
-  const vF3 = await st(id => StreamLine.M.meshVolume(StreamLine.S.doc.objects.find(o => o.id === id).mesh), cube.id);
+  const vF3 = await st(id => StreamLine.K.volume(StreamLine.S.doc.objects.find(o => o.id === id).shape), cube.id);
   check(!(await st(() => StreamLine.H.hist().some(r => r.err))) && Math.abs(vF3 - vF2 - 20 * 2 * 35) < 1e-6, `a fillet follows its edge when the sketch moves it sideways (+${(vF3 - vF2).toFixed(3)} mm³)`);
   // edit a sketch from the timeline: editing mode with a Finish command
   await p.tap('#ws-seg [data-pick=edge]'); await p.waitForTimeout(150); // already in Edge mode: the bar must still switch
