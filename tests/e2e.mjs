@@ -296,6 +296,23 @@ try {
     return { errs: L.H.hist().filter(x => x.err).map(x => x.err), v: L.K.volume(o.shape), expect: 40 * 30 * 35 - 36 * 26 * 33 };
   });
   check(!ppOk.errs.length && Math.abs(ppOk.v - ppOk.expect) < 1e-6, `Push/Pull and Shell follow their faces when an earlier extrude grows (${ppOk.v.toFixed(3)} mm³${ppOk.errs.length ? ' · ' + ppOk.errs.join('; ') : ''})`);
+  // fasteners: a real helical thread on a shaft and in a nut, and counterbore / countersink holes
+  const fast = await st(() => {
+    const L = StreamLine, F = L.F, XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    L.runOp(F.sketchOpNew('shaft', XY(0), null, k => { F.addEntity(k, { t: 'circle', c: [900, 0], r: 4 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [900, 0] }], distance: 12, mode: 'new', target: null });
+    const sid = L.S.doc.objects.at(-1).id, v0 = L.K.volume(L.S.doc.objects.at(-1).shape);
+    L.S.ed.faces = [{ obj: sid, n: [1, 0, 0], w: 904, p: [904, 0, 6], planar: false }];
+    const t = L.runOp(F.threadOp, {}), label = L.H.hist().at(-1).label, v1 = L.K.volume(L.S.doc.objects.find(o => o.id === sid).shape);
+    L.runOp(F.sketchOpNew('plate', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 950, y: -15, w: 40, h: 30 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [960, 0] }], distance: 10, mode: 'new', target: null });
+    const pid = L.S.doc.objects.at(-1).id, p0 = L.K.volume(L.S.doc.objects.at(-1).shape);
+    L.S.ed.faces = [{ obj: pid, n: [0, 0, 1], w: 10, p: [960.2, 0.3, 10], planar: true }];
+    const h = L.runOp(F.holeOp, { kind: 'cbore', dia: 5.5, cbDia: 9, cbDepth: 5 }), p1 = L.K.volume(L.S.doc.objects.find(o => o.id === pid).shape);
+    return { t, label, thread: v0 - v1, h, removed: p0 - p1, expect: Math.PI * (4.5 ** 2 * 5 + 2.75 ** 2 * 5) };
+  });
+  check(fast.t && /M8×1\.25/.test(fast.label) && fast.thread > 10, `Thread: a helical M8×1.25 thread (${fast.thread.toFixed(1)} mm³ of material cut into the shaft)`);
+  check(fast.h && Math.abs(fast.removed - fast.expect) < 1e-6, `Hole: an exact counterbored hole (${fast.removed.toFixed(3)} mm³)`);
   await shot('5-timeline');
 } catch (e) {
   await p.screenshot({ path: OUT + 'crash.png' }).catch(() => {});

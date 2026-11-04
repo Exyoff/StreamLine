@@ -411,7 +411,8 @@ export const shellOp = {
     if (!(p.t > 0)) return 'Thickness must be > 0';
     const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
     const faces = findFaces(o, p.faces); if (!faces) return 'The face it opened no longer exists';
-    const res = guard(() => o.shape.clone().shell({ thickness: p.t, filter: { find: () => faces, delete() {} } }), 'The wall is too thick for this body');
+    const bb = o.shape.boundingBox.bounds, minDim = Math.min(...[0, 1, 2].map(k => bb[1][k] - bb[0][k]));
+    const res = guard(() => o.shape.clone().shell({ thickness: p.t, filter: { find: () => faces, delete() {} } }), p.t * 2 >= minDim ? 'The wall is too thick for this body' : 'Shell failed near rounded edges — try a thinner wall, or shell before filleting');
     if (typeof res === 'string') return res;
     if (K.isEmpty(res)) return 'Result is empty';
     K.setShape(o, res);
@@ -601,6 +602,99 @@ export const draftOp = {
     const d = AX[p.pull], x = Math.abs(d[2]) < 0.9 ? M.norm(M.cross([0, 0, 1], d)) : [1, 0, 0];
     const res = guard(() => o.shape.draft(p.angle, () => ({ find: () => faces, delete() {} }), new R.Plane(M.mul(d, p.neutral), x, d)), 'Draft failed');
     if (typeof res === 'string') return res;
+    K.setShape(o, res); S.ed.faces = [];
+  },
+};
+
+// ---------- fasteners: thread and hole ----------
+// ISO metric coarse pitches by nominal diameter
+const ISO_PITCH = [[1.6, 0.35], [2, 0.4], [2.5, 0.45], [3, 0.5], [4, 0.7], [5, 0.8], [6, 1], [8, 1.25], [10, 1.5], [12, 1.75], [14, 2], [16, 2], [18, 2.5], [20, 2.5], [24, 3], [30, 3.5], [36, 4], [42, 4.5], [48, 5]];
+const isoPitch = d => ISO_PITCH.reduce((b, x) => (Math.abs(x[0] - d) < Math.abs(b[0] - d) ? x : b))[1];
+const fmtD = v => +v.toFixed(2);
+// Thread: a true helical thread on a cylindrical face — external (shaft) or internal (hole), detected from the face
+export const threadOp = {
+  label: p => `Thread ${p._internal ? 'internal ' : ''}M${fmtD(p._d || 0)}×${fmtD(p.pitch || 0)}`,
+  prepare(p) {
+    p.faces ??= JSON.parse(JSON.stringify((S.ed.faces || []).slice(0, 1)));
+    if (!p.faces.length) return 'Select a cylindrical face (Face mode), e.g. a shaft or a hole';
+    p.obj = p.faces[0].obj;
+    const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
+    const f = findFaces(o, p.faces)?.[0], cy = f && K.cylinderOf(f);
+    if (!cy) return 'Pick a cylindrical face (a shaft or a round hole)';
+    const xf = xfFor(o), pl = xf.toL(p.faces[0].p), radial = M.sub(pl, M.add(cy.c, M.mul(cy.d, M.dot(M.sub(pl, cy.c), cy.d))));
+    p._internal = M.dot(M.norm(radial), locDir(xf, p.faces[0].p, p.faces[0].n)) < 0;
+    p._d = 2 * cy.R; p.pitch ??= isoPitch(p._d); p.length ??= +(cy.t1 - cy.t0).toFixed(6); p.fromEnd ??= true; p.left ??= false;
+  },
+  touch: p => ({ ids: [p.obj], mesh: true }),
+  fields: () => [lenF('pitch', 'Pitch'), lenF('length', 'Length'), { key: 'fromEnd', label: 'Start from', kind: 'choice', options: [[true, 'Far end'], [false, 'Near end']], wide: true }, { key: 'left', label: 'Left-hand', kind: 'bool' }],
+  apply(p) {
+    if (!(p.pitch > 0.05)) return 'Pitch must be at least 0.05 mm';
+    const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
+    const f = findFaces(o, p.faces)?.[0], cy = f && K.cylinderOf(f);
+    if (!cy) return 'The cylindrical face it used no longer exists';
+    const span = cy.t1 - cy.t0, L = Math.min(Math.max(p.length, p.pitch * 2), span);
+    if (L < p.pitch * 2) return 'The face is too short for this pitch';
+    const P = p.pitch, R0 = cy.R, internal = p._internal;
+    if (!internal && P * 0.62 >= R0 * 0.8) return 'Pitch too coarse for this diameter';
+    // thread zone along the axis
+    const ta = p.fromEnd ? cy.t1 - L : cy.t0, tb = ta + L;
+    const res = guard(() => {
+      const tan30 = Math.tan(Math.PI / 6);
+      if (!internal) {
+        const H = 0.6134 * P, rc = R0 - H, flat = P / 16;
+        // remove the thread zone down to the minor diameter, then add the helical ridge
+        const u = M.norm(Math.abs(cy.d[2]) < 0.9 ? M.cross(cy.d, [0, 0, 1]) : M.cross(cy.d, [1, 0, 0]));
+        const ring = K.revolveProfile(cy.c, cy.d, u, [[rc, ta], [R0 + 1, ta], [R0 + 1, tb], [rc, tb]]);
+        let s = o.shape.cut(ring);
+        const w = flat + (H + 0.25) * tan30;
+        const ridge = K.threadRidge(M.add(cy.c, M.mul(cy.d, ta + w + 0.01)), cy.d, rc, P, L - 2 * w - 0.02, [[rc - 0.25, -w], [R0, -flat], [R0, flat], [rc - 0.25, w]], !!p.left);
+        return s.fuse(ridge);
+      }
+      const H = 0.5413 * P, rmin = R0 - H, flat = P / 8;
+      const w = flat + (H + 0.25) * tan30;
+      const ridge = K.threadRidge(M.add(cy.c, M.mul(cy.d, ta + w + 0.01)), cy.d, R0, P, L - 2 * w - 0.02, [[R0 + 0.25, -w], [rmin, -flat], [rmin, flat], [R0 + 0.25, w]], !!p.left);
+      return o.shape.fuse(ridge);
+    }, 'Could not cut this thread');
+    if (typeof res === 'string') return res;
+    if (K.isEmpty(res)) return 'Result is empty';
+    K.setShape(o, res); S.ed.faces = [];
+  },
+};
+
+// Hole: simple, counterbore or countersink, drilled into a flat face at the picked point
+export const holeOp = {
+  label: p => `Hole Ø${fmtD(p.dia)}${p.kind === 'cbore' ? ' counterbore' : p.kind === 'csink' ? ' countersink' : ''}`,
+  defaults: () => ({ dia: 5, depth: 0, kind: 'simple', cbDia: 9, cbDepth: 5, csDia: 10, csAngle: 90 }),
+  prepare(p) {
+    p.faces ??= JSON.parse(JSON.stringify((S.ed.faces || []).slice(0, 1)));
+    if (!p.faces.length) return 'Tap a flat face where the hole goes (Face mode)';
+    if (p.faces[0].planar === false) return 'Holes go into flat faces';
+    p.obj = p.faces[0].obj;
+    const e0 = solidOnly(objById(p.obj)); if (e0) return e0;
+    // the hole centre: the tapped point, rounded to the snap step in the face's plane
+    const f = p.faces[0], st = S.settings.snap ? S.settings.snapStep : 0;
+    if (p.x == null) { const q = st ? f.p.map(v => Math.round(v / st) * st) : f.p.slice(); const c = M.add(q, M.mul(f.n, f.w - M.dot(f.n, q))); [p.x, p.y, p.z] = c.map(v => +v.toFixed(6)); }
+  },
+  touch: p => ({ ids: [p.obj], mesh: true }),
+  fields: p => [lenF('dia', 'Diameter'), lenF('depth', 'Depth (0 = through)'), { key: 'kind', label: 'Type', kind: 'choice', options: [['simple', 'Simple'], ['cbore', 'Counterbore'], ['csink', 'Countersink']], wide: true },
+    ...(p.kind === 'cbore' ? [lenF('cbDia', 'Counterbore Ø'), lenF('cbDepth', 'Counterbore depth')] : p.kind === 'csink' ? [lenF('csDia', 'Countersink Ø'), { key: 'csAngle', label: 'Countersink angle', kind: 'ang' }] : []),
+    lenF('x', 'Centre X'), lenF('y', 'Centre Y'), lenF('z', 'Centre Z')],
+  apply(p) {
+    if (!(p.dia > 0)) return 'Diameter must be > 0';
+    const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
+    const f = findFaces(o, p.faces)?.[0]; if (!f) return 'The face it was drilled into no longer exists';
+    const xf = xfFor(o), n = M.mul(locDir(xf, p.faces[0].p, p.faces[0].n), -1); // drill into the body
+    const c = xf.toL([p.x, p.y, p.z]), u = M.norm(Math.abs(n[2]) < 0.9 ? M.cross(n, [0, 0, 1]) : M.cross(n, [1, 0, 0]));
+    const bb = o.shape.boundingBox.bounds, through = Math.hypot(...[0, 1, 2].map(k => bb[1][k] - bb[0][k])) * 2 + 10;
+    const D = p.depth > 0 ? p.depth : through, r = p.dia / 2;
+    const prof = [[0, -0.01]];
+    if (p.kind === 'cbore') { if (!(p.cbDia > p.dia)) return 'Counterbore Ø must be larger than the hole'; prof.push([p.cbDia / 2, -0.01], [p.cbDia / 2, p.cbDepth], [r, p.cbDepth]); }
+    else if (p.kind === 'csink') { if (!(p.csDia > p.dia)) return 'Countersink Ø must be larger than the hole'; const h = (p.csDia / 2 - r) / Math.tan((p.csAngle / 2) * Math.PI / 180); prof.push([p.csDia / 2 + 0.01, -0.01], [r, h]); }
+    else prof.push([r, -0.01]);
+    prof.push([r, D], [0, D]);
+    const res = guard(() => o.shape.cut(K.revolveProfile(c, n, u, prof)), 'Could not drill this hole');
+    if (typeof res === 'string') return res;
+    if (K.isEmpty(res)) return 'Result is empty';
     K.setShape(o, res); S.ed.faces = [];
   },
 };

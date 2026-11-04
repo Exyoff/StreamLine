@@ -509,3 +509,8 @@ body.has-tl #toast { bottom: calc(var(--botH) + var(--sab) + var(--tlh) + 14px);
 /* Items rows: names keep their room */
 .objrow .nm { min-width: 0; flex: 1 1 40%; }
 .objrow .meta { max-width: 22%; }
+
+/* cards start below a two-line HUD */
+#lastop, #draw-card, #measure-card { top: calc(var(--topH) + 58px); }
+@media (orientation: landscape) and (max-height: 500px) { #toast { max-width: calc(100vw - 460px); } }
+#sheet-body .objrow .ib { width: 44px; height: 44px; }

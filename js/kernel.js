@@ -219,3 +219,39 @@ export function edgeAt(shape, ref) {
   }
   return best ? { edge: list[best.e.i], info: best.e } : null;
 }
+
+// ---------- cylinders, helices, revolved tools (threads and holes) ----------
+// axis, radius and extent of a cylindrical face (local coordinates), or null
+export function cylinderOf(face) {
+  if (face.geomType !== 'CYLINDRE') return null;
+  const ad = new oc.BRepAdaptor_Surface(face.wrapped, true);
+  const cy = ad.Cylinder(), ax = cy.Axis(), L = ax.Location(), D = ax.Direction();
+  const c = [L.X(), L.Y(), L.Z()], d = [D.X(), D.Y(), D.Z()], R0 = cy.Radius();
+  ad.delete();
+  // extent along the axis from the face's tessellation
+  let t0 = Infinity, t1 = -Infinity;
+  const m = face.mesh({ tolerance: 0.01, angularTolerance: 0.3 });
+  for (let i = 0; i < m.vertices.length; i += 3) { const t = (m.vertices[i] - c[0]) * d[0] + (m.vertices[i + 1] - c[1]) * d[1] + (m.vertices[i + 2] - c[2]) * d[2]; t0 = Math.min(t0, t); t1 = Math.max(t1, t); }
+  return { c, d, R: R0, t0, t1 };
+}
+// a solid of revolution from a closed (radial, axial) profile around the axis through c along d
+export function revolveProfile(c, d, u, prof) {
+  const P = prof.map(([r, t]) => [c[0] + u[0] * r + d[0] * t, c[1] + u[1] * r + d[1] * t, c[2] + u[2] * r + d[2] * t]);
+  const es = []; for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length]; if (Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) > 1e-9) es.push(R.makeLine(a, b)); }
+  return R.revolution(R.makeFace(R.assembleWire(es)), c, d, 360);
+}
+// a helical thread ridge: the triangular profile swept along a helix (binormal fixed to the axis)
+export function threadRidge(c, d, radius, pitch, length, prof, lefthand = false) {
+  const helix = R.makeHelix(pitch, length, radius, c, d, lefthand);
+  const sp = helix.startPoint || (helix.edges && helix.edges[0].startPoint);
+  const S0 = [sp.x, sp.y, sp.z];
+  const radial = [S0[0] - c[0], S0[1] - c[1], S0[2] - c[2]], k = radial[0] * d[0] + radial[1] * d[1] + radial[2] * d[2];
+  const ur = [radial[0] - d[0] * k, radial[1] - d[1] * k, radial[2] - d[2] * k], ul = Math.hypot(...ur), u = ur.map(v => v / ul);
+  const base = [c[0] + d[0] * k, c[1] + d[1] * k, c[2] + d[2] * k];
+  const P = prof.map(([r, t]) => [base[0] + u[0] * r + d[0] * t, base[1] + u[1] * r + d[1] * t, base[2] + u[2] * r + d[2] * t]);
+  const es = []; for (let i = 0; i < P.length; i++) es.push(R.makeLine(P[i], P[(i + 1) % P.length]));
+  const dir = new oc.gp_Dir(d[0], d[1], d[2]);
+  const s = R.genericSweep(R.assembleWire(es), helix, { support: dir });
+  dir.delete();
+  return s;
+}
