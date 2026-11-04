@@ -491,7 +491,7 @@ function renderTools() {
 }
 function buildStatic() {
   $('#btn-cmd').innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></svg>';
-  $('#btn-menu').innerHTML = I.menu; $('#btn-undo').innerHTML = I.undo; $('#btn-redo').innerHTML = I.redo; $('#btn-props').innerHTML = I.sliders;
+  $('#btn-menu').innerHTML = I.menu; $('#btn-undo').innerHTML = I.undo; $('#btn-redo').innerHTML = I.redo; $('#btn-props').innerHTML = I.gear; $('#btn-history').innerHTML = I.history;
   $('#sheet-close').innerHTML = I.close;
   $('#btn-frame').innerHTML = I.frame; $('#btn-snap').innerHTML = I.magnet; $('#btn-xray').innerHTML = I.xray;
   $('#btn-multi').innerHTML = I.multi; $('#btn-all').innerHTML = I.all;
@@ -503,8 +503,11 @@ function bindEvents() {
   $('#btn-cmd').onclick = () => openPalette();
   $('#btn-undo').onclick = () => undo();
   $('#btn-redo').onclick = () => redo();
-  $('#btn-props').onclick = () => { if (!sheetOpen) sheetTab = S.ed.selected.size || S.ed.mode === 'edit' ? 'item' : 'objects'; toggleSheet(); };
-  $('#layerpill').onclick = () => { sheetTab = 'objects'; toggleSheet(true); renderSheet(); };
+  // right-hand slide-over: History · Items (layers, sketches, bodies) · Info · Settings
+  const openPanel = tab => { if (sheetOpen && sheetTab === tab) return toggleSheet(false); sheetTab = tab; toggleSheet(true); renderSheet(); };
+  $('#btn-props').onclick = () => openPanel('settings');
+  $('#btn-history').onclick = () => openPanel('history');
+  $('#layerpill').onclick = () => openPanel('objects');
   $('#sheet-close').onclick = () => toggleSheet(false);
   $('#sheet-tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { sheetTab = b.dataset.tab; renderSheet(); } });
   $('#btn-menu').onclick = () => openMainMenu();
@@ -516,6 +519,14 @@ function bindEvents() {
   $('#btn-all').onclick = selectAllToggle;
   $('#file-input').addEventListener('change', onFile);
   $('#viewport').addEventListener('pointerdown', () => { if (keypadOpen()) closeKeypad(false); }, true);
+  // the slide-over closes on any tap outside it (phones), and that tap does nothing else
+  let sheetClosedAt = 0;
+  document.addEventListener('pointerdown', e => {
+    if (!sheetOpen || document.body.classList.contains('sheet-docked') || !e.target.closest) return;
+    if (e.target.closest('#sheet, #popover, #scrim, #keypad, #btn-history, #btn-props, #layerpill')) return;
+    toggleSheet(false); sheetClosedAt = performance.now(); e.stopPropagation(); e.preventDefault();
+  }, true);
+  document.addEventListener('click', e => { if (performance.now() - sheetClosedAt < 500) { e.stopPropagation(); e.preventDefault(); } }, true);
 
   on('change', () => { view.markSelDirty(); refreshSoon(); });
   on('lastop', () => refreshSoon());
@@ -548,7 +559,7 @@ function refresh() {
   document.body.classList.toggle('ws-cad', S.ed.workspace === 'cad');
   view.bg = S.ed.workspace === 'model' ? 0x2b2c30 : 0x212830; // Plasticity-grey studio vs AutoCAD model space
   Cmd.render();
-  renderTop(); renderTools(); renderActions(); renderHud(); renderDrawCard(); renderLastOp(); renderMeasureCard(); renderViewButtons(); BR.renderTimeline(); BR.renderLayerPill();
+  renderTop(); renderTools(); renderActions(); renderHud(); renderDrawCard(); renderLastOp(); renderMeasureCard(); renderViewButtons(); BR.renderTimeline(); BR.renderLayerPill(); BR.renderHistoryBadge();
   if (sheetOpen && !gizmoActive()) renderSheet();
   view.render();
 }
@@ -893,7 +904,7 @@ function renderSheet() {
   document.querySelectorAll('#sheet-tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === sheetTab));
   const body = $('#sheet-body');
   const st = body.scrollTop;
-  body.replaceChildren(...(sheetTab === 'item' ? itemTab() : sheetTab === 'objects' ? BR.browserTab(group) : settingsTab()));
+  body.replaceChildren(...(sheetTab === 'item' ? itemTab() : sheetTab === 'objects' ? BR.browserTab(group) : sheetTab === 'history' ? BR.historyTab(group) : settingsTab()));
   body.scrollTop = st;
 }
 
@@ -1001,6 +1012,7 @@ function settingsTab() {
     group('Display',
       toggle({ label: 'Grid', value: S.settings.grid, onChange: v => set('grid', v) }),
       toggle({ label: 'X-ray', value: S.settings.xray, onChange: v => set('xray', v) }),
+      toggle({ label: 'History strip along the bottom', value: S.settings.timeline === true, onChange: v => set('timeline', v) }),
       toggle({ label: 'Show sketches in Model', value: S.settings.showSketches !== false, onChange: v => set('showSketches', v) }),
       toggle({ label: 'Edge lengths (Edit mode)', value: S.settings.edgeLengths !== false, onChange: v => set('edgeLengths', v) })),
     group('About', h('p', { class: 'note' }, 'StreamLine — precise polygon modelling for the browser. Works offline once loaded; on iPhone use Share → Add to Home Screen for full-screen use.')),
