@@ -40,7 +40,8 @@ const samePlane = (a, b) => a.n.every((c, i) => Math.abs(c - b.n[i]) < 1e-9) && 
 export function cplane() { return S.ed.cplane || SK.PLANES.XY; }
 // typed first points (tool card / command line) refer to the construction plane, like Plasticity
 function setPlaneTarget(plane, face = null) {
-  const ex = (S.doc.sketches || []).find(k => isShown(k) && samePlane(k.plane, plane));
+  // reuse the plane's sketch only while no feature has used it — a new part gets its own sketch
+  const ex = (S.doc.sketches || []).find(k => isShown(k) && samePlane(k.plane, plane) && H.firstUsing([k.id]) < 0);
   if (ex) { target = { skId: ex.id }; S.ed.sketch = ex.id; }
   else target = { plane: { o: plane.o.slice(), u: plane.u.slice(), v: plane.v.slice(), n: plane.n.slice() }, face };
 }
@@ -110,7 +111,8 @@ function snapAt(x, y, from = st.start, exclude = null) {
   // rectangles snap both corners to the grid (polar tracking would give off-grid corners);
   // circles and 2-point modes snap the size (radius / diameter) to the step along the finger's direction
   const t = tool(), rectLike = t === 'rect' && !(mode('rect') === '3pt' && st.start && !st.p2);
-  let r = SK.snapPoint(s, raw, { pxTol: 20, wpp, from, refPts: refPts(s), exclude, osnap: S.settings.osnap !== false, polar: !rectLike && S.settings.polar !== false, ortho: !!S.settings.ortho });
+  const sizing = from && t === 'circle' && mode('circle') !== '3pt';
+  let r = SK.snapPoint(s, raw, { pxTol: sizing ? 8 : 20, wpp, from, refPts: refPts(s), exclude, osnap: S.settings.osnap !== false, polar: !rectLike && S.settings.polar !== false, ortho: !!S.settings.ortho });
   if (from && t === 'circle' && mode('circle') !== '3pt' && S.settings.snap && (r.kind === 'Grid' || /°$/.test(r.kind))) {
     const dx = raw[0] - from[0], dy = raw[1] - from[1], L = Math.hypot(dx, dy), stp = S.settings.snapStep * (mode('circle') === '2pt' ? 1 : 1);
     if (L > 1e-9) { const l = Math.max(stp, Math.round(L / stp) * stp); r = { p: [from[0] + dx / L * l, from[1] + dy / L * l], kind: 'Size' }; }
@@ -222,6 +224,7 @@ export function up() {
   st.press = null; st.pressAnchor = null;
   if (!p) return;
   commitPoint(p, anchor);
+  if (!st.start && !st.p2) { st.snap = null; view.render(); }
 }
 // A point from a tap, a drag release, or typed in the command line.
 export function commitPoint(p, anchor = null) {
@@ -276,7 +279,9 @@ export function cancelPress() { st.press = null; st.pressAnchor = null; if (st.g
 // ---------- select tool: grips ----------
 function gripDown(x, y) {
   const s = sk();
-  for (const id of S.ed.drawSel) {
+  // while a sketch is being edited every point can be dragged directly; otherwise only the selection's
+  const ids = S.ed.drawSel.size || S.ed.editingSketch == null ? [...S.ed.drawSel] : s.ents.filter(e => e.t !== 'dim').map(e => e.id);
+  for (const id of ids) {
     const e = SK.entById(s, id); if (!e) continue;
     for (const kp of SK.keyPoints(e)) {
       if (!kp.m) continue;
@@ -555,11 +560,15 @@ export function cardContent() {
         btn('Finish', () => { if (n >= 2) placeSpline(c, false); else toast('Tap at least 2 points'); }, 'primary')));
   }
   if (t === 'polygon') {
-    const c = ensureCmd();
-    return h('div', {}, title(`Polygon · ${acad.polySides} sides`, c.stage === 'vertex' ? 'tap a corner (sets size and rotation)' : 'tap the centre'),
+    const c = ensureCmd(), n = acad.polySides, flats = acad.polyBy === 'flats';
+    const place = size => { const ctr = c.center; const v = flats ? polyCorner(ctr, size, acad.polyRot, n) : [ctr[0] + size * Math.cos(acad.polyRot * D), ctr[1] + size * Math.sin(acad.polyRot * D)]; editSketch(`Polygon (${n})`, k => { const r = SK.addPolygon(k, ctr, v, n); if (typeof r === 'string') return r; }); c.stage = 'center'; emit('drawcard'); view.render(); };
+    const cur = c.stage === 'vertex' && pv() ? SK.d2(c.center, pv()) * (flats ? 2 * Math.cos(Math.PI / n) : 1) : 0;
+    return h('div', {}, title(`Polygon · ${n} sides`, c.stage === 'vertex' ? (flats ? 'tap the middle of a flat, or type the size' : 'tap a corner, or type the size') : 'tap the centre'),
+      h('div', { class: 'seg modebar' }, ...[['flats', 'Across flats'], ['corner', 'To corner']].map(([k, l]) => h('button', { class: acad.polyBy === k ? 'on' : '', onclick: () => { acad.polyBy = k; emit('drawcard'); } }, l))),
       h('div', { class: 'fields' },
-        field({ label: 'Sides', kind: 'int', value: acad.polySides, min: 3, max: 64, onCommit: v => { acad.polySides = Math.max(3, Math.min(64, Math.round(v))); emit('drawcard'); } }),
-        c.stage === 'vertex' ? field({ label: 'Radius (to corner)', kind: 'len', value: pv() ? SK.d2(c.center, pv()) : 0, min: 0, onCommit: v => { const ctr = c.center; editSketch(`Polygon (${acad.polySides})`, k => { const r = SK.addPolygon(k, ctr, [ctr[0] + v, ctr[1]], acad.polySides); if (typeof r === 'string') return r; }); c.stage = 'center'; emit('drawcard'); view.render(); } }) : null));
+        field({ label: 'Sides', kind: 'int', value: n, min: 3, max: 64, onCommit: v => { acad.polySides = Math.max(3, Math.min(64, Math.round(v))); emit('drawcard'); } }),
+        field({ label: 'Rotation', kind: 'ang', value: acad.polyRot, onCommit: v => { acad.polyRot = v; emit('drawcard'); } }),
+        c.stage === 'vertex' ? field({ label: flats ? 'Across flats' : 'Radius to corner', kind: 'len', value: cur, min: 0, cls: 'wide', onCommit: v => { if (v > 0) place(flats ? v : v); } }) : null));
   }
   // remaining command tools (ellipse, text, hatch, edit commands, inquiry): show the prompt and a way out
   if (EDIT_TOOLS.has(t)) {
@@ -877,7 +886,7 @@ export const lineOpts = { construction: false };
 export const dimOpts = { mode: 'aligned' };
 let result = null; // last measurement drawn in the viewport
 const SELECT_FIRST = new Set(['move', 'copy', 'rotate', 'scale', 'mirror', 'erase', 'explode', 'list', 'arrayrect', 'arraypolar']);
-export const acad = { offsetDist: null, polySides: 6, mirrorErase: false, textH: null, hatch: { pattern: 'ANSI31', scale: 1, angle: 0 } };
+export const acad = { polyBy: 'flats', polyRot: 0, offsetDist: null, polySides: 6, mirrorErase: false, textH: null, hatch: { pattern: 'ANSI31', scale: 1, angle: 0 } };
 export const acceptsSpaces = () => st.cmd && st.cmd.tool === 'text' && st.cmd.stage === 'string';
 function ensureCmd() {
   if (st.cmd && st.cmd.tool === tool()) return st.cmd;
@@ -946,7 +955,8 @@ function cmdPoint(p) {
     if (c.stage === 'center') { c.center = p; c.stage = 'vertex'; }
     else if (c.stage === 'vertex') {
       const center = c.center, n = acad.polySides;
-      editSketch(`Polygon (${n})`, k => { const r = SK.addPolygon(k, center, p, n); if (typeof r === 'string') return r; });
+      const v = acad.polyBy === 'flats' ? polyCorner(center, SK.d2(center, p) * 2, Math.atan2(p[1] - center[1], p[0] - center[0]) * 180 / Math.PI, n) : p;
+      editSketch(`Polygon (${n})`, k => { const r = SK.addPolygon(k, center, v, n); if (typeof r === 'string') return r; });
       c.stage = 'center';
     }
     return;
@@ -1248,4 +1258,10 @@ function textMesh(s, e, color) {
   g.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
   g.setIndex([0, 1, 2, 0, 2, 3]);
   return new THREE.Mesh(g, new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, side: THREE.DoubleSide }));
+}
+
+// polygon corner for a size measured across the flats; the first flat faces direction `rotDeg`
+function polyCorner(c, acrossFlats, rotDeg, n) {
+  const R = acrossFlats / 2 / Math.cos(Math.PI / n), a = (rotDeg + 180 / n) * Math.PI / 180;
+  return [c[0] + R * Math.cos(a), c[1] + R * Math.sin(a)];
 }

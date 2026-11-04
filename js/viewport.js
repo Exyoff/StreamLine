@@ -31,7 +31,7 @@ let gridLines, gridKey = '';
 let needsRender = true, tween = null;
 const visuals = new Map(); // id -> { group, mesh, edges, points, meshRef }
 let selDirty = true;
-let matMesh, matMeshX, matEdgeObj, matEdgeSel, matEdgeAct, matEdgeEdit, matPoints;
+let matMesh, matMeshX, matEdgeObj, matEdgeSoft, matEdgeSel, matEdgeAct, matEdgeEdit, matPoints;
 
 export function camera() { return view.cam.ortho ? ortho : persp; }
 
@@ -61,6 +61,7 @@ view.init = function (el) {
   // opaque (overlapping joints of a translucent line darken unevenly) and pulled toward the camera so the
   // edge never fights with the faces it lies on — no speckled rims on holes and bosses
   matEdgeObj = fatMat({ color: 0x3a4250, width: 1.2 });
+  matEdgeSoft = fatMat({ color: 0x55606f, width: 0.8, opacity: 0.45 }); matEdgeSoft.polygonOffset = true; matEdgeSoft.polygonOffsetFactor = -2; matEdgeSoft.polygonOffsetUnits = -6;
   matEdgeSel = fatMat({ color: COL.sel, width: 2 });
   matEdgeAct = fatMat({ color: COL.active, width: 2.2 });
   for (const m of [matEdgeObj, matEdgeSel, matEdgeAct]) { m.polygonOffset = true; m.polygonOffsetFactor = -2; m.polygonOffsetUnits = -6; }
@@ -283,11 +284,14 @@ function buildSolidVisual(o) {
   g.userData.triFace = null; // triangle index == mesh face index
   g.computeBoundingSphere();
   const mesh = new THREE.Mesh(g, matMesh); mesh.userData.objId = o.id;
-  const ep = [];
-  for (const e of t.edges) { if (e.seam) continue; for (let k = 1; k < e.pts.length; k++) ep.push(...e.pts[k - 1], ...e.pts[k]); }
-  const eg = new LineSegmentsGeometry(); eg.setPositions(ep);
-  const edges = new LineSegments2(eg, matEdgeObj);
+  // straight and round edges in full strength; free-form edges (thread crests, sweeps) lighter so dense
+  // helices read as surface detail instead of a black mass
+  const ep = [], fp = [];
+  for (const e of t.edges) { if (e.seam) continue; const dst = /LINE|CIRCLE|ELLIPSE/.test(e.type) ? ep : fp; for (let k = 1; k < e.pts.length; k++) dst.push(...e.pts[k - 1], ...e.pts[k]); }
+  const eg = new LineSegmentsGeometry(); eg.setPositions(ep.length ? ep : [0, 0, 0, 0, 0, 0]);
+  const edges = new LineSegments2(eg, matEdgeObj); edges.visible = ep.length > 0;
   const group = new THREE.Group(); group.add(mesh, edges);
+  if (fp.length) { const fg = new LineSegmentsGeometry(); fg.setPositions(fp); group.add(new LineSegments2(fg, matEdgeSoft)); }
   return { group, mesh, edges, points: null, meshRef: o.mesh, editing: false };
 }
 function buildVisual(o, editing) {

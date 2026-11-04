@@ -332,8 +332,12 @@ export const duplicate = {
 
 export const arrayOp = {
   label: () => 'Array',
-  defaults: () => ({ count: 3, x: defSize() * 1.5, y: 0, z: 0 }),
-  prepare(p) { const e = needObjSel(); if (e) return e; p._base ??= S.doc.nextId; },
+  defaults: () => ({ count: 3, y: 0, z: 0 }),
+  prepare(p) {
+    const e = needObjSel(); if (e) return e; p._base ??= S.doc.nextId;
+    // default spacing: the selection's width plus a quarter, rounded to the snap step
+    if (p.x == null) { const W = selectedObjs().flatMap(o => o.mesh.v.map(xfFor(o).toW)), b = W.length ? M.bbox(W) : null, st = S.settings.snapStep || 1; p.x = b ? Math.max(st, Math.ceil((b.max[0] - b.min[0]) * 1.25 / st) * st) : defSize() * 1.5; }
+  },
   touch: () => ({ ids: [] }),
   fields: () => [{ key: 'count', label: 'Count', kind: 'int', min: 2, max: 500 }, ...[['x', 'Offset X'], ['y', 'Offset Y'], ['z', 'Offset Z']].map(([k, l]) => lenF(k, l))],
   apply(p) {

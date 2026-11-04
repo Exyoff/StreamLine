@@ -43,6 +43,12 @@ Solids are exact boundary representations computed by **OpenCascade** (the kerne
 - **Mesh editing:** imported STL/OBJ files stay triangle meshes and keep vertex editing ("Edit mesh"). Solids are changed with features instead.
 - The kernel (about 7 MB compressed) loads once and is then cached for offline use. Licences: OpenCascade LGPL-2.1 and replicad MIT, both in `vendor/occ/`.
 
+## Fasteners: threads, holes, hex
+- **Thread:** in Face mode, tap a shaft or a round hole, then tap **Thread**. It cuts a true helical ISO thread (60°), exact geometry that exports to STEP. The ISO coarse pitch is suggested from the diameter (M8 gets 1.25). Pitch, length, the end it starts from and left-hand are all editable. A hole gets an internal thread.
+- **Hole:** tap a flat face, then **Hole**. Choose simple, counterbore or countersink; the depth is through all, or a set depth. The centre snaps to the grid and can be typed.
+- **Polygon:** size it **across flats** (13 mm for an M8 nut and head) or to a corner, and set its rotation.
+- **Array:** the default spacing comes from the selection's width.
+
 ## Layout
 The interface follows the iOS "Liquid Glass" design language. The 3D view fills the whole screen, and every control floats over it as glass.
 - **Top left:** the menu button.
