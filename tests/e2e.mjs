@@ -176,7 +176,7 @@ try {
   const tl = await st(() => StreamLine.H.hist().map(r => r.kind === 'sketch' ? 'sketch' : r.op));
   check(tl[0] === 'sketch' && tl.includes('F.extrude'), `timeline records sketches and features in order (${tl.join(' → ')})`);
   await p.tap('#btn-history'); await p.waitForTimeout(450);
-  check(await p.locator('#sheet.open').count() === 1 && await p.locator('#sheet-body .tlrow').count() >= 3, 'History slides in from the right with a row per step');
+  check(await p.locator('#sheet.open').count() === 1 && await p.locator('#sheet-body .hcard').count() >= 2 && await p.locator('#sheet-body .hcard .skchip').count() >= 1 && /mm/.test(await p.textContent('#sheet-body .hlist')), 'History slides in from the right: one card per feature with its sketch chip and values');
   await p.tap('#btn-history'); await p.waitForTimeout(450);
   check(await p.locator('#sheet.open').count() === 0, 'tapping History again slides it away');
   // fresh part: rectangle 40×20 extruded 10, then grow the rectangle → the body follows
@@ -203,7 +203,7 @@ try {
   await p.waitForTimeout(200);
   check(await p.locator('#btn-history.b-rb').count() === 1, 'the History button shows a rolled-back badge');
   await p.tap('#btn-history'); await p.waitForTimeout(450);
-  check(await p.locator('#sheet-body .hmarker').count() === 1 && await p.locator('#sheet-body .tlrow.dim').count() >= 1, 'History shows the rollback marker and greys the steps after it');
+  check(await p.locator('#sheet-body .hmarker:not(.end)').count() === 1 && await p.locator('#sheet-body .hcard.dim').count() >= 1, 'History shows the rollback marker and greys the steps after it');
   await p.tap('#btn-history'); await p.waitForTimeout(400);
   await st(() => StreamLine.BR.rollTo(1e9));
   check(await st(id => !!StreamLine.S.doc.objects.find(o => o.id === id), box.id), 'rolling to the end brings it back');
@@ -261,6 +261,27 @@ try {
   check(await st(() => StreamLine.view.xrayFor === true), 'bodies are ghosted while a sketch is edited');
   await p.tap('#actions .act.primary'); await p.waitForTimeout(200);
   check(await st(() => StreamLine.S.ed.editingSketch) == null, 'Finish leaves sketch editing');
+  // tapping a History card edits that step, and the panel steps aside on a phone
+  await p.tap('#btn-history'); await p.waitForTimeout(450);
+  await p.locator('#sheet-body .hcard').filter({ hasText: 'Extrude' }).first().tap(); await p.waitForTimeout(400);
+  check(await p.locator('#sheet.open').count() === 0 && /Edit/.test(await p.textContent('#lastop')), 'tapping a History card opens its parameters and closes the panel');
+  await closeCard();
+  // delete asks first and names what depends on it
+  await p.tap('#btn-history'); await p.waitForTimeout(450);
+  await p.locator('#sheet-body .hcard .more').first().tap(); await p.waitForTimeout(250);
+  await p.locator('.popover .mi', { hasText: 'Delete' }).tap(); await p.waitForTimeout(250);
+  check(/Delete/.test(await p.textContent('.popover')) && /undo/i.test(await p.textContent('.popover')), 'Delete step asks for confirmation and explains the effect');
+  await p.locator('.popover .btn', { hasText: 'Cancel' }).tap(); await p.waitForTimeout(200);
+  await p.evaluate(() => document.querySelector('#sheet-close').click()); await p.waitForTimeout(300);
+  // a fillet bigger than the faces it rolls on is refused instead of producing broken geometry
+  const fBig = await st(() => { const L = StreamLine; L.addSketchedPrim('cube'); const id = L.S.doc.objects.at(-1).id; L.S.ed.edges = [{ obj: id, a: [-10, -10, 20], b: [10, -10, 20] }]; const ok = L.runOp(L.F.edgeBlendOp, { kind: 'fillet', size: 80 }); const ok2 = L.runOp(L.F.edgeBlendOp, { kind: 'fillet', size: 2, edges: [{ obj: id, a: [-10, -10, 20], b: [10, -10, 20] }] }); return [ok, ok2]; });
+  check(fBig[0] === false && fBig[1] === true, 'an oversized fillet radius is refused (a fitting one still works)');
+  // Dim on a rectangle side dimensions that side
+  const dimOk = await st(() => { const L = StreamLine; L.runOp(L.F.sketchOpNew('r', { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }, null, k => { L.F.addEntity(k, { t: 'rect', x: 500, y: 0, w: 30, h: 10 }); })); const sk = L.S.doc.sketches.at(-1); L.view.cam.ortho = true; L.view.lookAlong([0, 0, 1], [515, 5, 0], 80); return sk.id; });
+  await p.waitForTimeout(700);
+  const dimOk2 = await st(() => { const L = StreamLine; const sk = L.S.doc.sketches.at(-1); L.S.ed.tool = 'dim'; const q = L.view.project(L.SK.toW(sk.plane, [515, 0])); L.Draw.tap(q.x, q.y); const d = L.S.doc.sketches.find(k => k.id === sk.id).ents.find(e => e.t === 'dim'); L.Draw.resetTool && 0; L.S.ed.tool = 'select'; return d ? d.kind === 'hor' && d.value === 30 : JSON.stringify([L.S.ed.sketch, sk.id, q, L.SK.pickEntity(sk, [515, 0], 1)?.t, document.querySelector('#toast').textContent, L.Draw.st.dimA, L.Draw.st.dimLine]); });
+  if (dimOk2 !== true) console.log('DBG dim', dimOk2);
+  check(dimOk2 === true, 'Dim: tapping a rectangle side dimensions its width');
   await shot('5-timeline');
 } catch (e) {
   await p.screenshot({ path: OUT + 'crash.png' }).catch(() => {});

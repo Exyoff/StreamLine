@@ -453,3 +453,37 @@ body:has(#popover:not([hidden])) #toast { opacity: 0; }
 /* tool mode switch at the top of the draw card */
 .modebar { margin: 0 0 10px; }
 .modebar button { flex: 1; height: 32px; font-size: 12.5px; padding: 0 6px; }
+
+/* ---------- History cards ---------- */
+.hlist { display: flex; flex-direction: column; gap: 8px; }
+.hcard { display: flex; align-items: flex-start; gap: 12px; padding: 12px 6px 12px 12px; border-radius: 18px; background: rgba(255,255,255,.06); transition: background .15s, transform .15s; }
+.hcard:active { background: rgba(255,255,255,.12); transform: scale(.985); }
+.hcard.cur { box-shadow: inset 0 0 0 1.5px var(--accent); background: var(--accent-soft); }
+.hcard.dim { opacity: .4; }
+.hcard.off .hname { text-decoration: line-through; opacity: .7; }
+.hcard.err { box-shadow: inset 0 0 0 1px rgba(255,69,58,.6); background: rgba(255,69,58,.1); }
+.hcard .hic { width: 36px; height: 36px; border-radius: 11px; margin-top: 1px; }
+.hcard .hic.cut { background: rgba(255,69,58,.2); color: #ffb3ad; }
+.hbody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.hname { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 15.5px; }
+.hidx { flex: none; font: 600 11px var(--mono); color: var(--faint); min-width: 14px; }
+.hbadge { font-size: 11px; font-weight: 600; color: var(--muted); background: var(--fill); padding: 1px 7px; border-radius: 999px; }
+.hsum { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.herr { font-size: 12.5px; color: #ffb3ad; line-height: 1.35; }
+.hchips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.skchip { display: flex; align-items: center; gap: 5px; height: 30px; padding: 0 11px 0 8px; border-radius: 999px; background: rgba(10,132,255,.16); color: #a9d1ff; font-size: 12.5px; font-weight: 600; }
+.skchip svg { width: 15px; height: 15px; }
+.skchip.cur { box-shadow: inset 0 0 0 1.5px var(--accent); color: var(--accent); }
+.hcard .ib.more { width: 38px; height: 38px; color: var(--muted); flex: none; }
+.hcard .ib.more svg { width: 20px; height: 20px; }
+.hmarker { display: flex; align-items: center; gap: 10px; padding: 4px 2px; font-size: 12.5px; font-weight: 700; color: var(--accent); }
+.hmarker::before { content: ''; height: 2px; flex: 1; background: var(--accent); border-radius: 1px; order: 0; }
+.hmarker::after { display: none; }
+.hmarker > span { order: 1; }
+.hmarker > button { order: 2; }
+.hmarker.end { color: var(--muted); }
+.hmarker.end::before { background: var(--faint); }
+.btn.small { height: 30px; padding: 0 12px; font-size: 13px; }
+.btn.danger { background: var(--danger); color: #fff; }
+/* phone: view controls step aside while a draw card is open */
+@media (max-width: 500px) { body.has-drawcard #vtools-r, body.has-drawcard #nav { visibility: hidden; } }

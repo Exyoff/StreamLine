@@ -348,6 +348,15 @@ export function tap(x, y) {
       return;
     }
     const r = SK.snapPoint(s, raw, { pxTol: 14, wpp, refPts: [] });
+    // a tap on a rectangle side dimensions that side (width or height)
+    if (!st.dimA && onCurve && onCurve.t === 'rect' && SK.rectCorners(onCurve).every(c => SK.d2(c, raw) > 14 * wpp)) {
+      const cs = SK.rectCorners(onCurve), segD = (a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy, t = Math.max(0, Math.min(1, ((raw[0] - a[0]) * dx + (raw[1] - a[1]) * dy) / L2)); return Math.hypot(a[0] + dx * t - raw[0], a[1] + dy * t - raw[1]); };
+      let best = 0; for (let i = 1; i < 4; i++) if (segD(cs[i], cs[(i + 1) % 4]) < segD(cs[best], cs[(best + 1) % 4])) best = i;
+      const [ka, kb] = [['p0', 'p1'], ['p1', 'p2'], ['p3', 'p2'], ['p0', 'p3']][best], hor = best % 2 === 0; // A at the smaller x / y
+      const d = add('Dimension', { t: 'dim', kind: hor ? 'hor' : 'ver', A: { e: onCurve.id, k: ka }, B: { e: onCurve.id, k: kb }, value: hor ? onCurve.w : onCurve.h });
+      if (d) editDim(d);
+      return;
+    }
     const onLine = !st.dimA && !(r.ref && r.kind !== 'Mid') && onCurve && onCurve.t === 'line' ? onCurve : null;
     if (onLine) {
       if (!st.dimLine) { st.dimLine = onLine.id; toast('Tap the same line for its length, or another line for the angle'); view.render(); emit('drawcard'); return; }
@@ -527,6 +536,29 @@ export function cardContent() {
     let SW = pv() ? (ang(c, pv()) - st.arc.a0) / D : 90; SW = ((SW % 360) + 360) % 360;
     return h('div', {}, title('Arc', `R ${fmtLen(st.arc.r)} · end point`),
       h('div', { class: 'fields' }, field({ label: 'Sweep (CCW)', kind: 'ang', value: SW, onCommit: v => { placeArc(c, st.arc.r, st.arc.a0, v); emit('drawcard'); view.render(); } })));
+  }
+  const btn = (label, fn, cls = '') => h('button', { class: 'btn ' + cls, onclick: () => { fn(); emit('drawcard'); view.render(); } }, label);
+  if (t === 'spline') {
+    const c = ensureCmd(), n = c.pts.length;
+    return h('div', {}, title('Spline', n ? `${n} point${n > 1 ? 's' : ''} · tap the next one` : 'tap the points it passes through'),
+      h('div', { class: 'btnrow' },
+        n ? btn('Undo point', () => { c.pts.pop(); }) : null,
+        n >= 3 ? btn('Close', () => placeSpline(c, true)) : null,
+        btn('Finish', () => { if (n >= 2) placeSpline(c, false); else toast('Tap at least 2 points'); }, 'primary')));
+  }
+  if (t === 'polygon') {
+    const c = ensureCmd();
+    return h('div', {}, title(`Polygon · ${acad.polySides} sides`, c.stage === 'vertex' ? 'tap a corner (sets size and rotation)' : 'tap the centre'),
+      h('div', { class: 'fields' },
+        field({ label: 'Sides', kind: 'int', value: acad.polySides, min: 3, max: 64, onCommit: v => { acad.polySides = Math.max(3, Math.min(64, Math.round(v))); emit('drawcard'); } }),
+        c.stage === 'vertex' ? field({ label: 'Radius (to corner)', kind: 'len', value: pv() ? SK.d2(c.center, pv()) : 0, min: 0, onCommit: v => { const ctr = c.center; editSketch(`Polygon (${acad.polySides})`, k => { const r = SK.addPolygon(k, ctr, [ctr[0] + v, ctr[1]], acad.polySides); if (typeof r === 'string') return r; }); c.stage = 'center'; emit('drawcard'); view.render(); } }) : null));
+  }
+  // remaining command tools (ellipse, text, hatch, edit commands, inquiry): show the prompt and a way out
+  if (EDIT_TOOLS.has(t)) {
+    const pr = prompt(), name = { ellipse: 'Ellipse', text: 'Text', hatch: 'Hatch', move: 'Move', copy: 'Copy', rotate: 'Rotate', scale: 'Scale', mirror: 'Mirror', offset: 'Offset', erase: 'Erase', explode: 'Explode', arrayrect: 'Array', arraypolar: 'Polar array', dist: 'Distance', id: 'Point', angle: 'Angle', area: 'Area', radius: 'Radius', list: 'List' }[t] || t;
+    return h('div', {}, title(name, pr.text.replace(/:$/, '').replace(/ or$/, '')),
+      pr.options && pr.options.length ? h('div', { class: 'btnrow', style: 'justify-content:flex-start;flex-wrap:wrap' }, ...pr.options.map(([l, k]) => btn(l, () => typed(k)))) : null,
+      h('div', { class: 'btnrow' }, btn('Done', () => { resetTool(); S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); }, 'primary')));
   }
   return null;
 }
@@ -834,7 +866,7 @@ export const acceptsSpaces = () => st.cmd && st.cmd.tool === 'text' && st.cmd.st
 function ensureCmd() {
   if (st.cmd && st.cmd.tool === tool()) return st.cmd;
   const t = tool();
-  st.cmd = { tool: t, pts: [], stage: SELECT_FIRST.has(t) ? (S.ed.drawSel.size ? 'base' : 'select') : t === 'offset' ? 'distance' : t === 'polygon' ? 'sides' : t === 'area' || t === 'spline' ? 'collect' : t === 'radius' || t === 'hatch' ? 'pick' : t === 'ellipse' ? 'center' : 'base' };
+  st.cmd = { tool: t, pts: [], stage: SELECT_FIRST.has(t) ? (S.ed.drawSel.size ? 'base' : 'select') : t === 'offset' ? 'distance' : t === 'polygon' ? 'center' : t === 'area' || t === 'spline' ? 'collect' : t === 'radius' || t === 'hatch' ? 'pick' : t === 'ellipse' ? 'center' : 'base' };
   if ((t === 'erase' || t === 'explode' || t === 'list' || t === 'arrayrect') && S.ed.drawSel.size) { runSelectionCommand(t); }
   return st.cmd;
 }
@@ -1007,7 +1039,7 @@ export function typed(raw) {
       return true;
     }
     // a single value: meaning depends on the prompt
-    if (t === 'polygon' && c && c.stage === 'sides') { acad.polySides = Math.round(num(str, 'num')); c.stage = 'center'; emit('drawcard'); return true; }
+    if (t === 'polygon' && c && (c.stage === 'sides' || (c.stage === 'center' && /^\s*\d+\s*$/.test(str)))) { acad.polySides = Math.round(num(str, 'num')); c.stage = 'center'; emit('drawcard'); return true; }
     if (t === 'offset' && c && (c.stage === 'distance' || c.stage === 'pick')) { acad.offsetDist = num(str); c.stage = 'pick'; emit('drawcard'); return true; }
     if (t === 'corner') { corner.size = num(str); emit('drawcard'); return true; }
     if (c && c.stage === 'second' && t === 'rotate') { xform('Rotate', { kind: 'rotate', c: c.base, deg: num(str, 'ang') }); st.cmd = null; S.ed.tool = 'select'; emit('selection'); return true; }
@@ -1060,7 +1092,7 @@ export function prompt() {
   else {
     const cc = c || { stage: SELECT_FIRST.has(t) ? (S.ed.drawSel.size ? 'base' : 'select') : t === 'offset' ? 'distance' : 'sides' };
     if (cc.stage === 'select') txt = `Select objects (${S.ed.drawSel.size} found), then Enter:`;
-    else if (t === 'polygon') txt = cc.stage === 'sides' ? `Enter number of sides <${acad.polySides}>:` : cc.stage === 'center' ? 'Specify center of polygon:' : 'Specify radius (vertex point):';
+    else if (t === 'polygon') txt = cc.stage === 'sides' ? `Enter number of sides <${acad.polySides}>:` : cc.stage === 'center' ? `Specify center of polygon (or type sides <${acad.polySides}>):` : 'Specify radius (vertex point):';
     else if (t === 'offset') txt = cc.stage === 'distance' ? `Specify offset distance${acad.offsetDist != null ? ` <${fmtLen(acad.offsetDist)}>` : ''}:` : cc.stage === 'pick' ? 'Select object to offset or Enter to exit:' : 'Specify point on side to offset:';
     else if (t === 'mirror') { txt = cc.stage === 'base' ? 'Specify first point of mirror line:' : 'Specify second point of mirror line:'; o.push([`Erase source: ${acad.mirrorErase ? 'Yes' : 'No'}`, acad.mirrorErase ? 'N' : 'Y']); }
     else if (t === 'arraypolar' && cc.stage === 'base') txt = 'Specify center point of array:';

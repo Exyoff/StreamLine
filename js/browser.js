@@ -5,6 +5,7 @@ import * as H from './history.js';
 import * as SK from './sketch.js';
 import { I } from './icons.js';
 import { $, h, toast, popover, closePopover, menuItem } from './ui.js';
+import { fmtLen, fmtAng } from './units.js';
 
 let ctx = null; // { activateSketch(id), selectObj(id), refresh() }
 export function initBrowser(c) { ctx = c; }
@@ -25,6 +26,32 @@ function recIcon(rec) {
     'F.sliceOp': I.subdiv, 'F.loftOp': I.cone, 'F.sweepOp': I.arc, 'O.transform': I.move, 'O.duplicate': I.dup, 'O.arrayOp': I.array, 'O.deleteObjs': I.trash,
     '_xf': I.move, '_bake': I.importI, 'O.addPrim': I.cube })[k] || I.check;
 }
+// the key values of a step, shown in its row ("14 mm · Join", "R2 · 3 edges")
+const MODE = { new: 'New body', join: 'Join', cut: 'Cut', intersect: 'Intersect' };
+export function recSummary(rec) {
+  const p = rec.params || {}, k = rec.op || rec.factory || '';
+  try {
+    if (k === 'F.extrude') return [p.symmetric ? `${fmtLen(p.distance)} symmetric` : fmtLen(p.distance), MODE[p.mode]].filter(Boolean).join(' · ');
+    if (k === 'F.revolve') return [fmtAng(p.angle), MODE[p.mode]].filter(Boolean).join(' · ');
+    if (k === 'F.edgeBlendOp') return `${p.kind === 'chamfer' ? '' : 'R'}${fmtLen(p.size)} · ${p.edges?.length || 0} edge${p.edges?.length === 1 ? '' : 's'}`;
+    if (k === 'F.pushPullOp') return `${fmtLen(p.dist)} · ${p.faces?.length || 0} face${p.faces?.length === 1 ? '' : 's'}`;
+    if (k === 'F.shellOp') return `${fmtLen(p.t)} wall`;
+    if (k === 'F.polarPattern') return `${p.count} × ${fmtAng(p.angle)}`;
+    if (k === 'O.arrayOp') return `${p.count} copies`;
+    if (k === 'F.bodyBoolean') return `${p.ids?.length || 0} bodies`;
+    if (k === 'F.mirrorOp') return p.plane === 'face' ? 'about a face' : `about ${({ x: 'YZ', y: 'XZ', z: 'XY' })[p.plane]}`;
+    if (k === 'F.sliceOp') return p.plane === 'face' ? 'at a face' : `at ${'XYZ'['xyz'.indexOf(p.plane)]} ${fmtLen(p.offset)}`;
+    if (k === 'O.transform') return p.mode === 'move' ? [p.x, p.y, p.z].map(v => fmtLen(v, false)).join(', ') : p.mode === 'rotate' ? `${fmtAng(p.angle)} about ${p.axis.toUpperCase()}` : `× ${[p.sx, p.sy, p.sz].map(v => +v.toFixed(3)).join(', ')}`;
+    if (k === 'F.draftOp') return fmtAng(p.angle);
+  } catch (e) {}
+  return '';
+}
+// steps after this one that use it: sketches by id, features by the bodies they touch
+export function dependents(id) {
+  const hist = H.hist(), i = idxOf(id), rec = hist[i]; if (!rec) return [];
+  if (rec.kind === 'sketch') return hist.slice(i + 1).filter(r => r.params && new RegExp(`"sk":${rec.sk}[,}]`).test(JSON.stringify(r.params)));
+  return hist.slice(i + 1).filter(r => r.kind !== 'sketch');
+}
 const when = t => { if (!t) return ''; const d = new Date(t); return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' · ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }); };
 const idxOf = id => H.hist().findIndex(r => r.id === id);
 let focusErr = false, lastEnd = -1;
@@ -32,6 +59,7 @@ function failNote(failed) { if (failed.length) { focusErr = true; toast(`⚠ ${f
 
 // ---------- timeline actions (all undoable, none recorded) ----------
 export function rollTo(k) {
+  ctx.closePanel?.();
   const len = H.hist().length;
   k = Math.max(0, Math.min(len, k));
   return runOp({
@@ -45,6 +73,7 @@ export function rollTo(k) {
   });
 }
 export function editStep(id) {
+  ctx.closePanel?.();
   const i = idxOf(id), rec = H.hist()[i];
   if (!rec) return;
   if (rec.kind === 'sketch') { if (i >= H.markerIndex()) { toast('Roll forward past this sketch to edit it'); return; } ctx.activateSketch(rec.sk); return; }
@@ -53,7 +82,7 @@ export function editStep(id) {
   if (i >= H.markerIndex()) { toast('Roll forward past this step to edit it'); return; }
   const orig = JSON.stringify(rec.params);
   runOp({
-    label: p => `Edit · ${(() => { try { return def.label(p); } catch (e) { return 'step'; } })()}`, noRecord: true, touch: () => 'all',
+    label: p => `Edit · ${(() => { try { return def.label(p); } catch (e) { return 'step'; } })()}`, noRecord: true, touch: () => 'all', stepId: id,
     fields: p => def.fields(p),
     apply(p) {
       const j = idxOf(id), r = H.hist()[j]; if (!r) return 'Step no longer exists';
@@ -65,12 +94,26 @@ export function editStep(id) {
   }, JSON.parse(orig));
 }
 export function toggleStep(id) {
+  ctx.closePanel?.();
   runOp({
     label: () => 'Suppress / unsuppress', noRecord: true, touch: () => 'all',
     apply() { const j = idxOf(id), r = H.hist()[j]; if (!r) return 'Step missing'; r.off = !r.off; H.invalidate(j + 1); failNote(H.regenerate(j)); },
   });
 }
+// in-app confirmation (iOS action-sheet style)
+function confirmPop(anchor, title, note, okLabel, onOk) {
+  popover(anchor, h('div', { class: 'askform' }, h('div', { class: 'mtitle' }, title), note ? h('div', { class: 'mnote' }, note) : null,
+    h('div', { class: 'btnrow' }, h('button', { class: 'btn', onclick: () => closePopover() }, 'Cancel'), h('button', { class: 'btn danger', onclick: () => { closePopover(); onOk(); } }, okLabel))), { above: true });
+}
+export function askDeleteStep(anchor, id) {
+  const rec = H.hist()[idxOf(id)]; if (!rec) return;
+  const deps = dependents(id), sk = rec.kind === 'sketch';
+  const note = sk ? (deps.length ? `${deps.length} feature${deps.length > 1 ? 's' : ''} built from this sketch will fail: ${deps.slice(0, 3).map(recLabel).join(', ')}${deps.length > 3 ? '…' : ''}` : 'No feature uses this sketch.')
+    : (deps.length ? `${deps.length} later step${deps.length > 1 ? 's' : ''} will rebuild without it.` : 'This is the last step.');
+  confirmPop(anchor, `Delete ${recLabel(rec)}?`, note + ' You can undo this.', 'Delete', () => deleteStep(id));
+}
 export function deleteStep(id) {
+  ctx.closePanel?.();
   runOp({
     label: () => 'Delete step', noRecord: true, touch: () => 'all',
     apply() {
@@ -114,14 +157,14 @@ function stepMenu(anchor, rec, i) {
   const end = H.markerIndex(), sketch = rec.kind === 'sketch';
   popover(anchor, h('div', {},
     h('div', { class: 'mtitle' }, recLabel(rec)),
-    h('div', { class: 'mnote' }, `Step ${i + 1} of ${H.hist().length} · ${when(rec.t)}`),
+    h('div', { class: 'mnote' }, [recSummary(rec), `step ${i + 1} of ${H.hist().length}`, rec.t ? new Date(rec.t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : ''].filter(Boolean).join(' · ')),
     rec.err ? h('div', { class: 'mnote err' }, '⚠ ' + rec.err) : null,
     i < end ? menuItem(sketch ? I.sketch : I.sliders, sketch ? 'Edit sketch' : 'Edit parameters', () => editStep(rec.id)) : null,
     menuItem(I.undo, 'Roll back to before this', () => rollTo(i)),
     menuItem(I.next, 'Roll to after this', () => rollTo(i + 1)),
     !sketch ? menuItem(rec.off ? I.eye : I.eyeOff, rec.off ? 'Unsuppress' : 'Suppress', () => toggleStep(rec.id)) : null,
     h('div', { class: 'msep' }),
-    menuItem(I.trash, sketch ? 'Delete sketch' : 'Delete step', () => deleteStep(rec.id)),
+    menuItem(I.trash, sketch ? 'Delete sketch…' : 'Delete step…', () => setTimeout(() => askDeleteStep(anchor, rec.id), 0)),
   ), { above: true });
 }
 
@@ -220,26 +263,43 @@ export function renderLayerPill() {
   el.replaceChildren(...[h('span', { class: 'ic', html: I.layers }), h('span', { class: 'nm' }, act ? act.name : 'Layers'), hidden ? h('span', { class: 'hid' }, `${hidden} hidden`) : null].filter(Boolean));
 }
 
-// History panel (slide-over from the right): every step in order, the rollback marker between rows
+// History panel (slide-over from the right). Each feature is a card: icon, name, its key values, and the
+// sketch it was built from as a chip. Tap a card to edit it; ⋯ for roll back / suppress / delete.
 export function historyTab(group) {
   const hist = H.hist(), end = H.markerIndex();
-  if (!hist.length) return [h('p', { class: 'note' }, 'Every sketch and feature you make is recorded here, in order, with the time it was made. Edit an early sketch or feature and everything after it rebuilds.')];
+  if (!hist.length) return [h('p', { class: 'note' }, 'Every sketch and feature you make is recorded here, in order. Tap a step to change it — everything after it rebuilds.')];
+  // a sketch belongs to the first feature that uses it (shown as a chip on that feature)
+  const owner = new Map();
+  hist.forEach((r, i) => { if (r.kind !== 'sketch' || !r.sk) return; const j = hist.findIndex((q, k) => k > i && q.params && new RegExp(`"sk":${r.sk}[,}]`).test(JSON.stringify(q.params))); if (j >= 0) owner.set(i, j); });
+  const ownedBy = new Map([...owner].map(([si, fi]) => [fi, [...(ownedBy0(owner, fi))]]));
+  function ownedBy0(m, fi) { return [...m].filter(([, f]) => f === fi).map(([si]) => si); }
+  const editing = S.ed.editingSketch, editStepId = ctx.editingStepId?.();
   const rows = [];
   hist.forEach((rec, i) => {
-    if (i === end) rows.push(h('div', { class: 'hmarker' }, h('span', {}, 'Rolled back here — later steps are not applied')));
-    const row = h('div', { class: 'objrow tlrow' + (i >= end ? ' dim' : '') + (rec.err ? ' err' : '') + (rec.off ? ' off' : '') + (rec.kind === 'sketch' && rec.sk === S.ed.editingSketch ? ' cur' : ''), 'data-id': rec.id },
-      h('span', { class: 'hic' + (rec.kind === 'sketch' ? ' sk' : ''), html: recIcon(rec) }),
-      h('span', { class: 'nm' }, recLabel(rec), rec.err ? h('small', { class: 'herr' }, rec.err) : null),
-      h('span', { class: 'meta' }, rec.err ? '⚠' : rec.off ? 'off' : (when(rec.t).split(' · ')[1] || '')),
-      h('span', { class: 'chev', html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>' }));
-    row.onclick = () => stepMenu(row, rec, i);
-    rows.push(row);
+    if (i === end) rows.push(h('div', { class: 'hmarker' }, h('span', {}, 'Rolled back here'), h('button', { class: 'btn small', onclick: () => rollTo(hist.length) }, 'To end')));
+    if (owner.has(i)) return; // shown on its feature
+    const sk = rec.kind === 'sketch';
+    const chips = (ownedBy.get(i) || []).map(si => { const sr = hist[si]; const c = h('button', { class: 'skchip' + (sr.sk === editing ? ' cur' : '') }, h('span', { html: I.sketch }), SK.sketchById(sr.sk)?.name || 'Sketch'); c.onclick = e => { e.stopPropagation(); editStep(sr.id); }; return c; });
+    const sum = sk ? `${SK.sketchById(rec.sk)?.ents.filter(e => e.t !== 'dim').length || 0} curves · not used yet` : recSummary(rec);
+    const more = h('button', { class: 'ib more', 'aria-label': 'More', html: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>' });
+    const card = h('div', { class: 'hcard' + (i >= end ? ' dim' : '') + (rec.err ? ' err' : '') + (rec.off ? ' off' : '') + ((sk && rec.sk === editing) || rec.id === editStepId ? ' cur' : ''), 'data-id': rec.id },
+      h('span', { class: 'hic' + (sk ? ' sk' : rec.params?.mode === 'cut' ? ' cut' : ''), html: recIcon(rec) }),
+      h('div', { class: 'hbody' },
+        h('div', { class: 'hname' }, h('span', { class: 'hidx' }, String(i + 1)), recLabel(rec).replace(/ · \d+ edges?$/, ''), rec.off ? h('span', { class: 'hbadge' }, 'Suppressed') : null),
+        sum ? h('div', { class: 'hsum' }, sum) : null,
+        rec.err ? h('div', { class: 'herr' }, '⚠ ' + rec.err) : null,
+        chips.length ? h('div', { class: 'hchips' }, ...chips) : null),
+      more);
+    card.onclick = () => (i < end ? editStep(rec.id) : stepMenu(card, rec, i));
+    more.onclick = e => { e.stopPropagation(); stepMenu(more, rec, i); };
+    rows.push(card);
   });
+  if (end >= hist.length) rows.push(h('div', { class: 'hmarker end' }, h('span', {}, 'Now')));
   const failed = hist.filter(r => r.err).length;
   return [
-    end < hist.length ? h('button', { class: 'btn primary wide', onclick: () => rollTo(hist.length) }, `Roll to end · apply ${hist.length - end} step${hist.length - end === 1 ? '' : 's'}`) : null,
-    failed ? h('p', { class: 'note err' }, `⚠ ${failed} step${failed === 1 ? '' : 's'} could not be rebuilt — tap to edit, suppress or delete.`) : null,
-    group(`${hist.length} step${hist.length === 1 ? '' : 's'}`, ...rows),
+    failed ? h('p', { class: 'note err' }, `⚠ ${failed} step${failed === 1 ? '' : 's'} could not be rebuilt. Tap one to fix its values, or ⋯ to suppress or delete it.`) : null,
+    h('div', { class: 'hlist' }, ...rows),
+    h('p', { class: 'note' }, 'Tap a step to edit it. Tap a sketch chip to edit that sketch. ⋯ rolls back, suppresses or deletes.'),
   ].filter(Boolean);
 }
 // badge on the History button: red when a step failed, orange while rolled back

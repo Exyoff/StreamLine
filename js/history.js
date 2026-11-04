@@ -96,7 +96,7 @@ export function regenerate(from = 0) {
     setEd(rec.sel);
     let r;
     try { r = def.apply(rec.params, { handle: null, replay: true }); } catch (err) { console.error(err); r = err.message || 'Failed'; }
-    if (typeof r === 'string' && /^Edge must|found 0|no longer exists/.test(r)) r = 'The edge or face it used has changed — edit or delete this step';
+    if (typeof r === 'string') r = friendlyError(r, h, i);
     if (typeof r === 'string') { rec.err = r; failed.push(rec); S.doc.objects = cps[i].objects.map(o => cloneObj(o)); S.doc.nextId = cps[i].nextId; }
   }
   cps[end] = snapObjs();
@@ -182,4 +182,18 @@ function followFace(skId, moved) {
   const d = best.w - w0;
   sk.plane = { ...pl, o: [pl.o[0] + n[0] * d, pl.o[1] + n[1] * d, pl.o[2] + n[2] * d] };
   moved.set(sk.id, sk.plane);
+}
+
+// failure messages written for the History list: what broke, and the earlier step that caused it
+function friendlyError(msg, h, i) {
+  let m = msg;
+  if (/^Edge must|found 0|edge or face/i.test(msg)) m = 'The edge it rounded no longer exists';
+  else if (/Selected face no longer exists/.test(msg)) m = 'The face it used no longer exists';
+  else if (/target body|Body missing|Target missing/i.test(msg)) m = 'The body it works on no longer exists';
+  else if (/Profiles? no longer exist|profile/i.test(msg)) m = 'Its sketch profile is gone — edit the sketch';
+  else if (/Axis line missing/.test(msg)) m = 'Its axis line was deleted from the sketch';
+  else if (/Result is empty/.test(msg)) m = 'The result would be empty';
+  const cause = h.slice(0, i).reverse().find(r => r.off || r.err);
+  if (cause) m += ` (after “${cause.label || 'an earlier step'}” was ${cause.off ? 'suppressed' : 'broken'})`;
+  return m;
 }
