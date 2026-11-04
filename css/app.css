@@ -487,3 +487,9 @@ body:has(#popover:not([hidden])) #toast { opacity: 0; }
 .btn.danger { background: var(--danger); color: #fff; }
 /* phone: view controls step aside while a draw card is open */
 @media (max-width: 500px) { body.has-drawcard #vtools-r, body.has-drawcard #nav { visibility: hidden; } }
+
+/* boot: the CAD kernel loads before the app starts */
+#boot { position: fixed; inset: 0; z-index: 100; display: grid; place-content: center; justify-items: center; gap: 14px; background: var(--bg); color: var(--muted); font-size: 14px; transition: opacity .35s; }
+#boot.done { opacity: 0; pointer-events: none; }
+#boot .spin { width: 34px; height: 34px; border-radius: 50%; border: 3px solid var(--fill-2); border-top-color: var(--accent); animation: bootspin .9s linear infinite; }
+@keyframes bootspin { to { transform: rotate(360deg); } }

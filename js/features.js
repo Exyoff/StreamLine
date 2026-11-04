@@ -2,7 +2,7 @@
 import { S, objById, selectedObjs } from './state.js';
 import * as SK from './sketch.js';
 import * as M from './mesh.js';
-import { toPolys, boolean, polysToMesh, extrudeRegions, revolveRegions } from './csg.js';
+import { toPolys, boolean, polysToMesh } from './csg.js';
 import { newObject, xfFor, worldVerts } from './scene.js';
 import { defSize } from './operators.js';
 import { fmtLen } from './units.js';
@@ -104,8 +104,8 @@ function profileGroups(pts) {
   for (const it of pts) {
     const sk = SK.sketchById(it.sk); if (!sk) continue;
     const r = SK.regionAt(sk, it.pt); if (!r) continue;
-    const g = groups.get(sk.id) || groups.set(sk.id, { sk, regs: [] }).get(sk.id);
-    if (!g.regs.includes(r)) g.regs.push(r);
+    const g = groups.get(sk.id) || groups.set(sk.id, { sk, regs: [], pts: [] }).get(sk.id);
+    if (!g.regs.includes(r)) { g.regs.push(r); g.pts.push(it.pt); }
   }
   return [...groups.values()];
 }
@@ -113,37 +113,48 @@ function regionsCentroid(g) {
   const pts = g.regs.flatMap(r => r.outer);
   return SK.toW(g.sk.plane, [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length]);
 }
-function unionAll(meshes) {
-  if (meshes.length === 1) return meshes[0];
-  let polys = toPolys(meshes[0].v, meshes[0].f);
-  for (const m of meshes.slice(1)) polys = boolean('union', polys, toPolys(m.v, m.f));
-  return polysToMesh(polys);
+// ---------- B-rep features (OpenCascade) ----------
+import * as K from './kernel.js';
+const R = K.R;
+// OpenCascade reports failures as exceptions: turn them into a message for the dialog / History
+function guard(fn, msg) {
+  try { return fn(); } catch (e) { console.warn(e); const m = e && e.message || ''; return typeof m === 'string' && m.length < 120 && !/^\d+$/.test(m) ? `${msg} (${m})` : msg; }
 }
-// apply a world-space tool mesh with a mode; returns error string or undefined
-function applyBody(p, tool, name, anchor) {
-  if (!tool.f.length) return 'Nothing to build';
+const solidOnly = o => (o && o.shape ? null : o ? `“${o.name}” is an imported mesh — this works on solids` : 'Body missing');
+// a direction / point in an object's local frame
+const locDir = (xf, p, n) => M.norm(M.sub(xf.toL(M.add(p, n)), xf.toL(p)));
+const vec3 = v => [v.x, v.y, v.z];
+
+// the exact faces of the regions picked in one sketch (one per region, in pick order)
+function groupFaces(g) {
+  const out = [];
+  for (const pt of g.pts) { const f = K.regionFace(g.sk, pt); if (f && !out.includes(f)) out.push(f); }
+  return out;
+}
+// apply a world-space tool solid with a mode; returns an error string or undefined
+function applyBody(p, tool, name) {
+  if (K.isEmpty(tool)) return 'Nothing to build';
   if (p.mode === 'new') {
-    const o = newObject(name, tool, [0, 0, 0], p._id);
-    o.loc = anchor.slice(); o.mesh.v = tool.v.map(w => M.sub(w, anchor));
+    const o = newObject(name, null, [0, 0, 0], p._id);
+    K.setShape(o, tool);
     S.doc.objects.push(o);
     S.ed.selected = new Set([o.id]); S.ed.active = o.id;
   } else {
     const t = objById(p.target);
     if (!t) return 'Select a target body first (tap it), or use New';
-    const xf = xfFor(t);
-    const res = polysToMesh(boolean(p.mode === 'join' ? 'union' : p.mode === 'cut' ? 'subtract' : 'intersect', toPolys(worldVerts(t), t.mesh.f), toPolys(tool.v, tool.f)));
-    if (!res.f.length) return 'Result is empty';
-    if (t.scl.filter(s => s < 0).length % 2) res.f.forEach(f => f.reverse());
-    t.mesh = res; t.mesh.v = res.v.map(xf.toL);
+    const e = solidOnly(t); if (e) return e;
+    const res = guard(() => K.boolean(p.mode === 'join' ? 'union' : p.mode === 'cut' ? 'subtract' : 'intersect', t.shape, K.toLocal(tool, t)), 'Boolean failed');
+    if (typeof res === 'string') return res;
+    if (K.isEmpty(res)) return 'Result is empty';
+    K.setShape(t, res);
     S.ed.selected = new Set([t.id]); S.ed.active = t.id;
   }
-  // the sketch is consumed by the feature: hide it (show it again from the Browser to edit)
+  // the sketch is consumed by the feature: hide it once every closed region in it has been used
   for (const id of new Set((p.pts || []).map(it => it.sk))) {
     const sk = SK.sketchById(id); if (!sk || S.settings.hideConsumed === false) continue;
-    // regions used by this feature or by any earlier one in the timeline
     const seeds = [...p.pts.filter(it => it.sk === id).map(it => it.pt), ...(S.doc.history || []).flatMap(r => (r.params?.pts || []).filter(it => it.sk === id).map(it => it.pt))];
     const used = new Set(seeds.map(pt => SK.regionAt(sk, pt)).filter(Boolean));
-    if (SK.regions(sk).every(r => used.has(r))) sk.hidden = true; // other closed shapes in it stay visible for later features
+    if (SK.regions(sk).every(r => used.has(r))) sk.hidden = true;
   }
   S.ed.profiles = [];
 }
@@ -167,37 +178,35 @@ const modeName = (base, p) => (p.mode === 'cut' ? `${base} cut` : base);
 
 export const extrude = {
   label: p => `${modeName('Extrude', p)}${targetLabel(p)}`,
-  // starts at 0 like Plasticity: nothing is built until you drag the arrow or type a distance,
-  // so a small part never gets blown out of proportion by a fixed default
+  // starts at 0 like Plasticity: nothing is built until you drag the arrow or type a distance
   defaults: () => ({ distance: 0, symmetric: false, flip: false }),
   isEmpty: p => Math.abs(p.distance) < 1e-9,
   prepare: prepFeature,
   touch: touchFeature,
   fields: () => [lenF('distance', 'Distance'), { key: 'mode', label: 'Operation', kind: 'choice', options: MODES, wide: true }, { key: 'symmetric', label: 'Symmetric', kind: 'bool' }, { key: 'flip', label: 'Flip', kind: 'bool' }],
   apply(p, op) {
-    // Plasticity-style: on a face, pulling out joins and pushing in cuts — until the user picks an operation
+    // on a face, pulling out joins and pushing in cuts — until the user picks an operation
     if (p._auto && p.mode !== p._auto) p._auto = null;
     if (p._auto) p.mode = p._auto = p.distance < 0 ? 'cut' : 'join';
     const auto = !!p._auto;
     const groups = profileGroups(p.pts);
     if (!groups.length) return 'Profiles no longer exist';
-    if (Math.abs(p.distance) < 1e-9) { // waiting for a distance: show the arrow only
-      const g = groups[0], s = (p.flip ? -1 : 1) * (!auto && g.sk.face && (p.mode === 'cut' || p.mode === 'intersect') ? -1 : 1);
-      op.handle = { origin: regionsCentroid(g), dir: M.mul(g.sk.plane.n, s), key: 'distance' };
-      return;
-    }
-    const meshes = [];
-    let dirW = null, anchor = null;
-    for (const g of groups) {
-      const into = auto ? 1 : g.sk.face && (p.mode === 'cut' || p.mode === 'intersect') ? -1 : 1;
-      const s = (p.flip ? -1 : 1) * into;
-      const [h0, h1] = p.symmetric ? [-p.distance / 2, p.distance / 2] : [0, p.distance * s];
-      const regs = g.regs;
-      meshes.push(regs.length > 1 ? unionAll(regs.map(r => extrudeRegions([r], g.sk.plane, h0, h1))) : extrudeRegions(regs, g.sk.plane, h0, h1));
-      if (!dirW) { dirW = M.mul(g.sk.plane.n, s); anchor = regionsCentroid(g); }
-    }
-    const tool = meshes.length > 1 ? unionAll(meshes) : meshes[0];
-    const err = applyBody(p, tool, 'Body', anchor);
+    const g0 = groups[0], s0 = (p.flip ? -1 : 1) * (!auto && g0.sk.face && (p.mode === 'cut' || p.mode === 'intersect') ? -1 : 1);
+    const anchor = regionsCentroid(g0), dirW = M.mul(g0.sk.plane.n, s0);
+    if (Math.abs(p.distance) < 1e-9) { op.handle = { origin: anchor, dir: dirW, key: 'distance' }; return; }
+    const tool = guard(() => {
+      const solids = [];
+      for (const g of groups) {
+        const s = (p.flip ? -1 : 1) * (!auto && g.sk.face && (p.mode === 'cut' || p.mode === 'intersect') ? -1 : 1);
+        const [h0, h1] = p.symmetric ? [-p.distance / 2, p.distance / 2] : [0, p.distance * s];
+        const n = g.sk.plane.n;
+        for (const f of groupFaces(g)) solids.push(K.prism(h0 ? K.translated(f, M.mul(n, h0)) : f, M.mul(n, h1 - h0)));
+      }
+      if (!solids.length) throw new Error('no region');
+      return K.fuseAll(solids);
+    }, 'Could not extrude this profile');
+    if (typeof tool === 'string') return tool;
+    const err = applyBody(p, tool, 'Body');
     if (err) return err;
     if (!p.symmetric) op.handle = { origin: anchor, dir: dirW, key: 'distance' };
   },
@@ -205,7 +214,7 @@ export const extrude = {
 
 export const revolve = {
   label: p => `${modeName('Revolve', p)}${targetLabel(p)}`,
-  defaults: () => ({ angle: 360, segs: S.settings.curveSegs || 64 }),
+  defaults: () => ({ angle: 360 }),
   prepare(p) {
     const e = prepFeature(p); if (e) return e;
     const sk = SK.sketchById(p.pts[0].sk);
@@ -214,7 +223,7 @@ export const revolve = {
     p.axis ??= lines.find(l => l.construction) ? 'l:' + lines.find(l => l.construction).id : 'y';
   },
   touch: touchFeature,
-  fields: p => [{ key: 'axis', label: 'Axis', kind: 'choice', options: [['x', 'Sketch X'], ['y', 'Sketch Y'], ...(p._lines || []).map(l => [l.v, l.label])], wide: true }, { key: 'angle', label: 'Angle', kind: 'ang' }, { key: 'segs', label: 'Segments', kind: 'int', min: 3, max: 512 }, { key: 'mode', label: 'Operation', kind: 'choice', options: MODES, wide: true }],
+  fields: p => [{ key: 'axis', label: 'Axis', kind: 'choice', options: [['x', 'Sketch X'], ['y', 'Sketch Y'], ...(p._lines || []).map(l => [l.v, l.label])], wide: true }, { key: 'angle', label: 'Angle', kind: 'ang' }, { key: 'mode', label: 'Operation', kind: 'choice', options: MODES, wide: true }],
   apply(p) {
     if (Math.abs(p.angle) < 1e-6) return 'Angle must not be zero';
     const groups = profileGroups(p.pts);
@@ -229,13 +238,20 @@ export const revolve = {
       const ax = axisOf(g.sk); if (!ax) return 'Axis line missing';
       for (const r of g.regs) {
         const vals = r.outer.map(q => (q[0] - ax.p[0]) * -ax.d[1] + (q[1] - ax.p[1]) * ax.d[0]);
-        if (Math.min(...vals) < -1e-9 && Math.max(...vals) > 1e-9) return 'Profile crosses the revolve axis';
+        if (Math.min(...vals) < -1e-9 && Math.max(...vals) > 1e-9) return 'Profile crosses the revolve axis — pick another axis';
       }
     }
-    const meshes = groups.map(g => revolveRegions(g.regs, g.sk.plane, p.axis === 'x' || p.axis === 'y' ? p.axis : axisOf(g.sk), p.angle, p.segs));
-    const tool = meshes.length > 1 ? unionAll(meshes) : meshes[0];
-    const anchor = groups[0].sk.plane.o.slice();
-    return applyBody(p, tool, 'Revolve', anchor);
+    const tool = guard(() => {
+      const solids = [];
+      for (const g of groups) {
+        const ax = axisOf(g.sk), pl = g.sk.plane;
+        const c = SK.toW(pl, ax.p), d = M.add(M.mul(pl.u, ax.d[0]), M.mul(pl.v, ax.d[1]));
+        for (const f of groupFaces(g)) solids.push(K.revolve(f, c, d, p.angle));
+      }
+      return K.fuseAll(solids);
+    }, 'Could not revolve this profile');
+    if (typeof tool === 'string') return tool;
+    return applyBody(p, tool, 'Revolve');
   },
 };
 
@@ -251,133 +267,100 @@ export const bodyBoolean = {
   apply(p) {
     const [tid, ...tools] = p.ids;
     const t = objById(tid); if (!t) return 'Target missing';
-    let polys = toPolys(worldVerts(t), t.mesh.f);
-    for (const id of tools) { const o = objById(id); if (o) polys = boolean(p.kind, polys, toPolys(worldVerts(o), o.mesh.f)); }
-    const res = polysToMesh(polys);
-    if (!res.f.length) return 'Result is empty';
-    const xf = xfFor(t);
-    t.mesh = res; t.mesh.v = res.v.map(xf.toL);
+    const objs = tools.map(objById).filter(Boolean);
+    if (t.shape && objs.every(o => o.shape)) {
+      const res = guard(() => { let s = t.shape; for (const o of objs) s = K.boolean(p.kind, s, K.toLocal(K.worldShape(o), t)); return s; }, 'Boolean failed');
+      if (typeof res === 'string') return res;
+      if (K.isEmpty(res)) return 'Result is empty';
+      K.setShape(t, res);
+    } else if (!t.shape && objs.every(o => !o.shape)) { // imported meshes: mesh CSG
+      let polys = toPolys(worldVerts(t), t.mesh.f);
+      for (const o of objs) polys = boolean(p.kind, polys, toPolys(worldVerts(o), o.mesh.f));
+      const res = polysToMesh(polys);
+      if (!res.f.length) return 'Result is empty';
+      const xf = xfFor(t); t.mesh = res; t.mesh.v = res.v.map(xf.toL);
+    } else return 'Solids and imported meshes cannot be combined';
     if (!p.keep) S.doc.objects = S.doc.objects.filter(o => !tools.includes(o.id));
     S.ed.selected = new Set([t.id]); S.ed.active = t.id;
   },
 };
 
-// ---------- 3D edge fillet / chamfer ----------
-import { edgeBlend, edgeFrame, circleBlend, sphereCorner, featureEdges, straightRun, edgeLoop } from './edges.js';
-function refindEdge(e, W, faces) {
-  const fr0 = edgeFrame(W, faces, e.circle ? e.circle.loop[0] : e.a, e.circle ? e.circle.loop[1] : e.b);
-  if (typeof fr0 !== 'string') { if (!e.circle) e._w = [fr0.w1, fr0.w2]; return; } // remember which way its two faces run
-  const fe = featureEdges(W, faces);
-  let best = null;
-  if (e.circle) {
-    const seen = new Set();
-    for (const s of fe) {
-      const c = edgeLoop(W, fe, s.a, s.b); if (!c) continue;
-      const key = c.c.map(v => v.toFixed(5)).join(); if (seen.has(key)) continue; seen.add(key);
-      if (Math.abs(c.R - e.circle.R) > 1e-6 || Math.abs(Math.abs(M.dot(c.n, e.circle.n)) - 1) > 1e-9) continue;
-      const d = M.dist(c.c, e.circle.c);
-      if (!best || d < best.d) best = { d, circle: c };
-    }
-    if (best) { e.circle = best.circle; e.a = best.circle.loop[0]; e.b = best.circle.loop[1]; }
-    return;
+// ---------- fillet / chamfer: true rolling-ball blends ----------
+// edge picks: { obj, p (world point on the edge), a, b, len, type } — re-found on every rebuild
+function findEdges(o, list) {
+  const xf = xfFor(o), out = [];
+  for (const e of list) {
+    const p = e.p || M.mul(M.add(e.a, e.b), 0.5);
+    const hit = K.edgeAt(o.shape, { p: xf.toL(p), len: e.len, type: e.type });
+    if (!hit) return null;
+    const pts = hit.info.pts, mid = K.polyMid(pts);
+    Object.assign(e, { p: xf.toW(mid), a: xf.toW(pts[0]), b: xf.toW(pts[pts.length - 1]), len: hit.info.len, type: hit.info.type });
+    out.push(hit.edge);
   }
-  const dir = M.norm(M.sub(e.b, e.a)), L = M.dist(e.a, e.b), mid = M.mul(M.add(e.a, e.b), 0.5);
-  const seen = new Set();
-  for (const s of fe) {
-    const d0 = M.norm(M.sub(W[s.b], W[s.a]));
-    if (Math.abs(Math.abs(M.dot(d0, dir)) - 1) > 1e-9) continue;
-    const [A, B] = straightRun(W, fe, s.a, s.b);
-    const key = [A, B].map(q => q.map(v => v.toFixed(6)).join()).sort().join('|'); if (seen.has(key)) continue; seen.add(key);
-    // same pair of faces (directions into them), nearest; the edge may have moved or changed length
-    if (e._w) {
-      const fr = edgeFrame(W, faces, A, B); if (typeof fr === 'string') continue;
-      const same = (x, y) => M.dot(x, y) > 1 - 1e-6;
-      if (!((same(fr.w1, e._w[0]) && same(fr.w2, e._w[1])) || (same(fr.w1, e._w[1]) && same(fr.w2, e._w[0])))) continue;
-    } else if (Math.abs(M.dist(A, B) - L) > 1e-6) continue;
-    const d = M.dist(M.mul(M.add(A, B), 0.5), mid) + Math.abs(M.dist(A, B) - L);
-    if (!best || d < best.d) best = { d, A, B };
-  }
-  if (best) { const flip = M.dot(M.sub(best.B, best.A), dir) < 0; e.a = flip ? best.B : best.A; e.b = flip ? best.A : best.B; }
+  return out;
 }
-import { faceRegion, findRegion, regionCentroid, pushPull, shell, mirrorMesh } from './modifiers.js';
 export const edgeBlendOp = {
   label: p => (p.kind === 'fillet' ? 'Fillet' : 'Chamfer') + ` · ${p.edges.length} edge${p.edges.length === 1 ? '' : 's'}`,
-  defaults: () => ({ kind: 'fillet', size: defSize() / 10, segs: 8 }),
+  defaults: () => ({ kind: 'fillet', size: defSize() / 10 }),
   prepare(p) {
-    p.edges ??= JSON.parse(JSON.stringify(S.ed.edges || []));
-    if (!p.edges.length) return 'Pick body edges first (Edge tool)';
+    p.edges ??= JSON.parse(JSON.stringify((S.ed.edges || []).map(({ pts, circle, ...r }) => r))); // a point on each edge is enough to find it again
+    if (!p.edges.length) return 'Pick body edges first (Edge mode)';
     p._objs = [...new Set(p.edges.map(e => e.obj))];
   },
   touch: p => ({ ids: p._objs, mesh: true }),
-  fields: p => [lenF('size', p.kind === 'fillet' ? 'Radius' : (p.edges || []).every(e => e.circle) ? 'Distance' : 'Distance 1'), ...(p.kind === 'fillet' ? [{ key: 'segs', label: 'Segments / 90°', kind: 'int', min: 1, max: 64 }] : (p.edges || []).every(e => e.circle) ? [] : [lenF('size2', 'Distance 2'), { key: 'swap', label: 'Swap sides', kind: 'bool' }]), { key: 'kind', label: 'Type', kind: 'choice', options: [['fillet', 'Fillet'], ['chamfer', 'Chamfer']], wide: true }],
+  fields: p => [lenF('size', p.kind === 'fillet' ? 'Radius' : 'Distance 1'), ...(p.kind === 'chamfer' ? [lenF('size2', 'Distance 2'), { key: 'swap', label: 'Swap sides', kind: 'bool' }] : []), { key: 'kind', label: 'Type', kind: 'choice', options: [['fillet', 'Fillet'], ['chamfer', 'Chamfer']], wide: true }],
   apply(p, op) {
     if (!(p.size > 0)) return 'Size must be > 0';
-    // live drag handle (computed on the edge before it is rounded): from the edge midpoint, away from the corner
-    const e0 = p.edges[0], o0 = objById(e0.obj);
-    if (o0) {
-      const fr = edgeFrame(worldVerts(o0), o0.mesh.f, e0.a, e0.b);
-      if (typeof fr !== 'string') {
-        let dir = M.norm(M.add(fr.w1, fr.w2)); if (!fr.convex) dir = M.mul(dir, -1);
-        op.handle = { origin: M.mul(M.add(e0.a, e0.b), 0.5), dir: M.mul(dir, -1), key: 'size', min: 1e-6 };
-      }
-    }
+    if (p.size2 == null || p.size2 === p._size1) p.size2 = p.size; // Distance 2 follows Distance 1 until edited
+    p._size1 = p.size;
+    if (p.kind === 'chamfer' && !(p.size2 > 0)) return 'Distance 2 must be > 0';
     for (const id of p._objs) {
-      const o = objById(id); if (!o) return 'Body missing';
-      let W = worldVerts(o), faces = o.mesh.f;
-      // after an earlier step changed the body, re-find each edge (same direction/length or same circle, nearest)
-      for (const e of p.edges.filter(x => x.obj === id)) refindEdge(e, W, faces);
-      const v0 = Math.abs(M.meshVolume(new M.PolyMesh(W, faces)));
-      let budget = 0; // the most material a blend of this size can add or remove along these edges
-      for (const e of p.edges.filter(x => x.obj === id)) {
-        // Distance 2 follows Distance 1 until it is edited on its own
-        if (p.size2 == null || p.size2 === p._size1) p.size2 = p.size;
-        p._size1 = p.size;
-        if (p.kind === 'chamfer' && !(p.size2 > 0)) return 'Distance 2 must be > 0';
-        const r = e.circle
-          ? circleBlend(W, faces, e.circle, p.size, p.kind, Math.max(1, Math.round(p.segs)))
-          : edgeBlend(W, faces, e.a, e.b, p.size, p.kind, Math.max(1, Math.round(p.segs)), p.kind === 'chamfer' ? p.size2 : null, !!p.swap);
-        if (typeof r === 'string') return r;
-        W = r.v; faces = r.f;
-        budget += (e.circle ? 2 * Math.PI * (e.circle.R + p.size) : M.dist(e.a, e.b) + 2 * p.size) * p.size * Math.max(p.size, p.size2 || 0);
-      }
-      // a size larger than the faces it rolls on produces garbage geometry: refuse it instead
-      if (Math.abs(Math.abs(M.meshVolume(new M.PolyMesh(W, faces))) - v0) > 1.05 * budget + 1e-6) return `${p.kind === 'fillet' ? 'Radius' : 'Distance'} ${fmtLen(p.size)} is too large for ${p.edges.length === 1 ? 'this edge' : 'these edges'}`;
-      // corners where three selected straight edges meet at right angles get a spherical patch
-      if (p.kind === 'fillet') {
-        const straight = p.edges.filter(x => x.obj === id && !x.circle), seen = new Set();
-        for (const e of straight) for (const V of [e.a, e.b]) {
-          const key = V.map(c => c.toFixed(6)).join(); if (seen.has(key)) continue; seen.add(key);
-          const inc = straight.filter(x => M.dist(x.a, V) < 1e-6 || M.dist(x.b, V) < 1e-6);
-          if (inc.length !== 3) continue;
-          const dirs = inc.map(x => M.norm(M.sub(M.dist(x.a, V) < 1e-6 ? x.b : x.a, V)));
-          const r = sphereCorner(W, faces, V, dirs, p.size, Math.max(2, Math.round(p.segs)));
-          if (r) { W = r.v; faces = r.f; }
+      const o = objById(id), e0 = solidOnly(o); if (e0) return e0;
+      const edges = findEdges(o, p.edges.filter(x => x.obj === id));
+      if (!edges) return 'The edge it rounded no longer exists';
+      const res = guard(() => {
+        const occ = K.getOC();
+        let b;
+        if (p.kind === 'fillet') {
+          b = new occ.BRepFilletAPI_MakeFillet(o.shape.wrapped, occ.ChFi3d_FilletShape.ChFi3d_Rational);
+          for (const e of edges) b.Add(p.size, e.wrapped);
+        } else {
+          b = new occ.BRepFilletAPI_MakeChamfer(o.shape.wrapped);
+          for (const e of edges) {
+            if (Math.abs(p.size2 - p.size) < 1e-12) b.Add(p.size, e.wrapped);
+            else { const fs = o.shape.faces.filter(f => f.edges.some(x => x.isSame(e))); const f = fs[p.swap ? 1 : 0] || fs[0]; b.Add(p.size, p.size2, e.wrapped, f.wrapped); }
+          }
         }
+        const pr = new occ.Message_ProgressRange(); b.Build(pr); pr.delete();
+        if (!b.IsDone()) { b.delete(); throw new Error('size too large'); }
+        const s = R.cast(b.Shape()); b.delete();
+        return s;
+      }, `${p.kind === 'fillet' ? 'Radius' : 'Distance'} ${fmtLen(p.size)} does not fit ${p.edges.length === 1 ? 'this edge' : 'these edges'}`);
+      if (typeof res === 'string') return res;
+      if (K.isEmpty(res)) return 'Result is empty';
+      // the drag handle: from the first edge, into the corner
+      if (id === p._objs[0]) {
+        const e = p.edges.find(x => x.obj === id), xf = xfFor(o), mid = xf.toL(e.p);
+        const ns = o.shape.faces.filter(f => f.edges.some(x => x.isSame(edges[0]))).map(f => { try { return vec3(f.normalAt(mid)); } catch (err) { return null; } }).filter(Boolean);
+        if (ns.length === 2) { const d = M.norm(M.add(ns[0], ns[1])); if (M.len(d) > 0.5) op.handle = { origin: e.p, dir: M.mul(locDir(xf, mid, d), -1), key: 'size', min: 1e-6 }; }
       }
-      const xf = xfFor(o);
-      o.mesh = new M.PolyMesh(W.map(xf.toL), faces);
-      if (o.scl.filter(s => s < 0).length % 2) o.mesh.f.forEach(f => f.reverse());
+      K.setShape(o, res);
     }
     S.ed.edges = [];
   },
 };
 
-// ---------- Plasticity-style face modifiers (Model workspace) ----------
-// face selections: [{obj, n, w, p}] — a plane and a point, re-found after every operation
-function resolveFaces(list) {
-  const out = [];
+// ---------- face modifiers ----------
+// face picks: { obj, n, w, p } — a point on the face and its normal (world), re-found every rebuild
+function findFaces(o, list) {
+  const xf = xfFor(o), out = [];
   for (const f of list) {
-    const o = objById(f.obj); if (!o) return 'Body missing';
-    const W = worldVerts(o), reg = findRegion(W, o.mesh.f, f.n, f.w, f.p);
-    if (!reg) return 'Selected face no longer exists';
-    out.push({ o, W, reg });
+    const pl = xf.toL(f.p), nl = locDir(xf, f.p, f.n);
+    const hit = K.faceAt(o.shape, pl, nl);
+    if (!hit) return null;
+    out.push(hit.f);
   }
   return out;
-}
-function setBody(o, m) {
-  const xf = xfFor(o);
-  o.mesh = new M.PolyMesh(m.v.map(xf.toL), m.f);
-  if (o.scl.filter(s => s < 0).length % 2) o.mesh.f.forEach(f => f.reverse());
 }
 export const pushPullOp = {
   label: () => 'Push/Pull',
@@ -387,18 +370,29 @@ export const pushPullOp = {
   touch: p => ({ ids: p._objs, mesh: true }),
   fields: () => [lenF('dist', 'Distance')],
   apply(p, op) {
-    const first = resolveFaces([p.faces[0]]); if (typeof first === 'string') return first;
-    const c0 = regionCentroid(first[0].W, first[0].o.mesh.f, first[0].reg);
-    if (Math.abs(p.dist) < 1e-9) { op.handle = { origin: c0, dir: p.faces[0].n, key: 'dist' }; return; }
-    for (const f of p.faces) {
-      const r = resolveFaces([f]); if (typeof r === 'string') return r;
-      const { o, W, reg } = r[0];
-      const m = pushPull(W, o.mesh.f, reg, p.dist); if (typeof m === 'string') return m;
-      setBody(o, m);
+    const f0 = p.faces[0];
+    if (Math.abs(p.dist) < 1e-9) { op.handle = { origin: f0.p, dir: f0.n, key: 'dist' }; return; }
+    for (const id of p._objs) {
+      const o = objById(id), e0 = solidOnly(o); if (e0) return e0;
+      const list = p.faces.filter(f => f.obj === id), faces = findFaces(o, list);
+      if (!faces) return 'The face it used no longer exists';
+      const xf = xfFor(o);
+      const res = guard(() => {
+        let s = o.shape;
+        faces.forEach((f, k) => {
+          if (f.geomType !== 'PLANE') throw new Error('only flat faces');
+          const n = locDir(xf, list[k].p, list[k].n);
+          const tool = K.prism(f, M.mul(n, p.dist));
+          s = p.dist > 0 ? s.fuse(tool) : s.cut(tool);
+        });
+        return s;
+      }, 'Push/Pull works on flat faces');
+      if (typeof res === 'string') return res;
+      K.setShape(o, res);
     }
-    // keep the selection on the moved face
+    // keep the selection on the moved faces
     S.ed.faces = p.faces.map(f => ({ ...f, w: f.w + p.dist, p: M.add(f.p, M.mul(f.n, p.dist)) }));
-    op.handle = { origin: c0, dir: p.faces[0].n, key: 'dist' };
+    op.handle = { origin: f0.p, dir: f0.n, key: 'dist' };
   },
 };
 export const shellOp = {
@@ -413,16 +407,18 @@ export const shellOp = {
   touch: p => ({ ids: [p.obj], mesh: true }),
   fields: () => [lenF('t', 'Thickness')],
   apply(p, op) {
-    const o = objById(p.obj); if (!o) return 'Body missing';
-    const r = resolveFaces(p.faces); if (typeof r === 'string') return r;
-    const W = worldVerts(o);
-    const c0 = r.length ? regionCentroid(r[0].W, o.mesh.f, r[0].reg) : null;
-    const m = shell(W, o.mesh.f, r.map(x => x.reg), p.t); if (typeof m === 'string') return m;
-    setBody(o, m);
+    if (!(p.t > 0)) return 'Thickness must be > 0';
+    const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
+    const faces = findFaces(o, p.faces); if (!faces) return 'The face it opened no longer exists';
+    const res = guard(() => o.shape.clone().shell({ thickness: p.t, filter: { find: () => faces, delete() {} } }), 'The wall is too thick for this body');
+    if (typeof res === 'string') return res;
+    if (K.isEmpty(res)) return 'Result is empty';
+    K.setShape(o, res);
     S.ed.faces = [];
-    if (c0) op.handle = { origin: c0, dir: M.mul(p.faces[0].n, -1), key: 't', min: 1e-6 };
+    if (p.faces.length) op.handle = { origin: p.faces[0].p, dir: M.mul(p.faces[0].n, -1), key: 't', min: 1e-6 };
   },
 };
+const AX = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
 export const mirrorOp = {
   label: () => 'Mirror',
   defaults: () => ({ plane: 'x', fuse: true }),
@@ -435,25 +431,23 @@ export const mirrorOp = {
   touch: p => ({ ids: [p.obj], mesh: true }),
   fields: p => [{ key: 'plane', label: 'Mirror plane', kind: 'choice', options: [['x', 'YZ'], ['y', 'XZ'], ['z', 'XY'], ...(p.face ? [['face', 'Face']] : [])], wide: true }, { key: 'fuse', label: 'Union with original', kind: 'bool' }],
   apply(p) {
-    const o = objById(p.obj); if (!o) return 'Body missing';
-    const W = worldVerts(o);
-    let n, w;
-    if (p.plane === 'face' && p.face) { n = p.face.n; w = p.face.w; }
-    else { n = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }[p.plane]; w = 0; }
-    const m = mirrorMesh(W, o.mesh.f, n, w, p.fuse); if (typeof m === 'string') return m;
-    if (p.fuse) setBody(o, m);
+    const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
+    const [n, c] = p.plane === 'face' && p.face ? [p.face.n, p.face.p] : [AX[p.plane], [0, 0, 0]];
+    const res = guard(() => { const w = K.worldShape(o), m = w.clone().mirror(n, c); return p.fuse ? K.toLocal(w.fuse(m), o) : m; }, 'Mirror failed');
+    if (typeof res === 'string') return res;
+    if (p.fuse) K.setShape(o, res);
     else {
-      const c = newObject(o.name, m, [0, 0, 0], p._id); c.color = o.color;
-      const anchor = M.centroid(m.v); c.loc = anchor; c.mesh.v = m.v.map(v => M.sub(v, anchor));
-      S.doc.objects.push(c); S.ed.selected = new Set([c.id]); S.ed.active = c.id;
+      const q = newObject(o.name, null, [0, 0, 0], p._id); q.color = o.color; K.setShape(q, res);
+      S.doc.objects.push(q); S.ed.selected = new Set([q.id]); S.ed.active = q.id;
     }
     S.ed.faces = [];
   },
 };
+import { faceRegion } from './modifiers.js';
 export { faceRegion };
 
 // ---------- body pattern (polar) and slice ----------
-import { slice as sliceMesh, rotateMesh, thicken, draft } from './modifiers.js';
+import { slice as sliceMesh, rotateMesh, thicken } from './modifiers.js';
 export const polarPattern = {
   label: () => 'Polar Pattern',
   defaults: () => ({ count: 6, angle: 360, axis: 'z', cx: 0, cy: 0, cz: 0 }),
@@ -463,13 +457,13 @@ export const polarPattern = {
   apply(p) {
     const n = Math.max(2, Math.min(360, Math.round(p.count)));
     const full = Math.abs(Math.abs(p.angle) - 360) < 1e-9, step = full ? p.angle / n : p.angle / (n - 1);
-    const a = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }[p.axis], c = [p.cx, p.cy, p.cz];
+    const a = AX[p.axis], c = [p.cx, p.cy, p.cz];
     let id = p._base; const made = [...p.ids];
     for (let k = 1; k < n; k++) for (const oid of p.ids) {
       const o = objById(oid); if (!o) continue;
-      const W = rotateMesh(worldVerts(o), c, a, step * k);
-      const anchor = M.centroid(W);
-      const q = newObject(o.name, new M.PolyMesh(W.map(w => M.sub(w, anchor)), o.mesh.f.map(f => f.slice())), anchor, id++);
+      let q;
+      if (o.shape) { const s = guard(() => K.rotated(K.worldShape(o), step * k, c, a), 'Pattern failed'); if (typeof s === 'string') return s; q = newObject(o.name, null, [0, 0, 0], id++); K.setShape(q, s); }
+      else { const W = rotateMesh(worldVerts(o), c, a, step * k), anchor = M.centroid(W); q = newObject(o.name, new M.PolyMesh(W.map(w => M.sub(w, anchor)), o.mesh.f.map(f => f.slice())), anchor, id++); }
       q.color = o.color; S.doc.objects.push(q); made.push(q.id);
     }
     S.ed.selected = new Set(made);
@@ -492,10 +486,23 @@ export const sliceOp = {
   fields: p => [{ key: 'plane', label: 'Plane', kind: 'choice', options: [['x', 'YZ'], ['y', 'XZ'], ['z', 'XY'], ...(p.face ? [['face', 'Face']] : [])], wide: true }, lenF('offset', p.plane === 'face' ? 'Offset from face' : 'Position')],
   apply(p) {
     const o = objById(p.obj); if (!o) return 'Body missing';
-    let n, w;
-    if (p.plane === 'face' && p.face) { n = p.face.n; w = p.face.w + p.offset; }
-    else { n = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }[p.plane]; w = p.offset; }
-    const { pos, neg } = sliceMesh(worldVerts(o), o.mesh.f, n, w);
+    let n, origin;
+    if (p.plane === 'face' && p.face) { n = p.face.n; origin = M.add(p.face.p, M.mul(n, p.offset)); }
+    else { n = AX[p.plane]; origin = M.mul(n, p.offset); }
+    if (o.shape) {
+      const res = guard(() => {
+        const w = K.worldShape(o), x = Math.abs(n[2]) < 0.9 ? M.norm(M.cross([0, 0, 1], n)) : [1, 0, 0];
+        const parts = w.clone().split(new R.Plane(origin, x, n), 0);
+        return parts;
+      }, 'Slice failed');
+      if (typeof res === 'string') return res;
+      if (!res.positive || !res.negative) return 'The plane does not cut this body';
+      K.setShape(o, K.toLocal(res.negative, o));
+      const q = newObject(o.name, null, [0, 0, 0], p._id); q.color = o.color; K.setShape(q, res.positive);
+      S.doc.objects.push(q); S.ed.selected = new Set([o.id, q.id]); S.ed.active = q.id; S.ed.faces = [];
+      return;
+    }
+    const { pos, neg } = sliceMesh(worldVerts(o), o.mesh.f, n, M.dot(n, origin));
     if (!pos.f.length || !neg.f.length) return 'The plane does not cut this body';
     const xf = xfFor(o);
     o.mesh = new M.PolyMesh(neg.v.map(xf.toL), neg.f);
@@ -514,34 +521,41 @@ export const thickenOp = {
   fields: () => [lenF('t', 'Thickness')],
   apply(p) {
     const o = objById(p.obj); if (!o) return 'Body missing';
+    if (o.shape) return 'Thicken works on surfaces (an added Plane), not on solids';
     const r = thicken(worldVerts(o), o.mesh.f, p.t); if (typeof r === 'string') return r;
     const xf = xfFor(o); o.mesh = new M.PolyMesh(r.v.map(xf.toL), r.f);
   },
 };
 
 // ---------- LOFT and SWEEP ----------
-import { loftSections, sweepRegion, pathFrames, sketchPath } from './sweep.js';
+import { sketchPath } from './sweep.js';
 export const loftOp = {
   label: p => `Loft${targetLabel(p)}`,
-  defaults: () => ({ segs: 64 }),
+  defaults: () => ({ ruled: false }),
   prepare(p) {
     p.pts ??= JSON.parse(JSON.stringify(S.ed.profiles));
     if (p.pts.length < 2) return 'Select 2 or more profiles (multi-select on), in loft order';
     p.mode ??= 'new'; p.target ??= selectedObjs()[0]?.id ?? null; p._id ??= S.doc.nextId;
   },
   touch: touchFeature,
-  fields: () => [{ key: 'segs', label: 'Points per section', kind: 'int', min: 8, max: 512 }, { key: 'mode', label: 'Operation', kind: 'choice', options: MODES, wide: true }],
+  fields: () => [{ key: 'ruled', label: 'Straight sections', kind: 'bool' }, { key: 'mode', label: 'Operation', kind: 'choice', options: MODES, wide: true }],
   apply(p) {
-    const secs = [];
-    for (const it of p.pts) {
-      const sk = SK.sketchById(it.sk), r = sk && SK.regionAt(sk, it.pt);
-      if (!r) return 'A profile no longer exists';
-      secs.push(r.outer.map(q => SK.toW(sk.plane, q)));
-    }
-    const m = loftSections(secs, Math.max(8, Math.round(p.segs))); if (typeof m === 'string') return m;
-    return applyBody(p, m, 'Loft', M.centroid(m.v));
+    const wires = [];
+    for (const it of p.pts) { const sk = SK.sketchById(it.sk), f = sk && K.regionFace(sk, it.pt); if (!f) return 'A profile no longer exists'; wires.push(f.outerWire()); }
+    const tool = guard(() => R.loft(wires, { ruled: !!p.ruled }), 'Loft failed — check the profiles face the same way');
+    if (typeof tool === 'string') return tool;
+    return applyBody(p, tool, 'Loft');
   },
 };
+// path sketch → spine wire: exact lines/arcs where possible
+function pathWire(ps, near) {
+  const pts = sketchPath(ps, near); if (!pts || pts.length < 2) return null;
+  const allLines = ps.ents.filter(e => !e.construction && e.t !== 'dim').every(e => e.t === 'line');
+  const W = q => SK.toW(ps.plane, q);
+  const P = pts.map(q => (q.length === 3 ? q : W(q)));
+  if (allLines) { const es = []; for (let i = 1; i < P.length; i++) if (M.dist(P[i - 1], P[i]) > 1e-9) es.push(R.makeLine(P[i - 1], P[i])); return R.assembleWire(es); }
+  return R.assembleWire([R.makeBSplineApproximation(P, { tolerance: 1e-4, degMax: 3, degMin: 3 })]);
+}
 export const sweepOp = {
   label: p => `Sweep${targetLabel(p)}`,
   prepare(p) {
@@ -557,17 +571,15 @@ export const sweepOp = {
   touch: touchFeature,
   fields: p => [{ key: 'path', label: 'Path sketch', kind: 'choice', options: p._paths || [], wide: true }, { key: 'mode', label: 'Operation', kind: 'choice', options: MODES, wide: true }],
   apply(p) {
-    const sk = SK.sketchById(p.pts[0].sk), r = sk && SK.regionAt(sk, p.pts[0].pt);
-    if (!r) return 'Profile no longer exists';
+    const sk = SK.sketchById(p.pts[0].sk), f = sk && K.regionFace(sk, p.pts[0].pt);
+    if (!f) return 'Profile no longer exists';
     const ps = SK.sketchById(p.path); if (!ps) return 'Path sketch missing';
-    const c = M.centroid(r.outer.map(q => SK.toW(sk.plane, q)));
-    const path = sketchPath(ps, c); if (!path) return 'No open path in that sketch';
-    const S0 = path[0], pl = sk.plane;
-    const loc = q => { const w = M.sub(SK.toW(pl, q), S0); return [M.dot(w, pl.u), M.dot(w, pl.v)]; };
-    const frames = pathFrames(path, { u: pl.u, v: pl.v }); if (!frames) return 'Path too short';
-    const m = sweepRegion({ outer: r.outer.map(loc), holes: r.holes.map(h => h.map(loc)) }, frames);
-    if (!m.f.length) return 'Sweep failed';
-    return applyBody(p, m, 'Sweep', M.centroid(m.v));
+    const tool = guard(() => {
+      const fc = typeof f.center === 'function' ? f.center() : f.center, c = vec3(fc), spine = pathWire(ps, c); if (!spine) throw new Error('no open path');
+      return R.genericSweep(f.outerWire(), spine, { frenet: true, transitionMode: 'round' });
+    }, 'Sweep failed — the profile should sit at the start of the path');
+    if (typeof tool === 'string') return tool;
+    return applyBody(p, tool, 'Sweep');
   },
 };
 
@@ -583,10 +595,11 @@ export const draftOp = {
   touch: p => ({ ids: [p.obj], mesh: true }),
   fields: () => [{ key: 'angle', label: 'Draft angle', kind: 'ang' }, { key: 'pull', label: 'Pull direction', kind: 'choice', options: [['x', '+X'], ['y', '+Y'], ['z', '+Z']], wide: true }, lenF('neutral', 'Neutral plane')],
   apply(p) {
-    const o = objById(p.obj); if (!o) return 'Body missing';
-    const r = resolveFaces(p.faces); if (typeof r === 'string') return r;
-    const d = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }[p.pull];
-    const m = draft(worldVerts(o), o.mesh.f, r.map(x => x.reg), d, p.neutral, p.angle); if (typeof m === 'string') return m;
-    setBody(o, m); S.ed.faces = [];
+    const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
+    const faces = findFaces(o, p.faces); if (!faces) return 'The face it used no longer exists';
+    const d = AX[p.pull], x = Math.abs(d[2]) < 0.9 ? M.norm(M.cross([0, 0, 1], d)) : [1, 0, 0];
+    const res = guard(() => o.shape.draft(p.angle, () => ({ find: () => faces, delete() {} }), new R.Plane(M.mul(d, p.neutral), x, d)), 'Draft failed');
+    if (typeof res === 'string') return res;
+    K.setShape(o, res); S.ed.faces = [];
   },
 };

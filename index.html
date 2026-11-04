@@ -19,6 +19,7 @@
 <script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
 </head>
 <body>
+<div id="boot"><div class="spin"></div><p>Loading the CAD kernel…</p></div>
 <div id="app">
   <main id="viewport">
     <div id="hud"></div>
@@ -98,7 +99,7 @@
   <div id="popover" class="popover glass" hidden></div>
   <div id="keypad" class="glass" hidden></div>
   <div id="toast" role="status" aria-live="polite"></div>
-  <input type="file" id="file-input" accept=".json,.stl,.obj,application/json,model/stl,model/obj" hidden>
+  <input type="file" id="file-input" accept=".json,.step,.stp,.stl,.obj,application/json,model/stl,model/obj" hidden>
 </div>
 <script type="module" src="js/app.js"></script>
 </body>

@@ -1,7 +1,7 @@
 // Operator system: every edit is an operator with parameters that can be re-applied
 // ("Adjust Last Operation", like Blender's redo panel) and undone.
 import { S, emit } from './state.js';
-import { serialize, deserialize, cloneObj } from './scene.js';
+import { snapshot, restoreSnapshot, cloneObj } from './scene.js';
 import * as H from './history.js';
 
 const MAX_UNDO = 80;
@@ -43,7 +43,7 @@ export function clearLast() { if (last) { last = null; emit('lastop', null); } }
 // Run an operator. interactive=true keeps it open for live updates (gizmo drags).
 export function runOp(def, params = {}, { interactive = false } = {}) {
   if (last && !last.committed) commit();
-  const op = { def, params: { ...(def.defaults ? def.defaults() : {}), ...params }, undoSnap: JSON.stringify(serialize()), committed: false, sel: H.edSnap() };
+  const op = { def, params: { ...(def.defaults ? def.defaults() : {}), ...params }, undoSnap: snapshot(), committed: false, sel: H.edSnap() };
   if (def.prepare) { const p = def.prepare(op.params); if (typeof p === 'string') { emit('toast', p); return false; } }
   op.base = makeBase(def, op.params);
   restore(op.base); // operate on fresh copies so caches keyed by identity stay valid
@@ -81,15 +81,15 @@ export function cancelOp() {
 export function undo() {
   if (last && !last.committed) { cancelOp(); return; }
   if (!undoStack.length) { emit('toast', 'Nothing to undo'); return; }
-  redoStack.push(JSON.stringify(serialize()));
-  deserialize(undoStack.pop()); H.resetCache();
+  redoStack.push(snapshot());
+  restoreSnapshot(undoStack.pop()); H.resetCache();
   last = null;
   emit('change', { reason: 'undo' }); emit('lastop', null); emit('history'); emit('dirty');
 }
 export function redo() {
   if (!redoStack.length) { emit('toast', 'Nothing to redo'); return; }
-  undoStack.push(JSON.stringify(serialize()));
-  deserialize(redoStack.pop()); H.resetCache();
+  undoStack.push(snapshot());
+  restoreSnapshot(redoStack.pop()); H.resetCache();
   last = null;
   emit('change', { reason: 'redo' }); emit('lastop', null); emit('history'); emit('dirty');
 }

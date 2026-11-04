@@ -3,7 +3,7 @@
 // parameters of an earlier feature, replays everything after it so later features follow the change.
 // A rollback marker hides the features after it; new work is inserted at the marker.
 import { S, emit } from './state.js';
-import { cloneObj, worldVerts } from './scene.js';
+import { cloneObj, worldVerts, objToJSON, objFromJSON } from './scene.js';
 import { PolyMesh } from './mesh.js';
 
 const REG = new Map();      // op name -> def
@@ -49,8 +49,7 @@ export function insertRecord(rec) {
 }
 
 // ---------- baked steps (operations that can't be re-run from parameters, e.g. imports) ----------
-const objJSON = o => ({ ...o, mesh: o.mesh.toJSON() });
-const objFrom = j => ({ ...j, loc: j.loc.slice(), rot: j.rot.slice(), scl: j.scl.slice(), mesh: PolyMesh.from(j.mesh) });
+const objJSON = objToJSON, objFrom = objFromJSON;
 const BAKED = {
   _bake: { label: () => 'Imported geometry', apply(p) { for (const j of p.add || []) { if (!S.doc.objects.some(o => o.id === j.id)) S.doc.objects.push(objFrom(j)); if (j.id >= S.doc.nextId) S.doc.nextId = j.id + 1; } } },
   _xf: { label: p => p.label || 'Transform', apply(p) { for (const x of p.objs) { const o = S.doc.objects.find(q => q.id === x.id); if (o) { o.loc = x.loc.slice(); o.rot = x.rot.slice(); o.scl = x.scl.slice(); } } } },

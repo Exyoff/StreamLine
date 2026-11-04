@@ -2,12 +2,13 @@
 import * as THREE from 'three';
 import { S, on, emit, activeObj, selectedObjs, objById, loadSettings, saveSettings, isShown } from './state.js';
 import * as H from './history.js';
+import * as K from './kernel.js';
 import * as BR from './browser.js';
 import { view, camera } from './viewport.js';
 import { initGizmo, gizmoActive } from './gizmo.js';
 import * as OPS from './operators.js';
 import { runOp, undo, redo, canUndo, canRedo, getLast, clearLast, updateOp, resetHistory } from './ops.js';
-import { serialize, deserialize, newObject, xfFor, worldVerts } from './scene.js';
+import { serialize, deserialize, newObject, xfFor, worldVerts, objMatrix } from './scene.js';
 import * as M from './mesh.js';
 import { fmtLen, fmtAng, fmtArea, fmtNum, unitFactor } from './units.js';
 import { I } from './icons.js';
@@ -27,8 +28,12 @@ const AXC = ['ax-x', 'ax-y', 'ax-z'];
 // =====================================================================
 // boot
 // =====================================================================
-function boot() {
+async function boot() {
   loadSettings();
+  // the exact-geometry kernel (OpenCascade, WebAssembly) loads first; it is cached for offline use
+  try { await K.initKernel(); K.setMatrixFn(objMatrix); }
+  catch (err) { console.error(err); $('#boot').querySelector('p').textContent = 'Could not load the CAD kernel — check your connection and reload.'; return; }
+  $('#boot').classList.add('done'); setTimeout(() => $('#boot').remove(), 400);
   view.init($('#viewport'));
   view.initNav($('#nav'));
   initGizmo();
@@ -129,7 +134,8 @@ function facePickTap(x, y) {
   const plane = F.facePlane(o, hit.face, [-Math.sin(c.yaw), Math.cos(c.yaw), 0]);
   if (!plane) { toast('That face is degenerate'); return; }
   // project the face boundary (outer edge + holes) into the sketch, like Fusion's projected geometry
-  const W = worldVerts(o), reg = faceRegion(W, o.mesh.f, hit.face), loops = faceLoops(W, o.mesh.f, reg);
+  if (o.shape && o.brep && o.brep.faces[o.faceOf[hit.face]]?.type !== 'PLANE') { toast('Sketches go on flat faces — tap a flat face'); refresh(); return; }
+  const W = worldVerts(o), reg = regionOf(o, hit.face), loops = faceLoops(W, o.mesh.f, reg);
   S.ed.tools[S.ed.workspace] = S.ed.tool;
   if (S.ed.mode === 'edit') { S.ed.mode = 'object'; S.ed.editSel = new Set(); }
   runOp(F.newSketch, { face: { obj: o.id, plane, loops } });
@@ -172,6 +178,25 @@ function edgeTap(x, y) {
   const hit = view.pickObject(x, y);
   for (const o of S.doc.objects) {
     if (!isShown(o)) continue;
+    if (o.shape && o.brep) { // solids: the exact B-rep edges
+      const xf = xfFor(o);
+      for (const e of o.brep.edges) {
+        if (e.seam || e.i < 0) continue;
+        const P = e.pts.map(xf.toW);
+        for (let k = 1; k < P.length; k++) {
+          const A = view.project(P[k - 1]), B = view.project(P[k]);
+          if (!A.front || !B.front) continue;
+          const dx = B.x - A.x, dy = B.y - A.y, L2 = dx * dx + dy * dy;
+          let t = L2 ? ((x - A.x) * dx + (y - A.y) * dy) / L2 : 0; t = Math.max(0, Math.min(1, t));
+          const d = Math.hypot(A.x + dx * t - x, A.y + dy * t - y);
+          if (d > 24) continue;
+          const Q = P[k - 1].map((c, j) => c + (P[k][j] - c) * t);
+          if (hit && view.project(hit.point).depth < view.project(Q).depth - Math.max(1e-3, view.worldPerPixel(Q) * 3) && hit.id !== o.id) continue; // behind another body
+          if (!best || d < best.d) best = { d, o, solid: { e, P, Q } };
+        }
+      }
+      continue;
+    }
     const W = worldVerts(o), fe = featureEdges(W, o.mesh.f);
     for (const e of fe) {
       const A = view.project(W[e.a]), B = view.project(W[e.b]);
@@ -187,6 +212,18 @@ function edgeTap(x, y) {
     }
   }
   if (!best) { if (!S.ed.multi) S.ed.edges = []; return selectionChanged(); }
+  if (best.solid) {
+    const { e, P } = best.solid, mid = K.polyMid(P);
+    let circle;
+    if (e.type === 'CIRCLE' && e.closed) { const c = M.centroid(P.slice(0, -1)); circle = { loop: P, c, R: M.dist(P[0], c) }; }
+    const item = { obj: best.o.id, p: mid, a: P[0], b: P[P.length - 1], len: e.len, type: e.type, pts: P, ...(circle ? { circle } : {}) };
+    const sameS = q => q.obj === best.o.id && q.p && K.polyDist(q.p, P) < 1e-6 * Math.max(1, e.len);
+    const i = S.ed.edges.findIndex(sameS);
+    if (i >= 0) S.ed.edges.splice(i, 1);
+    else if (S.ed.multi || (S.ed.edges.length && S.ed.edges.every(q => q.obj === best.o.id))) S.ed.edges.push(item);
+    else S.ed.edges = [item];
+    return selectionChanged();
+  }
   // a round edge (rim of a hole or boss) is picked as one circular loop
   const circ = edgeLoop(best.W, best.fe, best.e.a, best.e.b);
   const [a, b] = circ ? [circ.loop[0], circ.loop[1]] : straightRun(best.W, best.fe, best.e.a, best.e.b);
@@ -199,11 +236,31 @@ function edgeTap(x, y) {
   selectionChanged();
 }
 // Plasticity-style face pick: a tap selects the whole planar face (all coplanar connected polygons)
+// faces of solids: every triangle of the B-rep face under a triangle; meshes: the coplanar region
+function regionOf(o, tri) {
+  if (o.shape && o.faceOf) {
+    const fi = o.faceOf[tri], faces = [];
+    o.faceOf.forEach((x, i) => { if (x === fi) faces.push(i); });
+    const W = worldVerts(o), P = o.mesh.f[tri].map(i => W[i]), n = M.faceNormal(P);
+    return { faces, n, w: M.dot(n, P[0]), fi };
+  }
+  return faceRegion(worldVerts(o), o.mesh.f, tri);
+}
+// a picked face { n, w, p } → its triangles now (after rebuilds)
+function findRegionObj(o, f) {
+  if (o.shape && o.faceOf) {
+    const xf = xfFor(o), nl = M.norm(M.sub(xf.toL(M.add(f.p, f.n)), xf.toL(f.p)));
+    const hit = K.faceAt(o.shape, xf.toL(f.p), nl); if (!hit) return null;
+    const faces = []; o.faceOf.forEach((x, i) => { if (x === hit.i) faces.push(i); });
+    return { faces, n: f.n, w: f.w };
+  }
+  return findRegion(worldVerts(o), o.mesh.f, f.n, f.w, f.p);
+}
 function faceTap(x, y) {
   const hit = view.pickObject(x, y);
   if (!hit || hit.face < 0) { if (!S.ed.multi) S.ed.faces = []; return selectionChanged(); }
-  const o = objById(hit.id), W = worldVerts(o), reg = faceRegion(W, o.mesh.f, hit.face);
-  const same = q => q.obj === o.id && M.dot(q.n, reg.n) > 1 - 1e-9 && Math.abs(q.w - reg.w) < 1e-6 && (() => { const r2 = findRegion(W, o.mesh.f, q.n, q.w, q.p); return r2 && r2.faces.includes(hit.face); })();
+  const o = objById(hit.id), reg = regionOf(o, hit.face);
+  const same = q => q.obj === o.id && (() => { const r2 = findRegionObj(o, q); return r2 && r2.faces.includes(hit.face); })();
   const i = S.ed.faces.findIndex(same);
   if (i >= 0) S.ed.faces.splice(i, 1);
   else { const item = { obj: o.id, n: reg.n, w: reg.w, p: hit.point }; if (S.ed.multi) S.ed.faces.push(item); else S.ed.faces = [item]; }
@@ -237,12 +294,16 @@ function cadTap(x, y) {
   selectionChanged();
 }
 function loadAutosave() {
-  try { const s = localStorage.getItem(DOC_KEY); if (!s) return false; deserialize(s); return true; } catch (e) { console.warn(e); return false; }
+  try {
+    const s = localStorage.getItem(DOC_KEY); if (!s) return false; deserialize(s);
+    if (S.doc.objects.some(o => o.regen)) { H.resetCache(); H.regenerate(0); for (const o of S.doc.objects) delete o.regen; }
+    return true;
+  } catch (e) { console.warn(e); return false; }
 }
 let saveT = 0;
 function scheduleSave() {
   clearTimeout(saveT);
-  saveT = setTimeout(() => { try { localStorage.setItem(DOC_KEY, JSON.stringify(serialize())); } catch (e) { toast('Autosave failed (storage full?)'); } }, 400);
+  saveT = setTimeout(() => { try { localStorage.setItem(DOC_KEY, JSON.stringify(serialize(true))); } catch (e) { toast('Autosave failed (storage full?)'); } }, 400);
 }
 
 // =====================================================================
@@ -341,6 +402,7 @@ function setMode(mode) {
     let o = activeObj();
     if (!o || !S.ed.selected.has(o.id)) { const s = selectedObjs()[0]; o = s || null; }
     if (!o) { toast('Select an object to edit'); return; }
+    if (o.shape) { toast('Exact solids are edited with Push/Pull, Fillet, sketches… — Edit mesh is for imported meshes'); return; }
     S.ed.active = o.id; S.ed.selected = new Set([o.id]);
     S.ed.mode = 'edit';
     S.ed.editSel = new Set(o.mesh.v.map((_, i) => i)); S.ed.selOrder = [];
@@ -397,7 +459,7 @@ function drawFaceHighlights() {
   if (S.ed.workspace !== 'model') return;
   for (const f of S.ed.faces) {
     const o = objById(f.obj); if (!o) continue;
-    const W = worldVerts(o), reg = findRegion(W, o.mesh.f, f.n, f.w, f.p); if (!reg) continue;
+    const W = worldVerts(o), reg = findRegionObj(o, f); if (!reg) continue;
     const pos = [];
     for (const fi of reg.faces) { const P = o.mesh.f[fi].map(i => M.add(W[i], M.mul(f.n, 0.004))); for (const t of M.triangulateFace(P)) for (const k of t) pos.push(...P[k]); }
     const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -455,12 +517,12 @@ function drawOverlays() {
   edgeGroup.clear();
   if ((S.ed.workspace === 'cad' || S.ed.workspace === 'model') && S.ed.edges.length) {
     for (const e of S.ed.edges) {
-      const pts = e.circle ? e.circle.loop : [e.a, e.b];
-      edgeGroup.add(Draw.fatLine(pts, 0xff9a1f, 4, !!e.circle));
+      const pts = e.pts || (e.circle ? e.circle.loop : [e.a, e.b]);
+      edgeGroup.add(Draw.fatLine(pts, 0xff9a1f, 4, !e.pts && !!e.circle));
       const mk = new THREE.Mesh(new THREE.RingGeometry(0.5, 1, 16), new THREE.MeshBasicMaterial({ color: 0xff9a1f, depthTest: false }));
-      const mid = e.circle ? e.circle.loop[0] : M.mul(M.add(e.a, e.b), 0.5);
+      const mid = e.p || (e.circle ? e.circle.loop[0] : M.mul(M.add(e.a, e.b), 0.5));
       mk.position.set(...mid); mk.quaternion.copy(camera().quaternion); mk.scale.setScalar(view.worldPerPixel(mid) * 6); edgeGroup.add(mk);
-      view.label(mid, e.circle ? `Ø ${fmtLen(2 * e.circle.R)}` : fmtLen(M.dist(e.a, e.b)), 'edge');
+      view.label(mid, e.circle ? `Ø ${fmtLen(2 * e.circle.R)}` : fmtLen(e.len ?? M.dist(e.a, e.b)), 'edge');
     }
   }
   // edge lengths of selected edges (edit mode)
@@ -927,7 +989,7 @@ function itemTab() {
   const size = [0, 1, 2].map(k => (o.mesh.v.length ? local.max[k] - local.min[k] : 0));
   const dims = size.map((s, k) => s * Math.abs(o.scl[k]));
   const edges = M.meshEdges(o.mesh);
-  const closed = isClosed(o.mesh);
+  const closed = !!o.shape || isClosed(o.mesh);
   const sv = Math.abs(o.scl[0] * o.scl[1] * o.scl[2]);
   const area = o.mesh.f.reduce((a, f) => a + M.faceArea(f.map(i => xfFor(o).toW(o.mesh.v[i]))), 0);
   const nameIn = h('input', { class: 'textin', value: o.name, enterkeyhint: 'done', autocomplete: 'off', autocorrect: 'off', spellcheck: 'false' });
@@ -948,7 +1010,8 @@ function itemTab() {
     group('Mesh',
       stat('Vertices', String(o.mesh.v.length)), stat('Edges', String(edges.length)), stat('Faces', String(o.mesh.f.length)),
       stat('Surface area', fmtArea(area)),
-      stat('Volume', closed ? fmtVol(Math.abs(M.meshVolume(o.mesh)) * sv) : 'open mesh'),
+      stat('Volume', o.shape ? fmtVol(Math.abs(K.volume(o.shape)) * sv) : closed ? fmtVol(Math.abs(M.meshVolume(o.mesh)) * sv) : 'open mesh'),
+      stat('Geometry', o.shape ? `exact solid · ${o.brep.faces.length} faces · ${o.brep.edges.filter(e => !e.seam).length} edges` : 'triangle mesh'),
       stat('Watertight', closed ? 'yes' : 'no')),
   ].filter(Boolean);
 }
@@ -1040,6 +1103,7 @@ function openMainMenu() {
     menuItem(I.folder, 'Open / Import…', () => $('#file-input').click(), 'json stl obj'),
     menuItem(I.save, 'Save project', () => saveProject()),
     h('div', { class: 'msep' }),
+    menuItem(I.save, 'Export STEP (exact)', () => exportAs('step'), selLabel()),
     menuItem(I.save, 'Export STL', () => exportAs('stl'), selLabel()),
     menuItem(I.save, 'Export OBJ', () => exportAs('obj'), selLabel()),
     menuItem(I.save, 'Export DXF (sketch)', () => exportDXF()),
@@ -1091,7 +1155,13 @@ async function exportAs(kind) {
   const objs = exportTargets();
   if (!objs.length) { toast('Nothing to export'); return; }
   const name = (objs.length === 1 ? objs[0].name : 'streamline').replace(/[^\w.-]+/g, '_');
-  const blob = kind === 'stl' ? IO.exportSTL(objs) : IO.exportOBJ(objs);
+  let blob;
+  if (kind === 'step') {
+    const solids = objs.filter(o => o.shape);
+    if (!solids.length) { toast('STEP needs exact solids (imported meshes have none)'); return; }
+    try { const shapes = solids.map(o => K.worldShape(o)); blob = (shapes.length === 1 ? shapes[0] : K.R.makeCompound(shapes)).blobSTEP(); }
+    catch (err) { console.error(err); toast('STEP export failed'); return; }
+  } else blob = kind === 'stl' ? IO.exportSTL(objs) : IO.exportOBJ(objs);
   const r = await IO.deliver(blob, `${name}.${kind}`);
   if (r !== 'cancelled') toast(`Exported ${objs.length} object${objs.length > 1 ? 's' : ''} (mm)`);
 }
@@ -1113,6 +1183,17 @@ async function onFile(e) {
       S.ed.tool = S.ed.tools[S.ed.workspace] || 'select'; Draw.resetTool();
       if (S.ed.workspace === 'draw' && SK.activeSketch()) enterSketchView(SK.activeSketch()); else { view.cam.lock2D = false; view.frame(S.doc.objects.flatMap(worldVerts)); }
       toast(`Opened ${file.name}`);
+      return;
+    }
+    if (ext === 'step' || ext === 'stp') {
+      const shape = await K.R.importSTEP(file);
+      const baseId = S.doc.nextId, nm = file.name.replace(/\.(step|stp)$/i, '');
+      runOp({
+        label: () => `Import ${file.name}`, touch: () => ({ ids: [] }),
+        apply() { const o = newObject(nm, null, [0, 0, 0], baseId); K.setShape(o, shape); S.doc.objects.push(o); S.ed.selected = new Set([o.id]); S.ed.active = o.id; },
+      });
+      view.frame(selectedObjs().flatMap(worldVerts));
+      toast(`Imported ${nm} · exact solid`);
       return;
     }
     let items;
@@ -1198,7 +1279,7 @@ function onKey(e) {
 
 boot();
 // console/debug access
-window.StreamLine = { S, view, OPS, F, SK, Draw, Cmd, runOp, undo, redo, getLast, M, serialize, setWorkspace, H, BR, isShown, addSketchedPrim };
+window.StreamLine = { K, S, view, OPS, F, SK, Draw, Cmd, runOp, undo, redo, getLast, M, serialize, setWorkspace, H, BR, isShown, addSketchedPrim };
 
 // Primitives are built the parametric way: a sketch on a base plane plus an Extrude / Revolve,
 // so they appear in the timeline and can be resized by editing the sketch or the feature.
