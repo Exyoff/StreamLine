@@ -188,7 +188,22 @@ export function faceAt(shape, p, n = null) {
     if (!best || d < best.d) best = { d, i, f };
   });
   const t = tess(shape);
-  return best && best.d < t.tol * 4 + 1e-6 ? best : null;
+  if (best && best.d < t.tol * 4 + 1e-6) return best;
+  // the face moved (an earlier step changed the body): a flat face with the same normal, nearest in
+  // offset, that contains the point slid along the normal onto its plane
+  if (!n) return null;
+  let alt = null;
+  faces.forEach((f, i) => {
+    if (f.geomType !== 'PLANE') return;
+    let fn, c;
+    try { fn = f.normalAt(); c = f.center; c = typeof c === 'function' ? c() : c; } catch (e) { return; }
+    const nn = [fn.x, fn.y, fn.z]; if (nn[0] * n[0] + nn[1] * n[1] + nn[2] * n[2] < 1 - 1e-6) return;
+    const dw = (c.x - p[0]) * n[0] + (c.y - p[1]) * n[1] + (c.z - p[2]) * n[2];
+    const q = [p[0] + n[0] * dw, p[1] + n[1] * dw, p[2] + n[2] * dw];
+    if (R.measureDistanceBetween(f, R.makeVertex(q)) > t.tol * 4 + 1e-6) return;
+    if (!alt || Math.abs(dw) < Math.abs(alt.dw)) alt = { d: 0, i, f, dw, q };
+  });
+  return alt;
 }
 // edge of `shape` nearest a local point; falls back to the same kind/length when it moved
 export function edgeAt(shape, ref) {

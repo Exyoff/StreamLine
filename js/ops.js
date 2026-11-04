@@ -56,10 +56,14 @@ export function runOp(def, params = {}, { interactive = false } = {}) {
 }
 export function updateOp(params) {
   if (!last) return;
+  const prev = Object.fromEntries(Object.keys(params).map(k => [k, last.params[k]]));
   Object.assign(last.params, params);
   restore(last.base);
   const r = apply(last);
-  if (typeof r === 'string') { restore(last.base); emit('toast', r); }
+  if (typeof r === 'string') { // keep the last values that worked
+    Object.assign(last.params, prev); restore(last.base); apply(last); emit('toast', r);
+    emit('change', { reason: 'op-update' }); if (last.committed) emit('lastop', last); return;
+  }
   else if (last.committed) afterApply(last);
   emit('change', { reason: 'op-update' });
   if (last.committed) { emit('lastop', last); emit('dirty'); }

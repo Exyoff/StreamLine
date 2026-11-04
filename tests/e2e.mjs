@@ -282,6 +282,20 @@ try {
   const dimOk2 = await st(() => { const L = StreamLine; const sk = L.S.doc.sketches.at(-1); L.S.ed.tool = 'dim'; const q = L.view.project(L.SK.toW(sk.plane, [515, 0])); L.Draw.tap(q.x, q.y); const d = L.S.doc.sketches.find(k => k.id === sk.id).ents.find(e => e.t === 'dim'); L.Draw.resetTool && 0; L.S.ed.tool = 'select'; return d ? d.kind === 'hor' && d.value === 30 : JSON.stringify([L.S.ed.sketch, sk.id, q, L.SK.pickEntity(sk, [515, 0], 1)?.t, document.querySelector('#toast').textContent, L.Draw.st.dimA, L.Draw.st.dimLine]); });
   if (dimOk2 !== true) console.log('DBG dim', dimOk2);
   check(dimOk2 === true, 'Dim: tapping a rectangle side dimensions its width');
+  // Push/Pull and Shell follow their faces when an earlier extrude changes
+  const ppOk = await st(async () => {
+    const L = StreamLine;
+    L.runOp(L.F.sketchOpNew('pp', { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }, null, k => { L.F.addEntity(k, { t: 'rect', x: 700, y: 0, w: 40, h: 30 }); }));
+    L.runOp(L.F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [710, 10] }], distance: 20, mode: 'new', target: null });
+    const id = L.S.doc.objects.at(-1).id;
+    L.S.ed.faces = [{ obj: id, n: [0, 0, 1], w: 20, p: [720, 15, 20] }]; L.runOp(L.F.pushPullOp, { dist: 5 });
+    L.S.ed.faces = [{ obj: id, n: [0, 0, 1], w: 25, p: [720, 15, 25] }]; L.runOp(L.F.shellOp, { t: 2 });
+    const r = L.H.hist().filter(x => x.op === 'F.extrude').at(-1); L.BR.editStep(r.id);
+    const m = await import('./js/ops.js'); m.updateOp({ distance: 30 }); m.commit();
+    const o = L.S.doc.objects.find(q => q.id === id);
+    return { errs: L.H.hist().filter(x => x.err).map(x => x.err), v: L.K.volume(o.shape), expect: 40 * 30 * 35 - 36 * 26 * 33 };
+  });
+  check(!ppOk.errs.length && Math.abs(ppOk.v - ppOk.expect) < 1e-6, `Push/Pull and Shell follow their faces when an earlier extrude grows (${ppOk.v.toFixed(3)} mm³${ppOk.errs.length ? ' · ' + ppOk.errs.join('; ') : ''})`);
   await shot('5-timeline');
 } catch (e) {
   await p.screenshot({ path: OUT + 'crash.png' }).catch(() => {});
