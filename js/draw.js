@@ -15,6 +15,7 @@ import { LineGeometry } from '../vendor/lines/LineGeometry.js';
 import { editAndSolve, dof as sketchDof, constrainedEntities } from './constraints.js';
 import { defSize } from './operators.js';
 import { I } from './icons.js';
+import * as H from './history.js';
 
 const D = Math.PI / 180;
 export const corner = { kind: 'fillet', size: null };
@@ -106,7 +107,14 @@ function refPts(s) {
 function snapAt(x, y, from = st.start, exclude = null) {
   const s = sk(), raw = planePt(x, y);
   const wpp = view.worldPerPixel(SK.toW(s.plane, raw));
-  const r = SK.snapPoint(s, raw, { pxTol: 20, wpp, from, refPts: refPts(s), exclude, osnap: S.settings.osnap !== false, polar: S.settings.polar !== false, ortho: !!S.settings.ortho });
+  // rectangles snap both corners to the grid (polar tracking would give off-grid corners);
+  // circles and 2-point modes snap the size (radius / diameter) to the step along the finger's direction
+  const t = tool(), rectLike = t === 'rect' && !(mode('rect') === '3pt' && st.start && !st.p2);
+  let r = SK.snapPoint(s, raw, { pxTol: 20, wpp, from, refPts: refPts(s), exclude, osnap: S.settings.osnap !== false, polar: !rectLike && S.settings.polar !== false, ortho: !!S.settings.ortho });
+  if (from && t === 'circle' && mode('circle') !== '3pt' && S.settings.snap && (r.kind === 'Grid' || /°$/.test(r.kind))) {
+    const dx = raw[0] - from[0], dy = raw[1] - from[1], L = Math.hypot(dx, dy), stp = S.settings.snapStep * (mode('circle') === '2pt' ? 1 : 1);
+    if (L > 1e-9) { const l = Math.max(stp, Math.round(L / stp) * stp); r = { p: [from[0] + dx / L * l, from[1] + dy / L * l], kind: 'Size' }; }
+  }
   st.snap = r; st.preview = r.p;
   return r;
 }
@@ -667,7 +675,7 @@ function dimGeom(s, d) {
 
 function renderSketches() {
   const ws = S.ed.workspace, act = studio() ? sk() : SK.activeSketch(), stu = studio();
-  const key = [ws, S.ed.sketch, S.ed.editingSketch, (S.doc.sketches || []).map(s => isShown(s)).join(), [...S.ed.drawSel].join(), JSON.stringify(S.ed.profiles), S.settings.showSketches].join('|');
+  const key = [ws, S.ed.sketch, S.ed.editingSketch, H.hist().length, H.markerIndex(), (S.doc.sketches || []).map(s => isShown(s)).join(), [...S.ed.drawSel].join(), JSON.stringify(S.ed.profiles), S.settings.showSketches].join('|');
   const sketches = S.doc.sketches || [];
   const entsArr = sketches.map(s => s.ents), prevEnts = sketchGroup.userData.ents || [];
   const changed = key !== renderKey || entsArr.length !== prevEnts.length || entsArr.some((e, i) => e !== prevEnts[i]);
@@ -677,7 +685,10 @@ function renderSketches() {
       clearGroup(sketchGroup);
       for (const s of sketches) {
         if (!isShown(s)) continue;
-        const isAct = stu ? (S.ed.editingSketch == null || s.id === S.ed.editingSketch) : (ws === 'draw' && s.id === S.ed.sketch); // other sketches dim while one is edited
+        // sketches a feature has used draw muted (their curves now sit on body edges) unless being edited
+        const used = stu && S.ed.editingSketch !== s.id && H.firstUsing([s.id]) >= 0;
+        const usedRegs = used ? new Set(H.hist().flatMap(r => (r.params?.pts || []).filter(it => it.sk === s.id).map(it => SK.regionAt(s, it.pt))).filter(Boolean)) : null;
+        const isAct = !used && (stu ? (S.ed.editingSketch == null || s.id === S.ed.editingSketch) : (ws === 'draw' && s.id === S.ed.sketch)); // other sketches dim while one is edited
         const top = isAct && !stu;
         const mine = s.id === S.ed.sketch;
         const fixedSet = isAct ? constrainedEntities(s) : null;
@@ -711,7 +722,7 @@ function renderSketches() {
         }
         if (ws === 'draw' && isAct || ws === 'cad' || stu) {
           const selRegs = new Set(S.ed.profiles.filter(q => q.sk === s.id).map(q => SK.regionAt(s, q.pt)).filter(Boolean));
-          for (const r of SK.regions(s)) sketchGroup.add(fillObj(s, r, selRegs.has(r) ? 0xff9a1f : 0x4f8ff7, selRegs.has(r) ? 0.55 : ws === 'cad' || stu ? 0.14 : 0.08));
+          for (const r of SK.regions(s)) if (!usedRegs || !usedRegs.has(r) || selRegs.has(r)) sketchGroup.add(fillObj(s, r, selRegs.has(r) ? 0xff9a1f : 0x4f8ff7, selRegs.has(r) ? 0.55 : ws === 'cad' || stu ? 0.14 : 0.08));
         }
       }
     }
