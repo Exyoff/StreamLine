@@ -7,7 +7,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="StreamLine">
-<meta name="theme-color" content="#1b1c1f">
+<meta name="theme-color" content="#16171a">
 <meta name="format-detection" content="telephone=no">
 <meta name="color-scheme" content="dark">
 <meta name="description" content="StreamLine — precise polygon modelling in the browser, built for iPhone and iPad.">
@@ -20,33 +20,17 @@
 </head>
 <body>
 <div id="app">
-  <header id="topbar">
-    <button class="ib" id="btn-menu" aria-label="Menu"></button>
-    <div class="seg" id="ws-seg" role="tablist" aria-label="Selection mode">
-      <button data-pick="edge" title="Curves and edges (2)">Edge</button>
-      <button data-pick="face" title="Regions and faces (3)">Face</button>
-      <button data-pick="solid" title="Solids (4)">Solid</button>
-    </div>
-    <div class="spacer"></div>
-    <button class="ib" id="btn-cmd" aria-label="Command palette"></button>
-    <button class="ib" id="btn-undo" aria-label="Undo"></button>
-    <button class="ib" id="btn-redo" aria-label="Redo"></button>
-    <button class="ib" id="btn-props" aria-label="Properties"></button>
-  </header>
-
-  <div id="stationbar"><div id="actions" class="scrollrow"></div></div>
-
   <main id="viewport">
     <div id="hud"></div>
-    <button id="layerpill" aria-label="Layers"></button>
+    <button id="layerpill" class="glass" aria-label="Layers"></button>
     <canvas id="nav" aria-label="View axes"></canvas>
-    <div class="vcol" id="vtools-r">
+    <div class="vcol glass" id="vtools-r">
       <button class="fab" id="btn-persp" aria-label="Perspective / orthographic"></button>
       <button class="fab" id="btn-frame" aria-label="Frame selection"></button>
       <button class="fab" id="btn-snap" aria-label="Snapping"></button>
       <button class="fab" id="btn-xray" aria-label="X-ray"></button>
     </div>
-    <div id="toolrail">
+    <div id="toolrail" class="glass">
       <nav id="tools"></nav>
       <div class="railsep"></div>
       <div id="vtools-l">
@@ -54,11 +38,11 @@
         <button class="fab" id="btn-all" aria-label="Select all / none"></button>
       </div>
     </div>
-    <div id="lastop" class="card" hidden></div>
-    <div id="draw-card" class="card" hidden></div>
-    <div id="measure-card" class="card" hidden></div>
+    <div id="lastop" class="card glass" hidden></div>
+    <div id="draw-card" class="card glass" hidden></div>
+    <div id="measure-card" class="card glass" hidden></div>
     <div id="cmdhistory" hidden></div>
-    <div id="timeline" aria-label="History timeline"></div>
+    <div id="timeline" class="glass" aria-label="History timeline"></div>
     <div id="cmdbar" hidden>
       <div class="cmdrow" id="cmdlog" title="Tap for the command history"></div>
       <div class="cmdrow" id="cmdprompt"></div>
@@ -73,8 +57,30 @@
     </div>
   </main>
 
+  <!-- floating Liquid Glass chrome over the full-screen view -->
+  <header id="topbar">
+    <button class="ib glass circ" id="btn-menu" aria-label="Menu"></button>
+    <div class="seg glass" id="ws-seg" role="tablist" aria-label="Selection mode">
+      <button data-pick="edge" title="Curves and edges (2)">Edge</button>
+      <button data-pick="face" title="Regions and faces (3)">Face</button>
+      <button data-pick="solid" title="Solids (4)">Solid</button>
+    </div>
+    <div class="spacer"></div>
+    <div class="glass capsule">
+      <button class="ib" id="btn-undo" aria-label="Undo"></button>
+      <button class="ib" id="btn-redo" aria-label="Redo"></button>
+      <button class="ib" id="btn-props" aria-label="Inspector and layers"></button>
+    </div>
+  </header>
 
-  <section id="sheet" aria-hidden="true">
+  <div id="stationbar">
+    <div id="actions" class="scrollrow glass"></div>
+    <button class="ib glass circ" id="btn-cmd" aria-label="Search commands"></button>
+  </div>
+
+
+
+  <section id="sheet" class="glass" aria-hidden="true">
     <div class="grab"></div>
     <div class="sheet-head">
       <div class="seg" id="sheet-tabs">
@@ -88,8 +94,8 @@
   </section>
 
   <div id="scrim" hidden></div>
-  <div id="popover" class="popover" hidden></div>
-  <div id="keypad" hidden></div>
+  <div id="popover" class="popover glass" hidden></div>
+  <div id="keypad" class="glass" hidden></div>
   <div id="toast" role="status" aria-live="polite"></div>
   <input type="file" id="file-input" accept=".json,.stl,.obj,application/json,model/stl,model/obj" hidden>
 </div>

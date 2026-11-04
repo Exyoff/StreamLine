@@ -64,7 +64,7 @@ export function openKeypad({ label, kind = 'len', value = 0, min = null, max = n
   // keep the field being edited visible: lift its card above the keypad
   if (anchor) {
     const card = anchor.closest('.card'), kt = el.getBoundingClientRect().top, ab = anchor.getBoundingClientRect().bottom;
-    if (card && ab > kt - 8) { card.style.transform = `translateY(${-Math.min(ab - kt + 12, card.getBoundingClientRect().top)}px)`; kp.lifted = card; }
+    if (card && ab > kt - 40) { card.style.transform = `translateY(${-Math.min(ab - kt + 44, card.getBoundingClientRect().top - 8)}px)`; kp.lifted = card; } // +30: keypad slides in
   }
   grid.addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; e.preventDefault(); if (performance.now() - openedAt < 450) return; /* ghost click from the tap that opened us */ press(b.dataset.k); });
   renderKp();
