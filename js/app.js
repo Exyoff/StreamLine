@@ -580,8 +580,10 @@ function brepSnap(x, y, tol = 26) {
       for (const L of pts) {
         const w = xf.toW(L.map(clean32)), sp = view.project(w); if (!sp.front) continue;
         const d = Math.hypot(sp.x - x, sp.y - y); if (d > tol) continue;
-        if (hit && hit.id !== o.id && view.project(hit.point).depth < sp.depth - view.worldPerPixel(w) * 3) continue;
-        if (!best || d < best.d) best = { d, world: w };
+        // hidden behind the surface under the finger (another body, or this body's own face: the far rim of a hole)
+        if (hit && view.project(hit.point).depth < sp.depth - view.worldPerPixel(w) * 3) continue;
+        // equal on screen (coaxial rims seen end-on): the nearer one wins
+        if (!best || d < best.d - 1.5 || (Math.abs(d - best.d) <= 1.5 && sp.depth < best.depth)) best = { d, world: w, depth: sp.depth };
       }
     }
   }
@@ -601,7 +603,8 @@ Draw.setSolidCirclePicker((x, y) => {
       for (let k = 1; k < P.length; k++) {
         const A = view.project(P[k - 1]), B = view.project(P[k]); if (!A.front || !B.front) continue;
         const dx = B.x - A.x, dy = B.y - A.y, L2 = dx * dx + dy * dy; let t = L2 ? ((x - A.x) * dx + (y - A.y) * dy) / L2 : 0; t = Math.max(0, Math.min(1, t));
-        const d = Math.hypot(A.x + dx * t - x, A.y + dy * t - y); if (d < 24 && (!best || d < best.d)) best = { d, e, P };
+        const d = Math.hypot(A.x + dx * t - x, A.y + dy * t - y), dep = A.depth + (B.depth - A.depth) * t;
+        if (d < 24 && (!best || d < best.d - 1.5 || (Math.abs(d - best.d) <= 1.5 && dep < best.dep))) best = { d, e, P, dep }; // coaxial rims end-on: the nearer
       }
     }
   }
@@ -634,14 +637,20 @@ function mateTap(x, y) {
   const retry = m => { S.ed.mateFrom = from; S.ed.faces = prev; toast(m + ' — tap another face, or Cancel mate'); refresh(); };
   const gA = F.mateGeom(from), gB = F.mateGeom(to);
   if (!gA || !gB) return retry('Mate works with flat and round faces');
-  if (gA.kind !== gB.kind) return retry('Mate a flat face to a flat face, or a round face to a round face');
-  const err = { kind: gA.kind }; // (not parallel is fine: the Mate step turns the part to line them up)
+  if (gA.kind !== gB.kind) {
+    // flat + round: a tap on the flat face beside a hole's rim means that hole's axis (a Ø6 bore is hard to hit)
+    const flatRef = gA.kind === 'plane' ? from : to, o = objById(flatRef.obj), xf = xfFor(o);
+    const near = F.circleAxisNear(o, xf.toL(flatRef.p), 24 * view.worldPerPixel(flatRef.p));
+    if (!near) return retry('Mate a flat face to a flat face, or a round face to a round face');
+    flatRef.edgeAxis = true; flatRef.planar = false;
+  }
+  const err = { kind: F.mateGeom(from)?.kind || gA.kind }; // (not parallel is fine: the Mate step turns the part to line them up)
   const A = objById(from.obj);
   S.ed.faces = []; S.ed.selected = new Set([A.id]); S.ed.active = A.id; // (stays in Face mode for the next mate)
   // a Mate step in the history: it is solved again whenever the parts change (e.g. after Sync)
   if (!runOp(F.mateOp, { a: JSON.parse(JSON.stringify(from)), b: JSON.parse(JSON.stringify(to)), gap: 0 })) return retry('Could not mate those faces');
-  toast(`${A.name} mated to ${objById(to.obj).name}${err.kind === 'axis' ? ' (same axis — slide it along with Move)' : ''}`);
-  selectionChanged();
+  toast(`${A.name} mated to ${objById(to.obj).name}${err.kind === 'axis' ? ' (same axis — slide it along with Move)' : ' — set a Gap on the card'}`);
+  view.markSelDirty(); refresh(); // (the Mate card stays open: a flat mate's Gap can be typed right away)
 }
 // show only the selected bodies (a view setting, not saved) until Show all
 function isolate(on) {
@@ -778,9 +787,11 @@ function bindEvents() {
   $('#sheet-tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { sheetTab = b.dataset.tab; $('#sheet-body').scrollTop = 0; renderSheet(); } });
   $('#btn-menu').onclick = () => openMainMenu();
   $('#btn-persp').onclick = () => view.toggleOrtho();
+  let lastFrame = 0;
   $('#btn-frame').onclick = () => {
-    const p = OPS.selectedWorldPoints();
-    if (p.length) return view.frame(S.ed.mode === 'object' ? selectedObjs().flatMap(worldVerts) : p);
+    const p = OPS.selectedWorldPoints(), again = performance.now() - lastFrame < 4000; lastFrame = performance.now();
+    // first tap frames the selection, a second tap everything (right after Insert, the whole assembly)
+    if (p.length && !again) return view.frame(S.ed.mode === 'object' ? selectedObjs().flatMap(worldVerts) : p);
     // nothing selected: every shown body and sketch
     view.frame(S.doc.objects.filter(isShown).flatMap(worldVerts).concat(allSketchPoints()));
   };
@@ -920,12 +931,14 @@ function renderActions() {
     if (S.ed.editingSketch != null && SK.sketchById(S.ed.editingSketch)) c.push(act(I.check, 'Finish', () => finishSketchEdit(), 'primary'), act(I.dim, 'Dimension', () => setTool('dim')), ...(curves ? [] : [ act(I.trim, 'Trim', () => setTool('trim')), act(I.line, 'Line', () => setTool('line')), act(I.rect, 'Rectangle', () => setTool('rect')), act(I.circle, 'Circle', () => setTool('circle'))]));
     if (prof) c.push(act(I.extrude, 'Extrude', () => startExtrude(), 'primary'), act(I.revolve, 'Revolve', () => runOp(F.revolve)), ...(prof >= 2 ? [act(I.cone, 'Loft', () => runOp(F.loftOp))] : []), act(I.arc, 'Sweep', () => runOp(F.sweepOp)));
     const flat = S.ed.faces.every(f => f.planar !== false); // push/pull and draft work on flat faces
+    // Thread only on round, straight faces (cylinders), not cones
+    const cyl = !flat && S.ed.faces.every(f => { if (f.planar !== false) return false; try { const o = objById(f.obj), h = K.faceAt(o.shape, xfFor(o).toL(f.p)); return !h || h.f.geomType === 'CYLINDER'; } catch (e) { return true; } });
     if (S.ed.mateFrom) { row.replaceChildren(act(I.close, 'Cancel mate', () => { S.ed.mateFrom = null; refresh(); }, 'primary')); return; }
     if (faces === 1 && S.doc.objects.filter(o => o.shape && isShown(o)).length > 1) c.push(act(I.join, 'Mate', () => startMate()));
     const faceLinked = faces && S.ed.faces.some(f => objById(f.obj)?.link);
     if (faces === 1) c.push(act(I.plane, 'Plane here', () => planeHere()));
     if (faces && faceLinked) { if (!c.length) c.push(act(I.measure, 'Inquiry', e => openInquiryMenu(e.currentTarget))); }
-    else if (faces) c.push(...(flat ? [] : [act(I.thread, 'Thread', () => runOp(F.threadOp), 'primary')]), ...(flat ? [act(I.extrude, 'Push/Pull', () => modifier('pushpull'), prof ? '' : 'primary'), act(I.hole, 'Hole', () => runOp(F.holeOp)), act(I.recess, 'Recess', () => runOp(F.recessOp))] : []), act(I.inset, 'Shell', () => modifier('shell'), flat || prof ? '' : 'primary'), ...(flat ? [act(I.cone, 'Draft', () => runOp(F.draftOp))] : []), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)));
+    else if (faces) c.push(...(!cyl ? [] : [act(I.thread, 'Thread', () => runOp(F.threadOp), 'primary')]), ...(flat ? [act(I.extrude, 'Push/Pull', () => modifier('pushpull'), prof ? '' : 'primary'), act(I.hole, 'Hole', () => runOp(F.holeOp)), act(I.recess, 'Recess', () => runOp(F.recessOp))] : []), act(I.inset, 'Shell', () => modifier('shell'), flat || prof ? '' : 'primary'), ...(flat ? [act(I.cone, 'Draft', () => runOp(F.draftOp))] : []), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)));
     if (edges) c.push(act(I.fillet, 'Fillet', () => modifier('fillet'), 'primary'), act(I.chamfer, 'Chamfer', () => modifier('chamfer')),
       ...(S.ed.edges.some(q => q.pts) ? [act(I.next, 'Chain', () => growEdges(false)), act(I.select, 'Loop', () => growEdges('loop')), act(I.all, 'All edges', () => growEdges(true))] : []));
     const textSel = curves && [...S.ed.drawSel].some(id => SK.sketchById(S.ed.sketch)?.ents.find(e => e.id === id)?.t === 'text');
@@ -1530,6 +1543,12 @@ function onKey(e) {
 
 boot();
 // console/debug access
+OPS.setPivotHook(o => {
+  const r = H.hist().slice(0, H.markerIndex()).find(x => x.op === 'F.mateOp' && !x.off && x.params?.a?.obj === o.id && x.params.b && F.mateGeom(x.params.b)?.kind === 'axis');
+  if (!r) return null;
+  const g = F.mateGeom(r.params.b), b = K.worldShape(o).boundingBox.bounds, mid = [0, 1, 2].map(k => (b[0][k] + b[1][k]) / 2);
+  return M.add(g.c, M.mul(g.d, M.dot(M.sub(mid, g.c), g.d)));
+});
 window.StreamLine = { K, S, view, OPS, F, SK, Draw, Cmd, runOp, undo, redo, getLast, M, serialize, setWorkspace, H, BR, isShown, addSketchedPrim, refresh: () => selectionChanged() };
 
 // Primitives are built the parametric way: a sketch on a base plane plus an Extrude / Revolve,
@@ -1585,7 +1604,8 @@ function planeHere() {
   // the origin goes where the plane passes nearest the world origin, so typed X / Y / Z are the model's own
   // coordinates (the tapped point is only where the plane touches)
   n = M.norm(n); pt = M.mul(n, M.dot(n, pt));
-  setDrawPlane(planeAt(pt, n, 'on face'), 'Drawing plane set on that face — draw on it, or offset it from the Plane menu');
+  const pl = planeAt(pt, n, 'on face'); pl.face = { obj: o.id }; // sketches on it belong to that part (Join / Cut, follow it)
+  setDrawPlane(pl, 'Drawing plane set on that face — draw on it, or offset it from the Plane menu');
 }
 // pick every sketch curve joined end to end with the picked ones (a slot's two lines and two arcs)
 function chainCurves() {

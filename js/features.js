@@ -183,6 +183,7 @@ function applyBody(p, tool, name) {
     const res = guard(() => K.boolean(p.mode === 'join' ? 'union' : p.mode === 'cut' ? 'subtract' : 'intersect', t.shape, K.toLocal(tool, t)), 'Boolean failed');
     if (typeof res === 'string') return res;
     if (K.isEmpty(res)) return 'Result is empty';
+    if (p.mode === 'cut' && Math.abs(K.volume(res) - K.volume(t.shape)) < 1e-9) return 'The cut misses the body — try the other direction (Flip)';
     K.setShape(t, res);
     S.ed.selected = new Set([t.id]); S.ed.active = t.id;
   }
@@ -215,8 +216,10 @@ function prepFeature(p) {
   if (!groups.length) return 'Tap one or more closed sketch regions first';
   if (p.target === undefined) {
     const sk = groups[0].sk;
-    const faceObj = sk.face && objById(sk.face.obj) ? sk.face.obj : null;
-    const sel = selectedObjs()[0];
+    // a linked (read-only) part is never the default target: a sketch on its face makes a new body
+    const editable = id => { const o = objById(id); return o && !o.link; };
+    const faceObj = sk.face && editable(sk.face.obj) ? sk.face.obj : null;
+    const sel = selectedObjs().find(o => !o.link);
     p.target = faceObj ?? (sel ? sel.id : null);
     if (p.mode === undefined) { p.mode = faceObj ? 'join' : 'new'; if (faceObj != null) p._auto = p.mode; }
   }
@@ -242,13 +245,16 @@ export const extrude = {
     const auto = !!p._auto;
     const groups = profileGroups(p.pts);
     if (!groups.length) return 'Profiles no longer exist';
-    const g0 = groups[0], s0 = (p.flip ? -1 : 1) * (!auto && g0.sk.face && (p.mode === 'cut' || p.mode === 'intersect') ? -1 : 1);
+    // a cut chosen by hand from a face sketch goes into the body whichever sign is typed (−1 and 1 both cut 1 deep)
+    const into = g => !auto && g.sk.face && (p.mode === 'cut' || p.mode === 'intersect');
+    const sgn = g => (p.flip ? -1 : 1) * (into(g) ? (p.distance >= 0 ? -1 : 1) : 1);
+    const g0 = groups[0], s0 = sgn(g0);
     const anchor = regionsCentroid(g0), dirW = M.mul(g0.sk.plane.n, s0);
     if (Math.abs(p.distance) < 1e-9) { op.handle = { origin: anchor, dir: dirW, key: 'distance' }; return; }
     const tool = guard(() => {
       const solids = [];
       for (const g of groups) {
-        const s = (p.flip ? -1 : 1) * (!auto && g.sk.face && (p.mode === 'cut' || p.mode === 'intersect') ? -1 : 1);
+        const s = sgn(g);
         const [h0, h1] = p.symmetric ? [-p.distance / 2, p.distance / 2] : [0, p.distance * s];
         const n = g.sk.plane.n;
         for (const f of groupFaces(g)) solids.push(K.prism(h0 ? K.translated(f, M.mul(n, h0)) : f, M.mul(n, h1 - h0)));
@@ -1057,10 +1063,17 @@ export const recessOp = {
 // ---------- assemblies: Mate (solved again on every rebuild) ----------
 // what a picked face offers for mating: a plane (normal + a point on it) or an axis (cylinder, cone, or for a
 // thread / free-form round face, the nearest round edge of the body). World coordinates.
-export function mateGeom(f) {
-  const o = objById(f.obj); if (!o || !o.shape) return null;
-  // a mate's faces are kept in the part's own coordinates (lp, ln), so they ride along when the part moves
-  const xf = xfFor(o), pl = f.lp || xf.toL(f.p), nl = f.ln || locDir(xf, f.p, f.n);
+// the mate face's geometry in the part's own coordinates, cached per shape: re-solving mates during a drag only
+// re-applies the placement (no face search)
+const mateLocalCache = new WeakMap();
+function mateLocal(o, f, pl, nl) {
+  let m = mateLocalCache.get(o.shape); if (!m) { m = new Map(); mateLocalCache.set(o.shape, m); }
+  const key = [...pl, ...nl].map(v => v.toFixed(7)).join() + (f.edgeAxis ? 'e' : f.planar === false ? 'c' : 'p') + (f._ax ? JSON.stringify(f._ax) : '');
+  if (m.has(key)) return m.get(key);
+  const r = mateLocalFind(o, f, pl, nl); m.set(key, r); return r;
+}
+function mateLocalFind(o, f, pl, nl) {
+  if (f.edgeAxis) return circleAxisNear(o, pl, Infinity);
   let hit = K.faceAt(o.shape, pl, f.planar === false ? null : nl);
   if (!hit && f.planar !== false) hit = K.faceAt(o.shape, pl, nl);
   if (!hit && f._ax) { // a round face that moved (its sketch changed): the parallel cylinder of the same radius nearest its old axis
@@ -1073,25 +1086,36 @@ export function mateGeom(f) {
     if (best) hit = { i: best.i, f: best.f };
   }
   if (!hit) return null;
-  if (hit.q) { const pw = xf.toW(hit.q); Object.assign(f, { p: pw, w: M.dot(f.n, pw) }); } // follow a moved face
-  const toWd = d => M.norm(M.sub(xf.toW(M.add(pl, d)), xf.toW(pl)));
+  const q = hit.q || null;
   if (hit.f.geomType === 'PLANE') { // the exact plane (not the float32 tap point)
     const fn = hit.f.normalAt(), c0 = hit.f.center, c = typeof c0 === 'function' ? c0() : c0;
-    return { kind: 'plane', o, n: toWd(M.norm([fn.x, fn.y, fn.z])), p: xf.toW([c.x, c.y, c.z]) };
+    return { kind: 'plane', q, n: M.norm([fn.x, fn.y, fn.z]), p: [c.x, c.y, c.z] };
   }
   const cy = K.cylinderOf(hit.f) || K.coneAxis(hit.f) || K.revolutionAxis(hit.f);
-  if (cy) { if (cy.R) f._ax = { c: cy.c, d: cy.d, R: cy.R }; return { kind: 'axis', o, c: xf.toW(cy.c), d: toWd(cy.d) }; }
+  if (cy) return { kind: 'axis', q, c: cy.c, d: cy.d, ax: cy.R ? { c: cy.c, d: cy.d, R: cy.R } : null };
+  const r = circleAxisNear(o, pl, Infinity); return r ? { ...r, q } : null;
+}
+// the axis of the round (closed circular) edge nearest a point in the part's coordinates, within maxD
+export function circleAxisNear(o, pl, maxD) {
   let best = null;
-  for (const e of o.brep.edges) {
+  for (const e of o.brep?.edges || []) {
     if (e.type !== 'CIRCLE' || !e.closed || e.seam) continue;
-    const d = K.polyDist(pl, e.pts); if (!best || d < best.d) best = { d, e };
+    const d = K.polyDist(pl, e.pts); if (d <= maxD && (!best || d < best.d)) best = { d, e };
   }
-  if (best) {
-    const q = best.e.pts.slice(0, -1), c = [0, 1, 2].map(k => q.reduce((s, v) => s + v[k], 0) / q.length);
-    const n = M.norm(M.cross(M.sub(q[0], c), M.sub(q[Math.floor(q.length / 4)], c)));
-    return { kind: 'axis', o, c: xf.toW(c), d: toWd(n) };
-  }
-  return null;
+  if (!best) return null;
+  const qq = best.e.pts.slice(0, -1), c = [0, 1, 2].map(k => qq.reduce((s, v) => s + v[k], 0) / qq.length);
+  return { kind: 'axis', q: null, c, d: M.norm(M.cross(M.sub(qq[0], c), M.sub(qq[Math.floor(qq.length / 4)], c))) };
+}
+export function mateGeom(f) {
+  const o = objById(f.obj); if (!o || !o.shape) return null;
+  // a mate's faces are kept in the part's own coordinates (lp, ln), so they ride along when the part moves
+  const xf = xfFor(o), pl = f.lp || xf.toL(f.p), nl = f.ln || locDir(xf, f.p, f.n);
+  const L = mateLocal(o, f, pl, nl); if (!L) return null;
+  if (L.q) { const pw = xf.toW(L.q); Object.assign(f, { p: pw, w: M.dot(f.n, pw) }); } // follow a moved face
+  const toWd = d => M.norm(M.sub(xf.toW(M.add(pl, d)), xf.toW(pl)));
+  if (L.kind === 'plane') return { kind: 'plane', o, n: toWd(L.n), p: xf.toW(L.p) };
+  if (L.ax) f._ax = L.ax;
+  return { kind: 'axis', o, c: xf.toW(L.c), d: toWd(L.d) };
 }
 // the move that puts face a onto face b: { v, kind } or an error message
 export function mateSolve(a, b, gap = 0) {
@@ -1122,6 +1146,7 @@ function solveMate(p) {
   if (M.len(r.v) > 1e-12) o.loc = M.add(o.loc, r.v).map(v => (Math.abs(v - Math.round(v * 1e9) / 1e9) < 1e-9 ? Math.round(v * 1e9) / 1e9 : v));
 }
 export const mateOp = {
+  constraint: 'F.mateOp',
   label: p => `Mate ${objById(p.a.obj)?.name || 'part'} → ${objById(p.b.obj)?.name || 'part'}`,
   touch: p => ({ ids: [p.a.obj], mesh: false }),
   // flat-to-flat mates take a gap: a clearance (0.5 mm round a drawer), or − to overlap
@@ -1130,9 +1155,15 @@ export const mateOp = {
 };
 // re-solve every mate in the history (after any edit), in order, twice so chains of mates settle
 export function solveMates(recs) {
-  const ms = recs.filter(r => r.op === 'F.mateOp' && !r.off && !r.err);
+  const ms = recs.filter(r => r.op === 'F.mateOp' && !r.off && (!r.err || r.conflict));
   if (!ms.length) return;
+  for (const r of ms) if (r.conflict) { delete r.err; r.conflict = false; }
   for (let pass = 0; pass < 2; pass++) for (const r of ms) { try { solveMate(r.params); } catch (e) { /* keep the part where it is */ } }
+  // a mate left unsatisfied fights another one: say so on its step (red in History) instead of failing silently
+  for (const r of ms) {
+    let off = 0; try { const v = mateSolve(r.params.a, r.params.b, +r.params.gap || 0); off = typeof v === 'string' ? 0 : M.len(v.v); } catch (e) {}
+    if (off > 1e-6) { r.err = `Conflicts with another mate (${fmtLen(off)} off) — delete or edit one of them`; r.conflict = true; }
+  }
 }
 
 // ---------- assemblies: linked components ----------

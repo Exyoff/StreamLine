@@ -37,7 +37,7 @@ function apply(op) {
   if (typeof r !== 'string' && !op.def.sketchOnly && !op.def.presentation) { // mated parts follow
     const xf = /^(Move|Rotate)$/.test(op.def.label?.(op.params) || '') ? new Set(op.def.touch?.(op.params)?.ids || []) : null;
     const pose = () => S.doc.objects.filter(o => xf?.has(o.id)).map(o => [...o.loc, ...o.rot].map(v => (+v).toFixed(4)).join()).join('|');
-    const before = pose(); H.solveConstraints();
+    const before = pose(); H.solveConstraints(op.def.constraint ? { op: op.def.constraint, params: op.params } : null); // (a new mate takes part too)
     // a move the mates took back (dragging a part along a direction a mate holds)
     op.heldByMate = !!xf?.size && pose() !== before;
   }
@@ -141,14 +141,14 @@ function afterApply(op) {
   else if (d.factory) rec = { factory: d.factory[0], args: d.factory[1], params: op.params, sel: op.sel };
   else if (d.xfIds) rec = H.bakeXf(d.xfIds, label);
   else rec = H.bakeAdded(op.base.list, label);
-  if (rec) { rec.label = label; op.rec = H.insertRecord(rec); }
+  if (rec) { rec.label = label; op.rec = H.insertRecord(rec); if (op.def.constraint) H.solveConstraints(); } // flags a mate that fights another
 }
 function sketchChanged(op) {
   const before = new Map(JSON.parse(op.base.sketches).map(s => [s.id, stripSk(s)]));
   const changed = [];
   for (const sk of S.doc.sketches || []) {
     const b = before.get(sk.id);
-    if (b === undefined) { if (H.sketchRecIndex(sk.id) < 0) H.insertRecord({ kind: 'sketch', sk: sk.id, label: sk.name }); }
+    if (b === undefined) { H.anchorSketch(sk); if (H.sketchRecIndex(sk.id) < 0) H.insertRecord({ kind: 'sketch', sk: sk.id, label: sk.name }); }
     else if (b !== stripSk(sk)) changed.push(sk.id);
   }
   if (changed.length) {
