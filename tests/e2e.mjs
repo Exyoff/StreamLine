@@ -813,6 +813,68 @@ try {
   await p.fill('#draw-card input.textin', 'LUX'); await p.press('#draw-card input.textin', 'Enter'); await p.waitForTimeout(500);
   const txt15 = await p.evaluate(() => { const L = StreamLine, e = L.S.doc.sketches.flatMap(k => k.ents).find(x => x.t === 'text' && x.str === 'LUX'); L.S.ed.tool = 'select'; L.Draw.resetTool(); L.refresh(); return e ? e.p : null; });
   check(txt15 && txt15.join() === '12500,5', `Text: the start point can be typed on the card (${txt15})`);
+  // round 16: a ring whose outer circle shrinks is found again (not dropped), and a region that is gone turns the
+  // step red; a mate that conflicts leaves the part where it was; a hole tapped off-centre on a boss's end disc is
+  // centred; a mirrored body keeps its name through a rollback; hiding a part keeps the Mate card; a revolve with no
+  // construction line turns about the profile's own edge; STEP parts of two solids keep their names
+  const r16 = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, K = L.K, BR = L.BR, XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    const out = {}, vol = id => K.volume(L.S.doc.objects.find(o => o.id === id).shape), errs = () => L.H.hist().filter(r => r.err && !r.conflict).map(r => r.err);
+    L.runOp(F.sketchOpNew('ring', XY(0), null, k => { F.addEntity(k, { t: 'circle', c: [20000, 0], r: 30 }); F.addEntity(k, { t: 'circle', c: [20000, 0], r: 20 }); F.addEntity(k, { t: 'rect', x: 20100, y: 0, w: 10, h: 10 }); }));
+    const sk = L.S.ed.sketch;
+    L.runOp(F.extrude, { pts: [{ sk, pt: [20028, 0] }, { sk, pt: [20105, 5] }], distance: 5, mode: 'new', target: null }); const ring = L.S.doc.objects.at(-1).id;
+    out.v0 = vol(ring);
+    L.runOp(F.sketchOp('smaller', sk, k => { k.ents.find(e => e.t === 'circle' && e.r === 30).r = 27; }));
+    out.v1 = vol(ring); out.e1 = errs();
+    L.runOp(F.sketchOp('no tab', sk, k => { k.ents = k.ents.filter(e => e.t !== 'rect'); }));
+    out.e2 = L.H.hist().find(r => r.op === 'F.extrude' && r.params.pts?.[0]?.sk === sk)?.err || '';
+    L.undo();
+    // mates: block on a base, front flush, then a face-to-face on two faces pointing the same way (conflicts)
+    L.runOp(F.sketchOpNew('mb', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 21000, y: 0, w: 40, h: 40 }); F.addEntity(k, { t: 'rect', x: 21100, y: 0, w: 10, h: 10 }); }));
+    const sk2 = L.S.ed.sketch;
+    L.runOp(F.extrude, { pts: [{ sk: sk2, pt: [21020, 20] }], distance: 10, mode: 'new', target: null }); const base = L.S.doc.objects.at(-1).id;
+    L.runOp(F.extrude, { pts: [{ sk: sk2, pt: [21105, 5] }], distance: 10, mode: 'new', target: null }); const blk = L.S.doc.objects.at(-1).id;
+    L.runOp(F.mateOp, { a: { obj: blk, n: [0, 0, -1], p: [21105, 5, 0], planar: true }, b: { obj: base, n: [0, 0, 1], p: [21020, 20, 10], planar: true }, gap: 0, align: 'face' });
+    L.runOp(F.mateOp, { a: { obj: blk, n: [0, -1, 0], p: [21105, 0, 5], planar: true }, b: { obj: base, n: [0, -1, 0], p: [21020, 0, 5], planar: true }, gap: 0, align: 'flush' });
+    const ob = () => L.S.doc.objects.find(o => o.id === blk), pose = () => [...ob().loc, ...ob().rot].map(v => +(+v).toFixed(6)).join();
+    const p2 = pose();
+    L.runOp(F.mateOp, { a: { obj: blk, n: [1, 0, 0], p: [21110, 5, 5], planar: true }, b: { obj: base, n: [1, 0, 0], p: [21040, 20, 5], planar: true }, gap: 0, align: 'face' });
+    out.mate = { p2, p3: pose(), err: L.H.hist().filter(r => r.op === 'F.mateOp').at(-1).err || '' };
+    // hiding the base keeps this Mate's card open
+    BR.setVisible('obj', base, false); out.card = L.getLast()?.def === F.mateOp; out.hid = !!L.S.doc.objects.find(o => o.id === base).hidden;
+    BR.setVisible('obj', base, true);
+    // hole tapped off-centre (0.8 R) on a Ø8 boss's end disc
+    L.runOp(F.sketchOpNew('boss', XY(0), null, k => { F.addEntity(k, { t: 'circle', c: [22000, 0], r: 4 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [22000, 0] }], distance: 10, mode: 'new', target: null }); const boss = L.S.doc.objects.at(-1).id;
+    L.S.ed.faces = [{ obj: boss, n: [0, 0, 1], w: 10, p: [22003.2, 0, 10], planar: true }]; L.runOp(F.holeOp, { dia: 3, depth: 4 }); L.S.ed.faces = [];
+    const hp = L.H.hist().filter(r => r.op === 'F.holeOp').at(-1).params; out.hole = [hp.x, hp.y].map(v => +v.toFixed(6)).join();
+    // mirrored copy renamed, rolled back past the Mirror and forward again
+    L.runOp(F.sketchOpNew('half', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 23000, y: 5, w: 20, h: 10 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [23010, 10] }], distance: 5, mode: 'new', target: null }); const half = L.S.doc.objects.at(-1).id;
+    L.S.ed.faces = []; L.S.ed.selected = new Set([half]); L.S.ed.active = half;
+    L.runOp(F.mirrorOp, { obj: half, plane: 'y', fuse: false }); const mir = L.S.doc.objects.at(-1).id;
+    L.runOp(L.OPS.setPropOp('Rename', [mir], () => { L.S.doc.objects.find(o => o.id === mir).name = 'Housing R'; }, false, true));
+    BR.rollTo(L.H.hist().findIndex(r => r.op === 'F.mirrorOp')); out.gone = !L.S.doc.objects.some(o => o.id === mir);
+    BR.rollTo(1e9); out.mirName = L.S.doc.objects.find(o => o.id === mir)?.name;
+    // a turned profile drawn off the sketch's Y axis, as lines: revolves about its own edge
+    L.runOp(F.sketchOpNew('turn', XY(0), null, k => { const P = [[24010, 0], [24015, 0], [24015, 20], [24010, 20]]; P.forEach((a, i) => F.addEntity(k, { t: 'line', a, b: P[(i + 1) % 4] })); }));
+    L.runOp(F.revolve, { pts: [{ sk: L.S.ed.sketch, pt: [24012, 10] }], mode: 'new', target: null }); const rv = L.S.doc.objects.at(-1).id;
+    out.rev = { axis: L.H.hist().at(-1).params.axis, v: vol(rv) };
+    return out;
+  });
+  check(Math.abs(r16.v0 - (Math.PI * 500 * 5 + 500)) < 1e-6 && Math.abs(r16.v1 - (Math.PI * 329 * 5 + 500)) < 1e-6 && !r16.e1.length, `A ring whose outer circle shrinks is found again: ${r16.v0.toFixed(2)} → ${r16.v1.toFixed(2)} mm³${r16.e1.length ? ' · ' + r16.e1.join('; ') : ''}`);
+  check(/no longer exist/.test(r16.e2), `A picked region that is gone turns the Extrude red instead of building less (${r16.e2})`);
+  check(r16.mate.p3 === r16.mate.p2 && /Conflicts/.test(r16.mate.err), `A conflicting mate leaves the part where its other mates put it (${r16.mate.p2} → ${r16.mate.p3}; ${r16.mate.err})`);
+  check(r16.card && r16.hid, 'Hiding a part in Items keeps the Mate card open');
+  check(r16.hole === '22000,0', `A hole tapped off-centre on a boss's end disc is centred (${r16.hole})`);
+  check(r16.gone && r16.mirName === 'Housing R', `A mirrored body keeps its name through a rollback (${r16.mirName})`);
+  check(/^l:/.test(r16.rev.axis) && Math.abs(r16.rev.v - Math.PI * 25 * 20) < 1e-6, `Revolve with no construction line turns about the profile's own edge (${r16.rev.axis}, ${r16.rev.v.toFixed(2)} mm³)`);
+  const step16 = await p.evaluate(async () => { const K = StreamLine.K, R = K.R; return R.exportSTEP([{ shape: R.makeCompound([R.makeBox([0, 0, 0], [10, 10, 10]), R.makeBox([20, 0, 0], [30, 10, 10])]), name: 'Halves', color: '#3a6ea5' }, { shape: R.makeBox([40, 0, 0], [50, 10, 10]), name: 'Trigger', color: '#a7c4a0' }], { unit: 'MM' }).text(); });
+  const n16 = await p.evaluate(() => StreamLine.S.doc.objects.length);
+  await p.setInputFiles('#file-input', { name: 'two.step', mimeType: 'application/octet-stream', buffer: Buffer.from(step16) });
+  await p.waitForFunction(n => StreamLine.S.doc.objects.length >= n + 3, n16, { timeout: 120000 });
+  const names16 = await p.evaluate(() => StreamLine.S.doc.objects.slice(-3).map(o => o.name).join(', '));
+  check(names16 === 'Halves, Halves (2), Trigger', `STEP: a part made of two solids keeps its name, and so do the others (${names16})`);
   await shot('5-timeline');
 } catch (e) {
   await p.screenshot({ path: OUT + 'crash.png' }).catch(() => {});

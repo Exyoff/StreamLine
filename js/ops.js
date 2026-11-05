@@ -1,7 +1,7 @@
 // Operator system: every edit is an operator with parameters that can be re-applied
 // ("Adjust Last Operation", like Blender's redo panel) and undone.
 import { S, emit } from './state.js';
-import { snapshot, restoreSnapshot, cloneObj } from './scene.js';
+import { snapshot, restoreSnapshot, cloneObj, xfFor } from './scene.js';
 import * as H from './history.js';
 
 const MAX_UNDO = 80;
@@ -36,10 +36,12 @@ function apply(op) {
   try { r = op.def.apply(op.params, op); } catch (err) { console.error(err); r = err.message || 'Operation failed'; }
   if (typeof r !== 'string' && !op.def.sketchOnly && !op.def.presentation) { // mated parts follow
     const xf = /^(Move|Rotate)$/.test(op.def.label?.(op.params) || '') ? new Set(op.def.touch?.(op.params)?.ids || []) : null;
-    const pose = () => S.doc.objects.filter(o => xf?.has(o.id)).map(o => [...o.loc, ...o.rot].map(v => (+v).toFixed(4)).join()).join('|');
+    // (compared by where three points of each part land, not by the angles: −180° and 180° are the same turn)
+    const pose = () => S.doc.objects.filter(o => xf?.has(o.id)).flatMap(o => { const x = xfFor(o); return [[0, 0, 0], [100, 0, 0], [0, 100, 0]].map(q => x.toW(q)); });
     const before = pose(); H.solveConstraints(op.def.constraint ? { op: op.def.constraint, params: op.params } : null); // (a new mate takes part too)
     // a move the mates took back (dragging a part along a direction a mate holds)
-    op.heldByMate = !!xf?.size && pose() !== before;
+    const after = pose();
+    op.heldByMate = !!xf?.size && after.some((q, i) => !before[i] || Math.hypot(q[0] - before[i][0], q[1] - before[i][1], q[2] - before[i][2]) > 1e-3);
   }
   return r;
 }
@@ -50,6 +52,7 @@ export function clearLast() { if (last) { last = null; emit('lastop', null); } }
 // Run an operator. interactive=true keeps it open for live updates (gizmo drags).
 export function runOp(def, params = {}, { interactive = false } = {}) {
   if (last && !last.committed) commit();
+  const keep = def.presentation && !interactive && last?.committed ? last : null;
   const op = { def, params: { ...(def.defaults ? def.defaults() : {}), ...params }, undoSnap: snapshot(), committed: false, sel: H.edSnap() };
   if (def.prepare) { const p = def.prepare(op.params); if (typeof p === 'string') { emit('toast', p); return false; } }
   op.base = makeBase(def, op.params);
@@ -64,6 +67,14 @@ export function runOp(def, params = {}, { interactive = false } = {}) {
   last = op;
   emit('change', { reason: 'op' });
   if (!interactive) commit();
+  // showing / hiding / renaming a part keeps the step that was open on its card (hide a part to reach a face, then
+  // set the Mate's gap): its starting point takes the new name, colour and visibility, so editing it keeps them
+  if (keep) {
+    const cur = new Map(S.doc.objects.map(o => [o.id, o])), PRES = ['name', 'color', 'hidden', 'layer'];
+    const sync = o => { const c = cur.get(o?.id); if (c && c !== o) for (const k of PRES) o[k] = c[k]; };
+    keep.base.list.forEach(sync); keep.base.clones?.forEach(sync);
+    last = keep; emit('lastop', last);
+  }
   return true;
 }
 export function updateOp(params) {

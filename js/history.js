@@ -83,7 +83,9 @@ export function regenerate(from = 0) {
   let start = Math.max(0, Math.min(from, cps.length - 1));
   while (start > 0 && !cps[start]) start--;
   const keepEd = edSnap(), keepNext = S.doc.nextId, keepSk = JSON.stringify(S.doc.sketches || []);
-  const pres = new Map(S.doc.objects.map(o => [o.id, Object.fromEntries(PRES.map(k => [k, o[k]]))]));
+  // (an object rolled out of existence keeps its name and colour for when it is rolled back in)
+  const gone = S.doc.gonePres || (S.doc.gonePres = {});
+  const pres = new Map([...Object.entries(gone).map(([id, p]) => [+id, p]), ...S.doc.objects.map(o => [o.id, Object.fromEntries(PRES.map(k => [k, o[k]]))])]);
   const base = cps[start] || { objects: [], nextId: 1 };
   if (start === 0 && !cps[0]) cps[0] = base;
   S.doc.objects = base.objects.map(o => cloneObj(o)); S.doc.nextId = base.nextId;
@@ -111,6 +113,7 @@ export function regenerate(from = 0) {
   cps.length = end + 1;
   solveConstraints();
   for (const o of S.doc.objects) { const p = pres.get(o.id); if (p) for (const k of PRES) if (p[k] !== undefined) o[k] = p[k]; }
+  { const live = new Set(S.doc.objects.map(o => o.id)); for (const [id, p] of pres) { if (live.has(id)) delete gone[id]; else gone[id] = p; } }
   S.doc.sketches = JSON.parse(keepSk);
   for (const [id, pl] of moved) { const k = S.doc.sketches.find(q => q.id === id); if (k) k.plane = pl; }
   S.doc.nextId = Math.max(keepNext, S.doc.nextId);

@@ -67,7 +67,7 @@ export function cloneObj(o, shareMesh = false) {
 export function serialize(light = false, noComp = false) {
   return {
     format: 'streamline', version: 1, unit: 'mm',
-    doc: { nextId: S.doc.nextId, objects: S.doc.objects.map(o => objToJSON(o, light)), sketches: S.doc.sketches || [], history: S.doc.history || [], marker: S.doc.marker ?? null, layers: S.doc.layers || defaultLayers(), layer: S.doc.layer ?? 1, project: S.doc.project || null, components: noComp ? Object.fromEntries(Object.entries(S.doc.components || {}).map(([k, c]) => [k, { name: c.name, version: c.version, inLibrary: true }])) : S.doc.components || {} },
+    doc: { nextId: S.doc.nextId, objects: S.doc.objects.map(o => objToJSON(o, light)), sketches: S.doc.sketches || [], history: S.doc.history || [], marker: S.doc.marker ?? null, layers: S.doc.layers || defaultLayers(), layer: S.doc.layer ?? 1, project: S.doc.project || null, gonePres: S.doc.gonePres || {}, components: noComp ? Object.fromEntries(Object.entries(S.doc.components || {}).map(([k, c]) => [k, { name: c.name, version: c.version, inLibrary: true }])) : S.doc.components || {} },
     ed: { workspace: S.ed.workspace, sketch: S.ed.sketch, drawSel: [...S.ed.drawSel], profiles: S.ed.profiles, mode: S.ed.mode, selectMode: S.ed.selectMode, selected: [...S.ed.selected], active: S.ed.active, editSel: [...S.ed.editSel], selOrder: S.ed.selOrder.slice() },
   };
 }
@@ -76,6 +76,7 @@ export function deserialize(data) {
   if (!d || !d.doc || !Array.isArray(d.doc.objects)) throw new Error('Not a StreamLine project');
   S.doc.objects = d.doc.objects.map(objFromJSON);
   S.doc.sketches = JSON.parse(JSON.stringify(d.doc.sketches || []));
+  S.doc.gonePres = d.doc.gonePres || {};
   S.doc.nextId = d.doc.nextId || (Math.max(0, ...S.doc.objects.map(o => o.id)) + 1);
   S.doc.layers = JSON.parse(JSON.stringify(d.doc.layers || defaultLayers()));
   S.doc.layer = d.doc.layer ?? S.doc.layers[0].id;

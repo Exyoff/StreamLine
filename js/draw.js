@@ -487,9 +487,12 @@ export function cardContent() {
       h('div', { class: 'btnrow' }, h('button', { class: 'btn', onclick: () => resetTool() }, 'Cancel'), h('button', { class: 'btn primary', onclick: place }, 'Place')));
   }
   const [AU, AV] = axisNames(studio() && DRAW_PRIMARY.has(t) && waitingFirstPoint() && !target && S.ed.editingSketch == null ? cplane() : s.plane);
+  // (on a face seen from behind the sketch's X runs along the model's −X: the fields take and show the model's
+  // coordinate — 27 means x = 27 — and are labelled plain X)
+  const su = /^−/.test(AU) ? -1 : 1, sv = /^−/.test(AV) ? -1 : 1, AU1 = AU.replace(/^−/, ''), AV1 = AV.replace(/^−/, '');
   const xyFields = (lab, cb) => h('div', { class: 'fields' },
-    field({ label: lab + ' ' + AU, kind: 'len', value: pv() ? pv()[0] : 0, cls: axCls(AU), onCommit: v => cb([v, pv() ? pv()[1] : 0], 0) }),
-    field({ label: lab + ' ' + AV, kind: 'len', value: pv() ? pv()[1] : 0, cls: axCls(AV), onCommit: v => cb([st.typed.x ?? (pv() ? pv()[0] : 0), v], 1) }));
+    field({ label: lab + ' ' + AU1, kind: 'len', value: su * (pv() ? pv()[0] : 0), cls: axCls(AU1), onCommit: v => cb([su * v, pv() ? pv()[1] : 0], 0) }),
+    field({ label: lab + ' ' + AV1, kind: 'len', value: sv * (pv() ? pv()[1] : 0), cls: axCls(AV1), onCommit: v => cb([st.typed.x ?? (pv() ? pv()[0] : 0), sv * v], 1) }));
   // Text: tap where it starts, or type the start point here (X then Y)
   if (t === 'text' && (!st.cmd || st.cmd.stage === 'base')) return h('div', {}, title('Text', 'tap where it starts, or type X and Y'),
     xyFields('Start', (p, k) => { typedTarget(); if (k === 0) { st.typed.x = p[0]; st.preview = p; emit('drawcard'); view.render(); return; } st.typed = {}; cmdPoint(p); emit('drawcard'); view.render(); }));
