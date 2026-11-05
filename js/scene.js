@@ -70,7 +70,7 @@ export function cloneObj(o, shareMesh = false) {
 export function serialize(light = false, noComp = false) {
   return {
     format: 'streamline', version: 1, unit: 'mm',
-    doc: { nextId: S.doc.nextId, objects: S.doc.objects.map(o => objToJSON(o, light)), sketches: S.doc.sketches || [], history: S.doc.history || [], marker: S.doc.marker ?? null, layers: S.doc.layers || defaultLayers(), layer: S.doc.layer ?? 1, project: S.doc.project || null, gonePres: S.doc.gonePres || {}, components: noComp ? Object.fromEntries(Object.entries(S.doc.components || {}).map(([k, c]) => [k, { name: c.name, version: c.version, inLibrary: true }])) : S.doc.components || {} },
+    doc: { nextId: S.doc.nextId, objects: S.doc.objects.map(o => objToJSON(o, light)), sketches: S.doc.sketches || [], history: S.doc.history || [], marker: S.doc.marker ?? null, layers: S.doc.layers || defaultLayers(), layer: S.doc.layer ?? 1, project: S.doc.project || null, gonePres: S.doc.gonePres || {}, cplane: S.ed.cplane || null, components: noComp ? Object.fromEntries(Object.entries(S.doc.components || {}).map(([k, c]) => [k, { name: c.name, version: c.version, inLibrary: true }])) : S.doc.components || {} },
     ed: { workspace: S.ed.workspace, sketch: S.ed.sketch, drawSel: [...S.ed.drawSel], profiles: S.ed.profiles, mode: S.ed.mode, selectMode: S.ed.selectMode, selected: [...S.ed.selected], active: S.ed.active, editSel: [...S.ed.editSel], selOrder: S.ed.selOrder.slice() },
   };
 }
@@ -85,6 +85,7 @@ export function deserialize(data) {
   S.doc.layer = d.doc.layer ?? S.doc.layers[0].id;
   S.doc.marker = d.doc.marker ?? null;
   S.doc.project = d.doc.project || null;
+  S.doc.cplane = d.doc.cplane || null; // (the construction plane it was left on: the app takes it up after loading)
   S.doc.components = JSON.parse(JSON.stringify(d.doc.components || {}));
   S.doc.history = JSON.parse(JSON.stringify(d.doc.history || []));
   // projects saved before the timeline existed: their bodies become one baked first step

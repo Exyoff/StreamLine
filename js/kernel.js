@@ -161,6 +161,13 @@ export function stepColor(hex) {
   return '#' + [0, 2, 4].map(i => Math.round(lin(parseInt(m[1].slice(i, i + 2), 16) / 255) * 255).toString(16).padStart(2, '0')).join('');
 }
 export const area = s => R.measureArea(s);
+// an edge's exact length (the tessellated polyline runs a little short on curves: R100's rim read 628.25, not 628.32)
+const edgeLenMemo = new WeakMap();
+export function edgeLength(shape, i) {
+  let m = edgeLenMemo.get(shape); if (!m) { m = { list: null, len: new Map() }; edgeLenMemo.set(shape, m); }
+  if (!m.len.has(i)) { let L = null; try { m.list ??= shape.edges; L = m.list[i] ? R.measureLength(m.list[i]) : null; } catch (e) { L = null; } m.len.set(i, L); }
+  return m.len.get(i);
+}
 // ---------- STEP import: one body per solid, with the file's part names and colours ----------
 // (this OpenCascade build has no XCAF reader, so names and colours are read from the STEP text: PRODUCT names in
 // order, and each STYLED_ITEM's colour traced back to its product)

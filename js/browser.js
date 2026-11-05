@@ -42,7 +42,7 @@ export function recSummary(rec) {
     if (k === 'F.bodyBoolean') return `${p.ids?.length || 0} bodies`;
     if (k === 'F.mirrorOp') return p.plane === 'face' ? 'about a face' : `about ${({ x: 'YZ', y: 'XZ', z: 'XY' })[p.plane]}`;
     if (k === 'F.sliceOp') return p.plane === 'face' ? 'at a face' : `at ${'XYZ'['xyz'.indexOf(p.plane)]} ${fmtLen(p.offset)}`;
-    if (k === 'O.transform') return p.mode === 'move' ? [p.x, p.y, p.z].map(v => fmtLen(v, false)).join(', ') : p.mode === 'rotate' ? `${fmtAng(p.angle)} about ${p.axis.toUpperCase()}` : `× ${[p.sx, p.sy, p.sz].map(v => +v.toFixed(3)).join(', ')}`;
+    if (k === 'O.transform') return p.mode === 'move' ? [p.x, p.y, p.z].map(v => fmtLen(v, false)).join(', ') : p.mode === 'rotate' ? `${fmtAng(p.angle)} about ${p.axis === 'm' ? 'the mate axis' : p.axis.toUpperCase()}` : `× ${[p.sx, p.sy, p.sz].map(v => +v.toFixed(3)).join(', ')}`;
     if (k === 'F.draftOp') return fmtAng(p.angle);
   } catch (e) {}
   return '';

@@ -30,6 +30,7 @@ try { var t = JSON.parse(localStorage.getItem('streamline.settings.v1') || '{}')
     <canvas id="nav" aria-label="Orientation cube: drag to turn the view, tap a face, edge or corner"></canvas>
     <div id="vtools-c"><button class="ib glass circ" id="btn-home" aria-label="Home view"></button><button class="ib glass circ" id="btn-frame" aria-label="Frame selection"></button><button class="ib glass circ" id="btn-persp" aria-label="Perspective / orthographic"></button></div>
     <div id="zoombar" class="glass" aria-label="Zoom: push the handle up to zoom in, down to zoom out">
+      <button class="zb-tool" id="btn-home2" aria-label="Home view" hidden></button>
       <button class="zb-btn" data-z="in" aria-label="Zoom in">+</button>
       <div class="zb-track"><div class="zb-thumb"></div></div>
       <button class="zb-btn" data-z="out" aria-label="Zoom out">−</button>

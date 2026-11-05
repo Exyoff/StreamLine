@@ -293,6 +293,20 @@ view.lookAlong = (n, target, dist = null) => {
   emit('viewchange');
 };
 view.saveCam = () => { const c = view.cam; return { yaw: c.yaw, pitch: c.pitch, dist: c.dist, target: c.target.toArray(), ortho: c.ortho, autoOrtho: c.autoOrtho }; };
+// would these world points all sit in the free part of the screen (inside the panels) with the camera at s (a saved
+// view)? Worked out for that camera, not the one on screen
+view.seenFrom = (s, points) => {
+  const { w, h } = view.size(); let ins = { l: 0, r: 0, t: 0, b: 0 }; try { ins = view.insets() || ins; } catch (e) {}
+  const cp = Math.cos(s.pitch), dir = [cp * Math.cos(s.yaw), cp * Math.sin(s.yaw), Math.sin(s.pitch)], r = [-Math.sin(s.yaw), Math.cos(s.yaw), 0];
+  const u = [dir[1] * r[2] - dir[2] * r[1], dir[2] * r[0] - dir[0] * r[2], dir[0] * r[1] - dir[1] * r[0]];
+  const tf = Math.tan(persp.fov * D2R / 2), aspect = Math.max(w, 1) / Math.max(h, 1);
+  return points.every(p => {
+    const d = [p[0] - s.target[0], p[1] - s.target[1], p[2] - s.target[2]], dot = a => d[0] * a[0] + d[1] * a[1] + d[2] * a[2];
+    const depth = s.ortho ? s.dist : s.dist - dot(dir); if (depth <= 1e-9) return false;
+    const x = (dot(r) / (depth * tf * aspect) + 1) / 2 * w, y = (1 - dot(u) / (depth * tf)) / 2 * h;
+    return x >= ins.l + 6 && x <= w - ins.r - 6 && y >= ins.t + 6 && y <= h - ins.b - 6;
+  });
+};
 view.restoreCam = s => { const c = view.cam; c.ortho = s.ortho; c.autoOrtho = s.autoOrtho; animateTo(s.yaw, s.pitch, new THREE.Vector3(...s.target), s.dist); emit('viewchange'); };
 view.toggleOrtho = () => { view.cam.ortho = !view.cam.ortho; view.cam.autoOrtho = false; view.render(); emit('viewchange'); };
 // screen space the floating controls cover ({ l, r, t, b } in px); set by the app
@@ -304,8 +318,9 @@ function fitDist(rad) {
   const fw = Math.max(w * 0.4, w - ins.l - ins.r), fh = Math.max(h * 0.4, h - ins.t - ins.b);
   return rad / Math.sin(persp.fov * D2R / 2) * h / Math.min(fw, fh) * 1.15;
 }
-view.frame = (points) => {
-  const c = view.cam;
+// (ang: { yaw, pitch } to frame from another direction — the view you had before a sketch, say)
+view.frame = (points, ang = null) => {
+  const c = ang ? { ...view.cam, yaw: ang.yaw, pitch: ang.pitch } : view.cam;
   if (!points.length) { animateTo(c.yaw, c.pitch, new THREE.Vector3(0, 0, 0), 7 * defSize()); return; }
   const b = new THREE.Box3(); points.forEach(p => b.expandByPoint(new THREE.Vector3(...p)));
   const ctr = b.getCenter(new THREE.Vector3());
@@ -529,8 +544,15 @@ function occluded(world, rc) {
   const hit = rc.intersectObjects(meshes, false)[0];
   if (!hit) return false;
   const d = P.distanceTo(origin);
-  return hit.distance < d - Math.max(d * 1e-4, view.worldPerPixel(P) * 2);
+  return hit.distance < d - view.depthTol(P, hit.object.userData.objId);
 }
+// how far in front of a point a face must be to hide it: the tessellation's own error (curved faces are drawn a
+// little inside the true surface) and a tenth of a pixel — not two pixels, which zoomed out on a phone was millimetres
+// and let a rim 1.5 mm under a lid be picked through it
+view.depthTol = (P, objId) => {
+  const o = objId != null && S.doc.objects.find(q => q.id === objId), tt = (o?.brep?.tol || 0) * Math.max(1, ...(o?.scl || [1]).map(Math.abs));
+  return Math.max(view.cam.dist * 1e-5, tt * 4, view.worldPerPixel(P) * 0.1, Math.hypot(P[0], P[1], P[2]) * 4e-7); // (the last: float32 meshes far from the origin)
+};
 // nearest vertex in screen space. opts: { objs: [obj], exclude: (obj, i) => bool, tol }
 view.pickVertex = (x, y, opts = {}) => {
   const tol = opts.tol ?? 28;
@@ -665,7 +687,9 @@ function bindPointer() {
   // one finger never moves the view (the orientation cube turns it, the zoom bar zooms, two fingers pan / pinch):
   // a tap picks, a drag on a handle drags it, and a held (or dragged) finger brings up the precision cursor
   let holdT = 0;
-  const cursorOn = () => !!view.handlers.cursorStart && !view.cam.lock2D;
+  // (a held finger brings the cursor up in a sketch too — where tiny curves need it most; there a finger that drags
+  // from rest pans instead)
+  const cursorOn = () => !!view.handlers.cursorStart;
   const startCursor = (x, y) => { clearTimeout(holdT); if (mode !== 'pending' || !cursorOn()) return; mode = 'cursor'; view.handlers.cursorStart(x, y); };
   canvas.addEventListener('pointerdown', e => {
     canvas.setPointerCapture(e.pointerId);
@@ -699,7 +723,7 @@ function bindPointer() {
     const thr = e.pointerType === 'mouse' ? 3 : 8;
     if (Math.hypot(q.x - p.sx, q.y - p.sy) > thr) { moved = true; if (multiTap && pts.size >= 2) multiTap = null; }
     p.x = q.x; p.y = q.y;
-    if (mode === 'pending' && moved) { clearTimeout(holdT); if (cursorOn()) { mode = 'cursor'; view.handlers.cursorStart(p.sx, p.sy); } else mode = view.cam.lock2D ? 'pan' : 'none'; }
+    if (mode === 'pending' && moved) { clearTimeout(holdT); if (cursorOn() && !view.cam.lock2D) { mode = 'cursor'; view.handlers.cursorStart(p.sx, p.sy); } else mode = view.cam.lock2D ? 'pan' : 'none'; }
     if (mode === 'cursor') view.handlers.cursorMove(q.x, q.y);
     else if (mode === 'pan') view.pan(dx, dy);
     else if (mode === 'gizmo') view.handlers.dragMove(q.x, q.y, e);

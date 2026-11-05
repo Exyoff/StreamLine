@@ -615,6 +615,9 @@ try {
     L.S.ed.selected = new Set([stud]); L.S.ed.active = stud;
     L.runOp(L.OPS.duplicate, { x: 30, y: 0, z: 0 }); m.commit();
     out.dup = { added: L.S.doc.objects.length - n0, sel: [...L.S.ed.selected].every(id => id !== stud && L.S.doc.objects.some(o => o.id === id)) };
+    // the construction plane comes back with its project (not into a new one)
+    L.S.ed.cplane = L.SK.PLANES.XZ; await PJ.saveNow(); const cpId = L.S.doc.project.id;
+    await PJ.newProject(); out.cpNew = L.S.ed.cplane; await PJ.openProject(cpId); out.cpBack = L.S.ed.cplane === L.SK.PLANES.XZ;
     // a fillet preview drawn, then cancelled: the next pick sees the plain block again
     await PJ.newProject(); L.addSketchedPrim('cube'); // (the tests after this one carry on in this plain part)
     const cube = L.S.doc.objects.at(-1); const cid = cube.id; L.S.ed.selected = new Set(); L.refresh();
@@ -633,6 +636,7 @@ try {
   check(/M6/.test(r19.thread) && r19.mated && r19.stud === '0,20 20.0', `A tapped hole across a round boss can be mated (${r19.thread}; stud centre ${r19.stud})`);
   check(r19.dup.added === 1 && r19.dup.sel, `Duplicate makes a copy and selects it (${JSON.stringify(r19.dup)})`);
   check(r19.pick.tris > r19.pick.now && r19.pick.ok, `A pick right after a cancelled fillet preview sees the block as it is (${JSON.stringify(r19.pick)})`);
+  check(r19.cpNew === null && r19.cpBack, `A project's construction plane comes back when it is opened again, and not into a new project (${r19.cpNew}, ${r19.cpBack})`);
   // text → Outline → letters' filled areas selected → Extrude
   const txt = await p.evaluate(async () => {
     const L = StreamLine;
@@ -1220,6 +1224,101 @@ try {
   q = await projW([76033, 0, 10]); await tapV(q.x, q.y);
   const pj2 = await p.evaluate(() => { const L = StreamLine, k = L.SK.sketchById(L.S.ed.editingSketch), r = { n: k.ents.length, regs: L.SK.regions(k).length }; L.S.ed.tool = 'select'; L.finishSketchEdit(); return r; });
   check(pj1 === 'circleP:5,lineP,lineP,lineP,lineP' && pj2.n === 5 && pj2.regs === 2, `Project brings a body's face into the sketch exactly (${pj1}), a rim already there is not added twice (${pj2.n} curves), and they close profiles (${pj2.regs})`);
+  // round 19 (2): projected geometry is fixed reference (no freedom); a press on a point that never drags is a tap (no
+  // "Move point" step); a tap on the picked face after the view turned is a fresh face pick; a rim 1.5 mm under a lid is
+  // not picked through it; edges know their exact length; a thin overlap is "slight"; Finish Sketch frames a profile the
+  // old view would hide; constraint glyphs do not sit on each other; on a phone the op card shows two settings and More,
+  // and the zoom bar stays beside a sketch card; a held finger brings up the precision cursor in a sketch
+  const XYs = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+  const dofs = await p.evaluate(async () => {
+    const C = await import('./js/constraints.js');
+    const k = { id: -1, plane: { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }, ents: [{ id: 1, t: 'line', a: [0, 0], b: [10, 0], proj: true }, { id: 2, t: 'circle', c: [5, 5], r: 2, proj: true }], cons: [], nextEnt: 2 };
+    const a = C.dof(k); k.ents.push({ id: 3, t: 'circle', c: [20, 0], r: 3 }); return [a, C.dof(k)];
+  });
+  check(dofs.join() === '0,3', `Projected geometry is fixed reference: no degrees of freedom (${dofs.join(' → ')} with a free circle)`);
+  // a small circle's centre pressed and let go: a tap, not a Move point step
+  const gsk = await p.evaluate(XY0 => {
+    const L = StreamLine, F = L.F;
+    L.runOp(F.sketchOpNew('gt', XY0, null, k => { F.addEntity(k, { t: 'circle', c: [80000, 0], r: 1.5 }); F.addEntity(k, { t: 'line', a: [79990, -8], b: [80010, -8] }); }));
+    const sk = L.S.ed.sketch; L.S.ed.sketch = null; L.activateSketch(sk); L.S.ed.tool = 'select'; L.refresh(); return sk;
+  }, XYs(0));
+  await p.waitForTimeout(600); await frame([79980, -20, 0], [80020, 20, 0]); await p.waitForTimeout(500);
+  let q19 = await projW([80000, 0, 0]); await tapV(q19.x, q19.y);
+  const gtap = await p.evaluate(() => { const L = StreamLine, o = L.getLast(); return { last: o ? o.def.label(o.params) : null, sel: [...L.S.ed.drawSel].length }; });
+  // two horizontal lines on top of each other: their glyphs are laid out apart
+  await p.evaluate(() => { const L = StreamLine, F = L.F, k = L.SK.sketchById(L.S.ed.editingSketch);
+    L.runOp(F.sketchOp('two', k.id, s => { for (const y of [4, 4.4]) { const e = F.addEntity(s, { t: 'line', a: [79995, y], b: [80005, y] }); s.cons = s.cons || []; s.cons.push({ id: ++s.nextEnt, t: 'h', a: e.id }); } })); });
+  await p.waitForTimeout(500);
+  const glyphs = await p.evaluate(() => [...document.querySelectorAll('#labels .vlabel.cons')].filter(e => e.style.display !== 'none').map(e => e.getBoundingClientRect()).map(r => [r.left, r.top, r.right, r.bottom]));
+  const glyphOverlap = glyphs.some((a, i) => glyphs.some((b, j) => j > i && a[0] < b[2] - 1 && b[0] < a[2] - 1 && a[1] < b[3] - 1 && b[1] < a[3] - 1));
+  // the zoom bar stays beside the Line card (phone)
+  await p.tap('#tools .tool[data-tool=line]'); await p.waitForTimeout(400);
+  const zbLine = await p.evaluate(() => { const z = document.querySelector('#zoombar'), c = document.querySelector('#draw-card'); const a = z.getBoundingClientRect(), b = c.getBoundingClientRect(); return { vis: getComputedStyle(z).visibility, card: !c.hidden, apart: a.left >= b.right || a.top >= b.bottom }; });
+  await p.tap('#tools .tool[data-tool=select]'); await p.waitForTimeout(300);
+  // a finger held still in a sketch brings up the precision cursor
+  const tch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y: y + top, id: 1, radiusX: 4, radiusY: 4 }] });
+  q19 = await projW([80008, 12, 0]); await tch('touchStart', q19.x, q19.y);
+  // (the hold timer fires once the page is free: in this long session a frame can take a while)
+  const curOn = await p.waitForFunction(() => !document.querySelector('#pcursor').hidden, null, { timeout: 2500 }).then(() => true, () => false);
+  await tch('touchEnd'); await p.waitForTimeout(400);
+  await p.evaluate(() => { StreamLine.S.ed.tool = 'select'; StreamLine.finishSketchEdit(); });
+  check(!/Move point/.test(gtap.last || '') && gtap.sel === 1, `A press on a small circle's centre that never drags is a tap: it picks, no Move point step (${gtap.last}; ${gtap.sel} picked)`);
+  check(!glyphOverlap && glyphs.length >= 2, `Constraint glyphs of curves on top of each other are laid out apart (${glyphs.length} glyphs)`);
+  check(zbLine.vis !== 'hidden' && zbLine.card && zbLine.apart, `The zoom bar stays in view beside a sketch tool's card (${JSON.stringify(zbLine)})`);
+  check(curOn, `A finger held still in a sketch brings up the precision cursor (${curOn})`);
+  // the picked face, the view turned, the same pixel: a fresh face pick, not the body
+  await p.evaluate(XY0 => { const L = StreamLine, F = L.F;
+    L.runOp(F.sketchOpNew('ff', XY0, null, k => F.addEntity(k, { t: 'rect', x: 81000, y: -20, w: 40, h: 40 })));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [81002, -18] }], distance: 10, mode: 'new', target: null }); L.S.ed.sketch = null; L.S.ed.selected = new Set(); L.S.ed.faces = []; L.S.ed.pick = 'face'; L.refresh(); L.view.setView('iso'); }, XYs(0));
+  await p.waitForTimeout(400); await frame([81000, -20, 0], [81040, 20, 10]); await p.waitForTimeout(600);
+  q19 = await projW([81020, 0, 10]); await tapV(q19.x, q19.y);
+  const ff1 = await p.evaluate(() => [StreamLine.S.ed.pick, StreamLine.S.ed.faces.length].join());
+  await p.evaluate(() => { StreamLine.view.cam.yaw += 0.3; StreamLine.view.render(); }); await p.waitForTimeout(500);
+  await tapV(q19.x, q19.y);
+  const ff2 = await p.evaluate(() => [StreamLine.S.ed.pick, StreamLine.S.ed.faces.length].join());
+  check(ff1 === 'face,1' && ff2 === 'face,1', `A tap on the picked face after the view turned is a fresh face pick, not the body (${ff1} → ${ff2})`);
+  // a rim 1.5 mm under a lid, seen from the top zoomed out: the tap gets the lid, not the rim
+  await p.evaluate(XY0 => { const L = StreamLine, F = L.F;
+    L.runOp(F.sketchOpNew('lid', { ...XY0, o: [0, 0, 10] }, null, k => F.addEntity(k, { t: 'rect', x: 81960, y: -70, w: 140, h: 140 })));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [81962, -68] }], distance: 2, mode: 'new', target: null });
+    L.runOp(F.sketchOpNew('tube', XY0, null, k => F.addEntity(k, { t: 'circle', c: [82030, 0], r: 10 })));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [82030, 0] }], distance: 10.5, mode: 'new', target: null });
+    L.S.ed.sketch = null; L.S.ed.selected = new Set(); L.S.ed.faces = []; L.S.ed.edges = []; L.refresh(); L.view.setView('top'); }, XYs(0));
+  await p.waitForTimeout(500); await frame([81730, -300, 0], [82330, 300, 12]); await p.waitForTimeout(700);
+  q19 = await projW([82040, 0, 12]); await tapV(q19.x, q19.y);
+  const lidPick = await p.evaluate(() => { const L = StreamLine; return { pick: L.S.ed.pick, rims: L.S.ed.edges.filter(e => e.type === 'CIRCLE').length, wpp: +L.view.worldPerPixel([82040, 0, 12]).toFixed(2) }; });
+  check(lidPick.rims === 0 && lidPick.pick !== 'edge', `A rim 1.5 mm under a lid is not picked through it (${JSON.stringify(lidPick)})`);
+  // exact edge length (the drawn polyline runs short on a curve)
+  const elen = await p.evaluate(() => { const L = StreamLine, o = L.S.doc.objects.filter(o => o.shape).at(-1), e = o.brep.edges.find(e => e.type === 'CIRCLE' && !e.seam);
+    return { exact: L.K.edgeLength(o.shape, e.i), poly: e.len }; });
+  check(Math.abs(elen.exact - 20 * Math.PI) < 1e-6 && elen.poly < elen.exact, `Edges know their exact length (${elen.exact.toFixed(6)} vs drawn ${elen.poly.toFixed(6)}; 2π·10 = ${(20 * Math.PI).toFixed(6)})`);
+  // a press fit (Ø6.1 pin in a Ø6 hole) overlaps thinly: slight; two blocks 2 mm into each other: not
+  const intf = await p.evaluate(async XY0 => { const L = StreamLine, F = L.F, ids = [];
+    const body = (name, ents, pt, d) => { L.runOp(F.sketchOpNew(name, XY0, null, k => ents.forEach(e => F.addEntity(k, e)))); L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt }], distance: d, mode: 'new', target: null }); ids.push(L.S.doc.objects.filter(o => o.shape).at(-1).id); };
+    body('blk', [{ t: 'rect', x: 83000, y: -10, w: 20, h: 20 }, { t: 'circle', c: [83010, 0], r: 3 }], [83001, -9], 10);
+    body('pin', [{ t: 'circle', c: [83010, 0], r: 3.05 }], [83010, 0], 10);
+    body('b1', [{ t: 'rect', x: 83100, y: 0, w: 10, h: 10 }], [83105, 5], 10);
+    body('b2', [{ t: 'rect', x: 83108, y: 0, w: 10, h: 10 }], [83115, 5], 10);
+    L.S.ed.sketch = null; const r = await L.checkInterference(ids.map(id => L.S.doc.objects.find(o => o.id === id)));
+    document.querySelector('#scrim')?.click(); L.S.ed.selected = new Set(); L.refresh();
+    return r.map(x => ({ v: +x.v.toFixed(2), t: +x.t.toFixed(3), slight: x.slight })); }, XYs(0));
+  check(intf.length === 2 && intf[0].slight && !intf[1].slight, `A thin overlap (a press fit) is "slight", a real clash is not (${JSON.stringify(intf)})`);
+  // Finish Sketch: drawn while zoomed in on a detail, a Ø200 disc is framed afterwards (the old view would hide it)
+  await frame([84000, -2, 0], [84004, 2, 0]); await p.waitForTimeout(400);
+  const fin = await p.evaluate(async XY0 => { const L = StreamLine, F = L.F;
+    L.sketchOn({ planeDef: { ...XY0, label: 'XY' } }); await new Promise(r => setTimeout(r, 500));
+    const k = L.SK.sketchById(L.S.ed.editingSketch); L.runOp(F.sketchOp('disc', k.id, s => F.addEntity(s, { t: 'circle', c: [84000, 0], r: 100 })));
+    L.S.ed.tool = 'select'; L.finishSketchEdit(); await new Promise(r => setTimeout(r, 600));
+    return L.view.seenFrom(L.view.saveCam(), [[83900, -100, 0], [84100, -100, 0], [84100, 100, 0], [83900, 100, 0]]); }, XYs(0));
+  check(fin, `After Finish Sketch a profile the old view would hide is framed (${fin})`);
+  // the phone op card: Extrude shows Distance and Operation, the rest behind More
+  const cardA = await p.evaluate(() => { const L = StreamLine, sk = L.S.doc.sketches.at(-1); L.S.ed.profiles = [{ sk: sk.id, pt: [84000, 0] }]; L.runOp(L.F.extrude, { distance: 5 }); return true; });
+  await p.waitForTimeout(500);
+  const card1 = await p.evaluate(() => ({ n: document.querySelectorAll('#lastop .fields > .field').length, more: !!document.querySelector('#lastop .cardmore') }));
+  if (card1.more) { await p.tap('#lastop .cardmore'); await p.waitForTimeout(300); }
+  const card2 = await p.evaluate(() => document.querySelectorAll('#lastop .fields > .field').length);
+  check(cardA && card1.n === 2 && card1.more && card2 === 4, `On a phone the op card shows its first two settings, the rest behind More (${card1.n} → ${card2})`);
+  await closeCard();
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked

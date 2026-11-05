@@ -127,6 +127,7 @@ const ang = (a, b) => Math.atan2(b[1] - a[1], b[0] - a[0]);
 function add(label, ent, post) {
   let made = null;
   editSketch(label, s => { made = F.addEntity(s, JSON.parse(JSON.stringify(ent))); if (post) post(s, made); });
+  if (made) emit('sketchgrew', made); // (a typed circle bigger than the view: the app frames the sketch again)
   return made;
 }
 const autoHV = (s, e) => {
@@ -226,7 +227,7 @@ export function hover(x, y) {
   snapAt(x, y, fromPt()); view.render(); emit('drawcard');
 }
 export function up() {
-  if (st.grip) return gripUp();
+  if (st.grip) return gripUp(); // ('tap': the press never dragged)
   if (!st.press) return;
   const p = st.preview, anchor = st.pressAnchor;
   st.press = null; st.pressAnchor = null;
@@ -291,7 +292,7 @@ function gripDown(x, y) {
   // while a sketch is being edited every point can be dragged directly; otherwise only the selection's
   const ids = S.ed.drawSel.size || S.ed.editingSketch == null ? [...S.ed.drawSel] : s.ents.filter(e => e.t !== 'dim').map(e => e.id);
   for (const id of ids) {
-    const e = SK.entById(s, id); if (!e) continue;
+    const e = SK.entById(s, id); if (!e || e.proj) continue; // (projected geometry is reference: it stays put)
     for (const kp of SK.keyPoints(e)) {
       if (!kp.m) continue;
       const q = view.project(SK.toW(s.plane, kp.p));
@@ -301,7 +302,7 @@ function gripDown(x, y) {
         const def = F.sketchOp('Move point', skId, (sk2, p) => { SK.movePoint(sk2, ref, [p.x, p.y]); }, [{ key: 'x', label: AU, kind: 'len' }, { key: 'y', label: AV, kind: 'len' }]);
         if (!runOp(def, { x: orig[0], y: orig[1] }, { interactive: true })) return false;
         // snap against the sketch as it was, without the entity being dragged (its own moving points would fight the finger)
-        st.grip = { orig, still: { ...s, ents: s.ents.filter(q => q.id !== e.id).map(q => JSON.parse(JSON.stringify(q))) } };
+        st.grip = { orig, x0: x, y0: y, moved: false, still: { ...s, ents: s.ents.filter(q => q.id !== e.id).map(q => JSON.parse(JSON.stringify(q))) } };
         return true;
       }
     }
@@ -309,13 +310,21 @@ function gripDown(x, y) {
   return false;
 }
 function gripMove(x, y) {
+  if (!st.grip.moved && Math.hypot(x - st.grip.x0, y - st.grip.y0) < 6) return; // (not a drag yet)
+  st.grip.moved = true;
   const s = sk(), raw = planePt(x, y), wpp = view.worldPerPixel(SK.toW(s.plane, raw));
   const r = SK.snapPoint(st.grip.still, raw, { pxTol: 20, wpp, from: null, refPts: [], exclude: st.grip.orig, osnap: S.settings.osnap !== false, polar: false, ortho: false });
   st.snap = r; st.preview = r.p;
   updateOp({ x: r.p[0], y: r.p[1] });
   view.render();
 }
-function gripUp() { commit(); st.grip = null; st.preview = null; st.snap = null; view.render(); emit('drawcard'); }
+// a press on a point that never dragged is a tap (it picks the curve or label there): no "Move point" step
+function gripUp() {
+  const moved = st.grip?.moved;
+  if (moved) commit(); else cancelOp();
+  st.grip = null; st.preview = null; st.snap = null; view.render(); emit('drawcard');
+  return moved ? undefined : 'tap';
+}
 
 // ---------- taps (select / trim / dim) ----------
 // tapping a dimension label edits it; tapping a constraint glyph removes it
@@ -344,9 +353,12 @@ function glyphTap(s, x, y) {
 export const entName = e => entTitle(e);
 // a press on a dimension label or a constraint glyph is a tap on it, held or not (no precision cursor there)
 export const labelHit = (x, y) => (st.dimLabels || []).some(L => Math.hypot(L.x - x, L.y - y) < 28) || (st.consLabels || []).some(G => Math.hypot(G.x - x, G.y - y) < 18);
+// the dimension label nearest a tap (within 28 px), or null — a glyph nearer than it wins
+const dimLabelAt = (x, y) => { const L = (st.dimLabels || []).map(L => ({ L, d: Math.hypot(L.x - x, L.y - y) })).filter(q => q.d < 28).sort((a, b) => a.d - b.d)[0]; if (!L) return null;
+  const G = (st.consLabels || []).some(g => Math.hypot(g.x - x, g.y - y) < Math.min(18, L.d)); return G ? null : L.L; };
 export function tapLabel(x, y, glyphs = true) {
   const s = sk(); if (!s || s.pending) return false;
-  for (const L of st.dimLabels || []) if (Math.hypot(L.x - x, L.y - y) < 28) { editDim(L.dim); return true; }
+  const L = dimLabelAt(x, y); if (L) { editDim(L.dim); return true; }
   return glyphs && glyphTap(s, x, y);
 }
 // the app supplies a picker for round edges of exact solids (Inquiry → Radius on a hole rim)
@@ -363,7 +375,7 @@ export function tap(x, y) {
   const wpp = view.worldPerPixel(SK.toW(s.plane, raw));
   if (t === 'select') {
     // dimension labels, then constraint glyphs
-    for (const L of st.dimLabels || []) if (Math.hypot(L.x - x, L.y - y) < 28) { editDim(L.dim); return; }
+    const L = dimLabelAt(x, y); if (L) { editDim(L.dim); return; }
     if (glyphTap(s, x, y)) return;
     const e = SK.pickEntity(s, raw, 16 * wpp);
     if (e) { if (S.ed.multi) { S.ed.drawSel.has(e.id) ? S.ed.drawSel.delete(e.id) : S.ed.drawSel.add(e.id); } else S.ed.drawSel = new Set([e.id]); }
@@ -456,7 +468,7 @@ export function constrain(t) {
   else if (t === 'fix') { if (!ents.length) return toast('Select entities to fix'); add = ents.filter(e => e.t !== 'dim').map(e => ({ t, a: e.id, v: fixValuesOf(e) })); }
   const ids = add;
   const ok = runOp(F.sketchOp(`Constrain ${SK.CONS_LABEL[t]}`, s.id, k => editAndSolve(k, kk => { kk.cons = kk.cons || []; for (const c of ids) kk.cons.push({ id: ++kk.nextEnt, ...c }); })));
-  if (ok) toast(`${SK.CONS_LABEL[t]} applied · ${dofText()}`);
+  if (ok) toast(`${CONS_NAMES[t] || 'Constraint'} applied · ${dofText()}`);
 }
 import { fixValues as fixValuesOf } from './constraints.js';
 let dofCache = { k: null, v: 0 };
@@ -842,25 +854,48 @@ function renderSketches() {
   st.dimLabels = []; st.consLabels = []; // (a hidden sketch keeps no tappable labels)
   // (in the studio a sketch's dimensions and constraints show only while it is open, as in Fusion)
   if ((ws === 'draw' || (stu && S.ed.editingSketch === act?.id)) && act && !act.pending && isShown(act)) {
+    // dimension values and constraint glyphs, laid out on screen so none sits on another (dimensions of a long part
+    // came out in one row on top of each other, and glyphs piled up where curves' middles meet)
+    const labs = [];
     for (const d of act.ents) if (d.t === 'dim') {
       const g = dimGeom(act, d); if (!g) continue;
-      const w = SK.toW(act.plane, g.mid); view.label(w, g.text, 'dim');
-      const q = view.project(w); st.dimLabels.push({ dim: d, x: q.x, y: q.y - 14 });
+      const q = view.project(SK.toW(act.plane, g.mid)); if (!q.front) continue;
+      labs.push({ dim: d, text: g.text, cls: 'dim', x: q.x, y: q.y - 16, w: g.text.length * 7.3 + 18, h: 24 });
     }
-    st.consLabels = [];
     const seen = new Map();
     for (const c of act.cons || []) {
       const e = SK.entById(act, c.a); if (!e) continue;
       const kp = SK.keyPoints(e), anchor = (kp.find(q => q.k === 'mid' || q.k === 'c' || q.k === 'ctr') || kp[0]).p;
       const n = seen.get(e.id) || 0; seen.set(e.id, n + 1);
-      const w = SK.toW(act.plane, anchor), q = view.project(w);
-      const lab = SK.CONS_LABEL[c.t] + (c.b != null ? '' : '');
-      view.labelAt(q.x + 14 + n * 20, q.y + 16, lab, 'cons' + (consSel && consSel.cid === c.id && consSel.sk === act.id ? ' on' : ''));
-      st.consLabels.push({ c, x: q.x + 14 + n * 20, y: q.y + 16 });
+      const q = view.project(SK.toW(act.plane, anchor)); if (!q.front) continue;
+      labs.push({ c, text: SK.CONS_LABEL[c.t], cls: 'cons' + (consSel && consSel.cid === c.id && consSel.sk === act.id ? ' on' : ''), x: q.x + 14 + n * 20, y: q.y + 16, w: 22, h: 20 });
+    }
+    spreadLabels(labs);
+    for (const L of labs) {
+      view.labelAt(L.x, L.y, L.text, L.cls);
+      if (L.dim) st.dimLabels.push({ dim: L.dim, x: L.x, y: L.y }); else st.consLabels.push({ c: L.c, x: L.x, y: L.y });
     }
     if (stu) clearGroup(previewGroup); else drawAxes(act);
   } else clearGroup(previewGroup);
   drawPreview(act);
+}
+// nudge screen labels apart (each at most 64 px from where it belongs): pairs that overlap are pushed apart along
+// the direction they overlap least in, a few rounds
+function spreadLabels(labs) {
+  const home = labs.map(L => [L.x, L.y]), pad = 3;
+  for (let pass = 0; pass < 24; pass++) {
+    let moved = false;
+    for (let i = 0; i < labs.length; i++) for (let j = i + 1; j < labs.length; j++) {
+      const A = labs[i], B = labs[j];
+      const ox = (A.w + B.w) / 2 + pad - Math.abs(A.x - B.x), oy = (A.h + B.h) / 2 + pad - Math.abs(A.y - B.y);
+      if (ox <= 0 || oy <= 0) continue;
+      moved = true;
+      if (oy <= ox) { const s = (A.y < B.y || (A.y === B.y && i < j) ? -1 : 1) * oy / 2; A.y += s; B.y -= s; }
+      else { const s = (A.x < B.x ? -1 : 1) * ox / 2; A.x += s; B.x -= s; }
+    }
+    labs.forEach((L, k) => { const dx = L.x - home[k][0], dy = L.y - home[k][1], d = Math.hypot(dx, dy); if (d > 64) { L.x = home[k][0] + dx * 64 / d; L.y = home[k][1] + dy * 64 / d; } });
+    if (!moved) break;
+  }
 }
 function clearGroup(g) { g.traverse(o => { if (o !== g) { o.geometry && o.geometry.dispose(); o.material && o.material.dispose(); } }); g.clear(); }
 function drawAxes(s) {
