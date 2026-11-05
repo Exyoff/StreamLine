@@ -29,8 +29,20 @@ const DOC_KEY = 'streamline.doc.v1';
 // iOS Safari: its bottom toolbar can cover the bottom of the page (the layout viewport runs underneath it). Measure
 // the part of the window that is really visible and lift the bottom controls by what is hidden (--vvb, added to
 // the safe-area inset). Not while typing: the on-screen keyboard is not a bar to dodge.
+// Installed on the Home Screen (standalone), iOS can lay the page out shorter than the screen (by about the status
+// bar's height) and leave a black bar below it: size the page to the whole screen there (--fullH).
+const standalone = () => !!navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+function fitStandalone() {
+  const de = document.documentElement;
+  if (!standalone()) { de.style.removeProperty('--fullH'); return; }
+  const portrait = innerHeight >= innerWidth, sh = portrait ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
+  const gap = sh - innerHeight;
+  if (gap > 0 && gap < 140) de.style.setProperty('--fullH', sh + 'px'); else de.style.removeProperty('--fullH');
+}
 function fitVisibleViewport() {
+  fitStandalone();
   const vv = window.visualViewport; if (!vv) return;
+  if (standalone()) { document.documentElement.style.setProperty('--vvb', '0px'); return; } // (no Safari toolbar there)
   const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || '');
   const hidden = typing || vv.scale > 1.01 ? 0 : Math.max(0, Math.round(document.documentElement.clientHeight - vv.height - vv.offsetTop));
   document.documentElement.style.setProperty('--vvb', Math.min(hidden, 140) + 'px');
@@ -38,6 +50,7 @@ function fitVisibleViewport() {
 window.visualViewport?.addEventListener('resize', fitVisibleViewport);
 window.visualViewport?.addEventListener('scroll', fitVisibleViewport);
 window.addEventListener('orientationchange', () => setTimeout(fitVisibleViewport, 300));
+window.addEventListener('resize', fitVisibleViewport);
 fitVisibleViewport();
 const AXC = ['ax-x', 'ax-y', 'ax-z'];
 
