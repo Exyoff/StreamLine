@@ -297,7 +297,8 @@ function gripDown(x, y) {
       const q = view.project(SK.toW(s.plane, kp.p));
       if (Math.hypot(q.x - x, q.y - y) < 22) {
         const ref = { e: e.id, k: kp.k }, orig = kp.p.slice(), skId = s.id;
-        const def = F.sketchOp('Move point', skId, (sk2, p) => { SK.movePoint(sk2, ref, [p.x, p.y]); }, [{ key: 'x', label: 'X', kind: 'len' }, { key: 'y', label: 'Y', kind: 'len' }]);
+        const [AU, AV] = axisNames(s.plane); // (on an XZ sketch the point's coordinates are X and Z)
+        const def = F.sketchOp('Move point', skId, (sk2, p) => { SK.movePoint(sk2, ref, [p.x, p.y]); }, [{ key: 'x', label: AU, kind: 'len' }, { key: 'y', label: AV, kind: 'len' }]);
         if (!runOp(def, { x: orig[0], y: orig[1] }, { interactive: true })) return false;
         // snap against the sketch as it was, without the entity being dragged (its own moving points would fight the finger)
         st.grip = { orig, still: { ...s, ents: s.ents.filter(q => q.id !== e.id).map(q => JSON.parse(JSON.stringify(q))) } };

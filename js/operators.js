@@ -120,6 +120,8 @@ export const transform = {
   prepare(p) {
     if (!hasSelection()) return 'Nothing selected';
     p.pivot ??= computePivot();
+    // (the pivot can be typed on the card: turn a clip about the fan's axis, not about its own middle)
+    if (p.pivot && p.mode !== 'move') [p.px, p.py, p.pz] = p.pivot.map((v, i) => [p.px, p.py, p.pz][i] ?? +v);
     p._edit = S.ed.mode === 'edit';
     // a part on a round mate can turn about that axis exactly (a hinge, a fan on its tilted shaft)
     if (p.mode === 'rotate' && p._mateAx === undefined) { const objs = selectedObjs(); p._mateAx = (objs.length === 1 && axisHook?.(objs[0])) || null; }
@@ -129,10 +131,12 @@ export const transform = {
   touch: p => (p._sub ? { ids: [p._sub.obj], mesh: true } : p._edit ? { ids: [S.ed.active], mesh: true } : { ids: [...S.ed.selected], mesh: false }),
   fields(p) {
     if (p.mode === 'move') return xyz();
-    if (p.mode === 'rotate') return [{ key: 'axis', label: 'Axis', kind: 'choice', options: [['x', 'X'], ['y', 'Y'], ['z', 'Z'], ...(p._mateAx ? [['m', 'Mate axis']] : [])] }, { key: 'angle', label: 'Angle', kind: 'ang' }];
-    return [{ key: 'sx', label: 'X', kind: 'num' }, { key: 'sy', label: 'Y', kind: 'num' }, { key: 'sz', label: 'Z', kind: 'num' }];
+    const pivot = p.px != null && !(p.mode === 'rotate' && p.axis === 'm') ? [{ key: 'px', label: 'Pivot X', kind: 'len' }, { key: 'py', label: 'Pivot Y', kind: 'len' }, { key: 'pz', label: 'Pivot Z', kind: 'len' }] : [];
+    if (p.mode === 'rotate') return [{ key: 'axis', label: 'Axis', kind: 'choice', options: [['x', 'X'], ['y', 'Y'], ['z', 'Z'], ...(p._mateAx ? [['m', 'Mate axis']] : [])] }, { key: 'angle', label: 'Angle', kind: 'ang' }, ...pivot];
+    return [{ key: 'sx', label: 'X', kind: 'num' }, { key: 'sy', label: 'Y', kind: 'num' }, { key: 'sz', label: 'Z', kind: 'num' }, ...pivot];
   },
   apply(p) {
+    if (p.px != null && p.mode !== 'move') p.pivot = [p.px, p.py, p.pz];
     const pv = p.axis === 'm' && p._mateAx ? p._mateAx.c : p.pivot;
     let fn;
     let R = null;

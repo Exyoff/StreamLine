@@ -385,7 +385,7 @@ export const bodyBoolean = {
       const res = guard(() => {
         const locals = objs.map(o => K.toLocal(K.worldShape(o), t).clone());
         // many cutters (gear teeth, vents): one cut with all of them is much faster than one cut each
-        if (p.kind === 'subtract' && locals.length > 1) { try { const r = t.shape.cut(K.compound(locals)); if (!K.isEmpty(r)) return r; } catch (e) { /* one by one */ } }
+        if (p.kind === 'subtract' && locals.length > 1) { try { const tc = K.compound(locals), r = t.shape.cut(tc); if (!K.isEmpty(r)) { K.checkBoolean('cut', t.shape, tc, r); return r; } } catch (e) { /* one by one */ } }
         let s = t.shape; for (const l of locals) s = K.boolean(p.kind, s, l); return s;
       }, 'Boolean failed');
       if (typeof res === 'string') return res;
@@ -798,6 +798,9 @@ export const draftOp = {
     p.faces ??= JSON.parse(JSON.stringify(S.ed.faces || []));
     if (!p.faces.length) return 'Select the side faces to draft (Face mode)';
     p.obj = p.faces[0].obj; p.faces = p.faces.filter(f => f.obj === p.obj);
+    // a pull along a picked face's normal has nothing to tilt: start along the walls instead (the card can change it)
+    const ns = p.faces.filter(f => f.n).map(f => M.norm(f.n));
+    if (ns.some(n => Math.abs(M.dot(n, AX[p.pull])) > 0.99)) p.pull = ['z', 'y', 'x'].map(k => [k, Math.max(...ns.map(n => Math.abs(M.dot(n, AX[k]))))]).sort((a, b) => a[1] - b[1])[0][0];
     if (p.neutral == null) draftNeutral(p);
   },
   touch: p => ({ ids: [p.obj], mesh: true }),
@@ -922,7 +925,9 @@ function faceCentre(o, f, tapW, strict) {
     const ca = K.circleAxisOf(hit.f);
     if (ca) {
       const cw = xf.toW(ca.c);
-      if (strict || ca.whole || M.dist(cw, tapW) < ca.R * 0.6) return { c: cw, how: 'circle' };
+      // a small round face (a boss, a screw head) is centred wherever it is tapped; on a big one (a Ø200 base) only a
+      // tap near its middle is — a hole 50 mm off-centre stays where it was tapped
+      if (strict || (ca.whole && ca.R <= 15) || M.dist(cw, tapW) < Math.min(ca.R * 0.6, Math.max(ca.R * 0.15, 5))) return { c: cw, how: 'circle' };
     }
     const c0 = hit.f.center, c = typeof c0 === 'function' ? c0() : c0, cw = xf.toW([c.x, c.y, c.z]);
     const b = hit.f.boundingBox.bounds, dims = [0, 1, 2].map(k => b[1][k] - b[0][k]).sort((a, b2) => a - b2), inPlane = dims[1] || dims[2];

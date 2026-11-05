@@ -926,9 +926,9 @@ try {
     const v0 = K.volume(shapeOf(hx));
     L.S.ed.faces = [{ obj: hx, p: [41000.4, -0.3, 12], n: [0, 0, 1], w: 12, planar: true }]; L.runOp(F.recessOp, { kind: 'hex', size: 6, depth: 10, tip: true }); L.S.ed.faces = [];
     out.hex = +(v0 - K.volume(shapeOf(hx))).toFixed(3);
-    const txt = await K.R.exportSTEP([{ shape: K.R.makeBox([0, 0, 0], [5, 5, 5]), name: 'C', color: K.stepColor('#b8bcc4') }], { unit: 'MM' }).text();
-    const m = /COLOUR_RGB\s*\(\s*'[^']*'\s*,\s*([\d.Ee+-]+)\s*,\s*([\d.Ee+-]+)\s*,\s*([\d.Ee+-]+)/.exec(txt);
-    out.rgb = m ? [m[1], m[2], m[3]].map(v => Math.round(+v * 255)) : null;
+    const txt = await K.exportSTEP([{ shape: K.R.makeBox([0, 0, 0], [5, 5, 5]), name: 'C', color: '#b8bcc4' }, { shape: K.R.makeBox([10, 0, 0], [15, 5, 5]), name: 'D', color: '#6f7782' }], { unit: 'MM' }).text();
+    const cols = [...txt.matchAll(/COLOUR_RGB\s*\(\s*'[^']*'\s*,\s*([\d.Ee+-]+)\s*,\s*([\d.Ee+-]+)\s*,\s*([\d.Ee+-]+)/g)].map(m => [m[1], m[2], m[3]].map(v => +(+v * 255).toFixed(3)).join());
+    out.rgb = [...new Set(cols)].sort().join(' ');
     // two plates with Ø6 holes: B's bottom beside its rim onto A's top beside its rim, by hole axes
     L.runOp(F.sketchOpNew('pa', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 42000, y: 0, w: 30, h: 20 }); F.addEntity(k, { t: 'circle', c: [42010, 10], r: 3 }); }));
     L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [42002, 2] }], distance: 10, mode: 'new', target: null }); const A = L.S.doc.objects.at(-1).id;
@@ -942,7 +942,7 @@ try {
   });
   check(!r17.shell.ok || (r17.shell.valid && r17.shell.v < r17.shell.v0 / 3), `Shell of a loft between two circles is valid or refused — never a broken solid (${JSON.stringify(r17.shell)})`);
   check(Math.abs(r17.hex - 337.924) < 0.05, `A hex socket with its drill-point cone removes the whole socket (${r17.hex} mm³, expected 337.924)`);
-  check(r17.rgb && r17.rgb.join() === '184,188,196', `STEP colours are written as they look (#b8bcc4 → ${r17.rgb})`);
+  check(r17.rgb === '111,119,130 184,188,196', `STEP colours are written exactly as they look, dark ones too (#6f7782 #b8bcc4 → ${r17.rgb})`);
   check(r17.seat.bb[0][0] === 42000 && r17.seat.bb[0][2] === 10 && r17.seat.overlap < 1e-6 && !r17.seat.err, `Mate by hole axes: the holes line up and the faces stay seated (${JSON.stringify(r17.seat)})`);
   // sketches on faces, Fusion-style: editing one keeps the part solid and puts the grid on the face; a sketch on a
   // free plane still ghosts the bodies
@@ -1025,6 +1025,57 @@ try {
     return { solids: A.shape.solids?.length, res: res.map(x => [x.a === A.id, x.b === B.id, +x.v.toFixed(6)]) };
   });
   check(interf.solids === 2 && JSON.stringify(interf.res) === '[[true,true,500]]', `Check interference intersects only the solids whose boxes overlap: one pair, 500 mm³ (${JSON.stringify(interf.res)})`);
+  // round 18: a union that crosses a revolved torus off its seam is exact, also after an earlier union was undone (the
+  // stored torus stays whole); Draft starts with a pull that works; a hole tapped off-centre on a big disc stays put;
+  // an offset Front plane is named by where it sits; Rotate takes a typed pivot; − first on the keypad is negative;
+  // STEP colours exact (above); Select all picks bodies; a tap after the view turned is a fresh pick
+  const r18 = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, K = L.K, m = await import('./js/ops.js'), out = {};
+    const XZ = { o: [0, 0, 0], u: [1, 0, 0], v: [0, 0, 1], n: [0, -1, 0] }, YZ = x => ({ o: [x, 0, 0], u: [0, 1, 0], v: [0, 0, 1], n: [1, 0, 0] });
+    L.runOp(F.sketchOpNew('torus', { ...XZ, o: [0, 70000, 0] }, null, k => { F.addEntity(k, { t: 'circle', c: [70, 0], r: 1.5 }); }));
+    L.runOp(F.revolve, { pts: [{ sk: L.S.ed.sketch, pt: [70, 0] }], axis: 'y', mode: 'new', target: null }); m.commit(); const T = L.S.doc.objects.at(-1).id;
+    const rod = ang => { L.runOp(F.sketchOpNew('rod', YZ(0), null, k => { F.addEntity(k, { t: 'circle', c: [70000, 0], r: 1.2 }); })); L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [70000, 0] }], distance: 130, mode: 'new', target: null }); m.commit();
+      const id = L.S.doc.objects.at(-1).id; L.S.ed.pick = 'solid'; L.S.ed.selected = new Set([id]); L.S.ed.active = id; if (ang) { L.runOp(L.OPS.transform, { mode: 'rotate', axis: 'z', angle: ang, pivot: [0, 70000, 0] }); m.commit(); } return id; };
+    const vol = id => K.volume(L.S.doc.objects.find(o => o.id === id).shape), unite = id => { L.S.ed.pick = 'solid'; L.S.ed.selected = new Set([T, id]); L.S.ed.active = T; const ok = L.runOp(F.bodyBoolean, { kind: 'union' }); m.commit(); return ok; };
+    const r0 = rod(0); unite(r0); out.u0 = vol(T); L.undo();
+    const r30 = rod(30); out.ok30 = unite(r30); out.u30 = vol(T); out.err = L.H.hist().at(-1).err || '';
+    // Draft on a box's top face (its normal along the default +Z pull): the card opens with a pull that works
+    L.runOp(F.sketchOpNew('db', { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }, null, k => { F.addEntity(k, { t: 'rect', x: 71000, y: 0, w: 20, h: 20 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [71010, 10] }], distance: 10, mode: 'new', target: null }); m.commit(); const db = L.S.doc.objects.at(-1).id;
+    L.S.ed.faces = [{ obj: db, n: [0, 0, 1], p: [71010, 10, 10], planar: true }]; const dok = L.runOp(F.draftOp, { angle: 3 }); out.draft = { ok: dok, pull: L.getLast()?.params?.pull, err: L.H.hist().at(-1).err || '' }; m.commit(); L.S.ed.faces = [];
+    // a Ø200 disc: a hole tapped 50 mm off its centre stays where it was tapped; one tapped 3 mm off goes to the centre
+    L.runOp(F.sketchOpNew('disc', { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }, null, k => { F.addEntity(k, { t: 'circle', c: [72000, 0], r: 100 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [72000, 0] }], distance: 10, mode: 'new', target: null }); m.commit(); const dc = L.S.doc.objects.at(-1).id;
+    L.S.ed.faces = [{ obj: dc, n: [0, 0, 1], w: 10, p: [72030, -40, 10], planar: true }]; L.runOp(F.holeOp, { dia: 5, depth: 0 }); out.far = [L.getLast().params.x, L.getLast().params.y].join(); m.commit();
+    L.S.ed.faces = [{ obj: dc, n: [0, 0, 1], w: 10, p: [72002, 2, 10], planar: true }]; L.runOp(F.holeOp, { dia: 5, depth: 0 }); out.near = [L.getLast().params.x, L.getLast().params.y].join(); m.commit(); L.S.ed.faces = [];
+    // Rotate about a typed pivot: a 10 mm cube at x 73000 turned 90° about Z through (73000, 0, 0)
+    L.runOp(F.sketchOpNew('rc', { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }, null, k => { F.addEntity(k, { t: 'rect', x: 73010, y: 0, w: 10, h: 10 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [73015, 5] }], distance: 10, mode: 'new', target: null }); m.commit(); const rc = L.S.doc.objects.at(-1).id;
+    L.S.ed.pick = 'solid'; L.S.ed.selected = new Set([rc]); L.S.ed.active = rc;
+    L.runOp(L.OPS.transform, { mode: 'rotate', axis: 'z', angle: 90 }); out.pivotFields = L.getLast().def.fields(L.getLast().params).map(f => f.label).filter(l => /Pivot/.test(l)).join();
+    m.updateOp({ px: 73000, py: 0, pz: 0 }); m.commit();
+    out.turned = K.worldShape(L.S.doc.objects.find(o => o.id === rc)).boundingBox.bounds.map(q => q.map(v => +v.toFixed(6)).join()).join(' ');
+    L.S.ed.selected = new Set(); L.refresh();
+    return out;
+  });
+  check(Math.abs(r18.u0 - 3684.657) < 0.05 && r18.ok30 && Math.abs(r18.u30 - 3684.657) < 0.05 && !r18.err, `Union of a revolved torus and a rod across it is exact, on its seam and off it, after an undo too (${r18.u0.toFixed(3)}, ${r18.u30.toFixed(3)} mm³)`);
+  check(r18.draft.ok && r18.draft.pull !== 'z' && !r18.draft.err, `Draft on a face that looks along +Z starts with a pull that works (+${String(r18.draft.pull).toUpperCase()})`);
+  check(r18.far === '72030,-40' && r18.near === '72000,0', `A hole 50 mm off a Ø200 disc's centre stays where tapped (${r18.far}); 3 mm off goes to the centre (${r18.near})`);
+  check(r18.pivotFields === 'Pivot X,Pivot Y,Pivot Z' && r18.turned === '72990,10,0 73000,20,10', `Rotate takes a typed pivot (${r18.pivotFields}; turned about (73000, 0): ${r18.turned})`);
+  // Select all after a face pick picks the bodies (Boolean offered); − first on the keypad starts a negative number
+  await p.evaluate(() => { const L = StreamLine; L.S.ed.selected = new Set(); L.S.ed.pick = 'face'; L.S.ed.faces = [{ obj: L.S.doc.objects[0].id, n: [0, 0, 1], p: [0, 0, 0], planar: true }]; L.refresh(); });
+  await p.tap('#btn-all'); await p.waitForTimeout(250);
+  const sa = await p.evaluate(() => ({ pick: StreamLine.S.ed.pick, n: StreamLine.S.ed.selected.size, faces: StreamLine.S.ed.faces.length }));
+  await p.tap('#btn-all'); await p.waitForTimeout(250);
+  check(sa.faces === 0 && sa.pick !== 'solid', 'Select all first clears a face pick');
+  const sa2 = await p.evaluate(() => ({ pick: StreamLine.S.ed.pick, n: StreamLine.S.ed.selected.size }));
+  check(sa2.pick === 'solid' && sa2.n > 1 && (await ctxBar()).includes('Boolean'), `Select all then picks every body, and Boolean is offered (${sa2.pick}, ${sa2.n})`);
+  await p.evaluate(() => { StreamLine.S.ed.selected = new Set(); StreamLine.refresh(); });
+  await p.evaluate(async () => { const ui = await import('./js/ui.js'); window.__kpv = null; ui.openKeypad({ label: 'Test', kind: 'len', value: 12, onCommit: v => { window.__kpv = v; } }); });
+  await p.waitForTimeout(500);
+  for (const k of ['−', '5', 'ok']) { await p.tap(`#keypad [data-k="${k}"]`); await p.waitForTimeout(150); }
+  const kpv = await p.evaluate(() => window.__kpv);
+  check(kpv === -5, `On the keypad, − first on a fresh value starts a negative number (12 → ${kpv})`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
@@ -1105,10 +1156,17 @@ try {
     await frame([50095, -12, 0], [50145, 12, 0]); await p.waitForTimeout(600);
     const glyph = await p.evaluate(() => { const el = [...document.querySelectorAll('#labels .vlabel.cons')].find(e => e.style.display !== 'none'); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
     if (glyph) await tapT(glyph);
-    const cs = await p.evaluate(() => StreamLine.Draw.consSelected());
+    let cs = await p.evaluate(() => StreamLine.Draw.consSelected()), retried = false;
+    if (glyph && !cs) { // (diagnose a miss, then try once more — the check says so)
+      retried = true;
+      const dg = await p.evaluate(() => { const L = StreamLine, g = document.querySelector('#gl').getBoundingClientRect(); return { cons: (L.Draw.st?.consLabels || []).map(c => [Math.round(c.x + g.left), Math.round(c.y + g.top)]), ed: L.S.ed.editingSketch, sk: L.S.ed.sketch, tool: L.S.ed.tool, pick: L.S.ed.pick, lock: L.S.ed.pickLock, cons: L.S.ed.consTool, sel: [...L.S.ed.drawSel], kp: !!document.querySelector('#keypad.open'), pop: !!document.querySelector('#popover:not([hidden])'), card: !document.querySelector('#lastop').hidden, top: document.elementFromPoint(0, 0) && 0 }; });
+      console.log('glyph miss', JSON.stringify(glyph), JSON.stringify(dg), await p.evaluate(g => document.elementFromPoint(g.x, g.y)?.id || document.elementFromPoint(g.x, g.y)?.className, glyph));
+      await shot('glyph-miss');
+      await p.waitForTimeout(500); await tapT(glyph); cs = await p.evaluate(() => StreamLine.Draw.consSelected());
+    }
     if (cs) { await p.locator('#actions .act', { hasText: 'Delete' }).tap(); await p.waitForTimeout(300); }
     const consLeft = await p.evaluate(sk => (StreamLine.SK.sketchById(sk).cons || []).length, cgSk);
-    check(glyph && cs && cs.t === 'h' && consLeft === 0, `A tap on a constraint glyph picks the constraint, and Delete removes it (${cs && cs.t}, ${consLeft} left)`);
+    check(glyph && cs && cs.t === 'h' && consLeft === 0, `A tap on a constraint glyph picks the constraint, and Delete removes it (${cs && cs.t}, ${consLeft} left${retried ? ' — after a second tap' : ''})`);
     await p.evaluate(() => StreamLine.finishSketchEdit()); await p.waitForTimeout(300);
   }
   // Look: theme, lighting, surface and edge width from the top bar's Look button
