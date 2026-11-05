@@ -1289,7 +1289,8 @@ function bindEvents() {
   $('#btn-history').onclick = () => openPanel('history');
   $('#btn-browser').onclick = () => toggleBrowser();
   $('#btn-finish').onclick = () => finishSketchEdit();
-  $('#btn-home').onclick = () => { view.setView('iso'); setTimeout(() => view.frame(S.doc.objects.filter(isShown).flatMap(worldVerts).concat(allSketchPoints())), 240); };
+  // (inside a sketch Home looks straight at it again — Fusion's Look At — instead of the 3D view)
+  $('#btn-home').onclick = () => { if (sketching()) return enterSketchView(SK.sketchById(S.ed.editingSketch)); view.setView('iso'); setTimeout(() => view.frame(S.doc.objects.filter(isShown).flatMap(worldVerts).concat(allSketchPoints())), 240); };
   initZoomBar(); initCursor();
   $('#browser-close').onclick = () => toggleBrowser(false);
   $('#sheet-close').onclick = () => toggleSheet(false);
@@ -2214,7 +2215,7 @@ OPS.setPivotHook(o => {
   return { c: r.c, d: r.d[k] < 0 ? M.mul(r.d, -1) : r.d };
 });
 window.StreamLine = { gizmoPartAt, K, S, view, OPS, F, SK, Draw, Cmd, runOp, undo, redo, getLast, M, serialize, setWorkspace, H, BR, isShown, addSketchedPrim, refresh: () => selectionChanged(),
-  checkInterference: async objs => { await checkInterference(objs); return lastInterference; },
+  checkInterference: async objs => { await checkInterference(objs); return lastInterference; }, valueHit,
   sketching, startCreateSketch, finishSketchEdit, activateSketch, sketchOn: params => { S.ed.planePick = null; createSketchOn(params); return S.ed.editingSketch; } };
 
 // Primitives are built the parametric way: a sketch on a base plane plus an Extrude / Revolve,
