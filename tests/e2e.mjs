@@ -551,6 +551,18 @@ try {
     return [v0, (await LIB.get(id)).version];
   });
   check(sigv[1] === sigv[0] + 1, `A part whose feature moved (same volume and area) gets a new version, so Sync sees it (${sigv.join(' → ')})`);
+  // an inserted assembly shows each of its parts in its own colour (round 18: the Head was all one colour)
+  const pcol = await p.evaluate(async () => {
+    const L = StreamLine, PJ = await import('./js/projects.js');
+    await PJ.newProject(); L.addSketchedPrim('cube'); L.addSketchedPrim('cylinder');
+    const [a, b] = L.S.doc.objects.filter(o => o.shape); a.color = '#d04040'; b.color = '#40a040'; b.loc = [40, 0, 0];
+    await PJ.saveNow(); const src = L.S.doc.project.id;
+    await PJ.newProject(); await PJ.insertProject(src);
+    const c = L.S.doc.objects.find(o => o.link), fc = L.view.faceColorsOf(c), out = { faces: c?.brep?.faces.length, cols: fc ? [...new Set(fc)].sort().join() : null };
+    await PJ.newProject(); L.addSketchedPrim('cube'); // (the tests after this one carry on in a plain part, as before)
+    return out;
+  });
+  check(pcol.cols === '#40a040,#d04040', `An inserted assembly shows each part in its own colour (${pcol.cols}, ${pcol.faces} faces)`);
   // text → Outline → letters' filled areas selected → Extrude
   const txt = await p.evaluate(async () => {
     const L = StreamLine;

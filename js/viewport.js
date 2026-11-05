@@ -407,6 +407,9 @@ function buildSolidVisual(o) {
   const t = o.brep, m = o.mesh, base = new THREE.Color(o.color);
   const pos = new Float32Array(m.v.length * 3), nor = new Float32Array(m.v.length * 3), col = new Float32Array(m.v.length * 3);
   m.v.forEach((q, i) => { pos.set(q, i * 3); nor.set(m.n[i] || [0, 0, 1], i * 3); col.set([base.r, base.g, base.b], i * 3); });
+  // an inserted assembly: each part in its own colour (the app maps each B-rep face to its part)
+  const fcol = view.faceColorsOf?.(o);
+  if (fcol && o.faceOf) { const cc = new Map(); m.f.forEach((f, fi) => { const hex = fcol[o.faceOf[fi]]; if (!hex) return; let c = cc.get(hex); if (!c) cc.set(hex, c = new THREE.Color(hex)); for (const vi of f) col.set([c.r, c.g, c.b], vi * 3); }); }
   const idx = new Uint32Array(m.f.length * 3); m.f.forEach((f, i) => idx.set(f, i * 3));
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, 3));

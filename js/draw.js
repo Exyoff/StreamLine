@@ -806,7 +806,7 @@ function renderSketches() {
         if (stu && S.ed.editingSketch === s.id) {
           const pf = [], pc = [];
           for (const e of s.ents) {
-            if (e.t === 'dim' || e.t === 'text' || e.t === 'hatch' || e.construction) continue;
+            if (e.t === 'dim' || e.t === 'text' || e.t === 'hatch' || e.construction || e.glyph) continue;
             const fixed = fixedSet.has(e.id), c3 = fixed ? C.fixed : C.line;
             for (const kp of SK.keyPoints(e)) if (kp.m || kp.center) { pf.push(...SK.toW(s.plane, kp.p)); pc.push(c3.r, c3.g, c3.b); }
           }
@@ -1024,7 +1024,8 @@ export async function outlineText() {
   runOp(F.sketchOp('Outline text', s.id, k => {
     for (const { e, loops } of plan) {
       k.ents = k.ents.filter(x => x.id !== e.id);
-      for (const L of loops) for (let i = 0; i < L.length; i++) F.addEntity(k, { t: 'line', a: L[i].slice(), b: L[(i + 1) % L.length].slice() });
+      // (marked as letter outlines: hundreds of short lines get no end-point squares, which made the letters a blob)
+      for (const L of loops) for (let i = 0; i < L.length; i++) F.addEntity(k, { t: 'line', a: L[i].slice(), b: L[(i + 1) % L.length].slice(), glyph: true });
     }
   }));
   S.ed.drawSel = new Set(); S.ed.faces = []; S.ed.edges = [];
