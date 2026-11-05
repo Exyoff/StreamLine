@@ -92,6 +92,12 @@ export function deserialize(str) { const s = R.deserializeShape(str); serCache.s
 
 // ---------- measures ----------
 export const volume = s => R.measureVolume(s);
+// an sRGB colour as the linear-RGB hex OpenCascade's STEP writer expects (it converts back to sRGB in the file)
+export function stepColor(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || ''); if (!m) return hex;
+  const lin = c => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  return '#' + [0, 2, 4].map(i => Math.round(lin(parseInt(m[1].slice(i, i + 2), 16) / 255) * 255).toString(16).padStart(2, '0')).join('');
+}
 export const area = s => R.measureArea(s);
 // ---------- STEP import: one body per solid, with the file's part names and colours ----------
 // (this OpenCascade build has no XCAF reader, so names and colours are read from the STEP text: PRODUCT names in
@@ -104,8 +110,8 @@ export function stepParts(shape, text) {
   const refs = a => [...a.matchAll(/#(\d+)/g)].map(x => +x[1]);
   const products = [...ent].filter(([, e]) => e.t === 'PRODUCT').map(([id, e]) => ({ id, name: (e.a.match(/^\s*'((?:[^']|'')*)'/) || [])[1]?.replace(/''/g, "'") || null }));
   const colorOf = new Map();
-  const lin = c => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4); // STEP stores sRGB; the app's colours went out linear
-  const hex = rgb => '#' + rgb.map(c => Math.round(Math.max(0, Math.min(1, lin(c))) * 255).toString(16).padStart(2, '0')).join('');
+  // (STEP stores sRGB, the same as the app's colours: the export hands OpenCascade linear values, which it writes as sRGB)
+  const hex = rgb => '#' + rgb.map(c => Math.round(Math.max(0, Math.min(1, c)) * 255).toString(16).padStart(2, '0')).join('');
   const bfs = (start, stop, maxDepth) => { let level = [start]; const seen = new Set(level); for (let d = 0; d < maxDepth && level.length; d++) { const next = []; for (const id of level) { const e = ent.get(id); if (!e) continue; if (d > 0 && stop(e, id)) return id; for (const r of refs(e.a)) if (!seen.has(r)) { seen.add(r); next.push(r); } } level = next; for (const id of level) { const e = ent.get(id); if (e && stop(e, id)) return id; } } return null; };
   const repOf = new Map(), sdrOf = new Map();
   for (const [id, x] of ent) {
@@ -377,7 +383,7 @@ export function isValid(shape) {
 export function shell(shape, faces, t) {
   const tries = [[false, oc.GeomAbs_JoinType.GeomAbs_Arc], [true, oc.GeomAbs_JoinType.GeomAbs_Intersection], [false, oc.GeomAbs_JoinType.GeomAbs_Intersection], [true, oc.GeomAbs_JoinType.GeomAbs_Arc]];
   const v0 = Math.abs(volume(shape));
-  const sane = r => { if (!r || isEmpty(r)) return false; const v = volume(r); return v > 1e-9 && v < v0 - 1e-9; };
+  const sane = r => { if (!r || isEmpty(r)) return false; const v = volume(r); return v > 1e-9 && v < v0 - 1e-9 && isValid(r); };
   for (const [inter, join] of tries) {
     let b = null, list = null;
     try {

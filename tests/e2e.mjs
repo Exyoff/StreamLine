@@ -679,7 +679,7 @@ try {
   const r13 = await p.evaluate(async () => {
     const L = StreamLine, F = L.F, K = L.K, ops = await import('./js/ops.js'), PJ = await import('./js/projects.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
     await PJ.newProject();
-    const blob = K.R.exportSTEP([{ shape: K.R.makeBox([0, 0, 0], [10, 10, 10]), name: 'Cube', color: '#9fb6cf' }, { shape: K.R.makeBox([20, 0, 0], [24, 4, 4]), name: 'Small one', color: '#c9b79c' }], { unit: 'MM' });
+    const blob = K.R.exportSTEP([{ shape: K.R.makeBox([0, 0, 0], [10, 10, 10]), name: 'Cube', color: K.stepColor('#9fb6cf') }, { shape: K.R.makeBox([20, 0, 0], [24, 4, 4]), name: 'Small one', color: K.stepColor('#c9b79c') }], { unit: 'MM' });
     const txt = await blob.text(), back = await K.R.importSTEP(new Blob([txt])), parts = K.stepParts(back, txt);
     const imp = parts.map(pt => ({ name: pt.name, color: pt.color, v: +K.volume(pt.shape).toFixed(6) }));
     // a shaft: the face bar offers Thread
@@ -877,6 +877,42 @@ try {
   await p.waitForFunction(n => StreamLine.S.doc.objects.length >= n + 3, n16, { timeout: 120000 });
   const names16 = await p.evaluate(() => StreamLine.S.doc.objects.slice(-3).map(o => o.name).join(', '));
   check(names16 === 'Halves, Halves (2), Trigger', `STEP: a part made of two solids keeps its name, and so do the others (${names16})`);
+  // round 17: a shell that would come out invalid (a loft between two circles) says so instead of leaving a broken
+  // solid; a hex socket with its drill-point cone removes the whole socket; STEP colours are written as they look;
+  // Mate by hole axes keeps the tapped faces seated
+  const r17 = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, K = L.K, XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }), out = {};
+    const shapeOf = id => L.S.doc.objects.find(x => x.id === id).shape;
+    L.runOp(F.sketchOpNew('l0', XY(0), null, k => { F.addEntity(k, { t: 'circle', c: [40000, 0], r: 30 }); })); const s0 = L.S.ed.sketch;
+    L.runOp(F.sketchOpNew('l1', XY(50), null, k => { F.addEntity(k, { t: 'circle', c: [40000, 0], r: 42 }); })); const s1 = L.S.ed.sketch;
+    L.runOp(F.loftOp, { pts: [{ sk: s0, pt: [40000, 0] }, { sk: s1, pt: [40000, 0] }], mode: 'new', target: null }); const loft = L.S.doc.objects.at(-1).id;
+    const vl = K.volume(shapeOf(loft));
+    L.S.ed.faces = [{ obj: loft, n: [0, 0, 1], w: 50, p: [40000, 0, 50], planar: true }, { obj: loft, n: [0, 0, -1], w: 0, p: [40000, 0, 0], planar: true }];
+    const ok = L.runOp(F.shellOp, { t: 2 }); L.S.ed.faces = [];
+    out.shell = { ok, valid: K.isValid(shapeOf(loft)), v: +K.volume(shapeOf(loft)).toFixed(3), v0: +vl.toFixed(3) };
+    L.runOp(F.sketchOpNew('hx', XY(0), null, k => { F.addEntity(k, { t: 'circle', c: [41000, 0], r: 9 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [41000, 0] }], distance: 12, mode: 'new', target: null }); const hx = L.S.doc.objects.at(-1).id;
+    const v0 = K.volume(shapeOf(hx));
+    L.S.ed.faces = [{ obj: hx, p: [41000.4, -0.3, 12], n: [0, 0, 1], w: 12, planar: true }]; L.runOp(F.recessOp, { kind: 'hex', size: 6, depth: 10, tip: true }); L.S.ed.faces = [];
+    out.hex = +(v0 - K.volume(shapeOf(hx))).toFixed(3);
+    const txt = await K.R.exportSTEP([{ shape: K.R.makeBox([0, 0, 0], [5, 5, 5]), name: 'C', color: K.stepColor('#b8bcc4') }], { unit: 'MM' }).text();
+    const m = /COLOUR_RGB\s*\(\s*'[^']*'\s*,\s*([\d.Ee+-]+)\s*,\s*([\d.Ee+-]+)\s*,\s*([\d.Ee+-]+)/.exec(txt);
+    out.rgb = m ? [m[1], m[2], m[3]].map(v => Math.round(+v * 255)) : null;
+    // two plates with Ø6 holes: B's bottom beside its rim onto A's top beside its rim, by hole axes
+    L.runOp(F.sketchOpNew('pa', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 42000, y: 0, w: 30, h: 20 }); F.addEntity(k, { t: 'circle', c: [42010, 10], r: 3 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [42002, 2] }], distance: 10, mode: 'new', target: null }); const A = L.S.doc.objects.at(-1).id;
+    L.runOp(F.sketchOpNew('pb', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 42100, y: 0, w: 20, h: 20 }); F.addEntity(k, { t: 'circle', c: [42110, 10], r: 3 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [42102, 2] }], distance: 8, mode: 'new', target: null }); const B = L.S.doc.objects.at(-1).id;
+    L.runOp(F.mateOp, { a: { obj: B, n: [0, 0, -1], p: [42113.5, 10, 0], planar: true }, b: { obj: A, n: [0, 0, 1], p: [42013.5, 10, 10], planar: true }, gap: 0, align: 'face', by: 'axis' });
+    const bb = K.worldShape(L.S.doc.objects.find(x => x.id === B)).boundingBox.bounds.map(q => q.map(v => +v.toFixed(4)));
+    let ov = 0; try { const i = K.worldShape(L.S.doc.objects.find(x => x.id === A)).intersect(K.worldShape(L.S.doc.objects.find(x => x.id === B))); ov = K.isEmpty(i) ? 0 : K.volume(i); } catch (e) {}
+    out.seat = { bb, overlap: +ov.toFixed(4), err: L.H.hist().filter(r => r.op === 'F.mateOp').at(-1).err || '' };
+    return out;
+  });
+  check(!r17.shell.ok || (r17.shell.valid && r17.shell.v < r17.shell.v0 / 3), `Shell of a loft between two circles is valid or refused — never a broken solid (${JSON.stringify(r17.shell)})`);
+  check(Math.abs(r17.hex - 337.924) < 0.05, `A hex socket with its drill-point cone removes the whole socket (${r17.hex} mm³, expected 337.924)`);
+  check(r17.rgb && r17.rgb.join() === '184,188,196', `STEP colours are written as they look (#b8bcc4 → ${r17.rgb})`);
+  check(r17.seat.bb[0][0] === 42000 && r17.seat.bb[0][2] === 10 && r17.seat.overlap < 1e-6 && !r17.seat.err, `Mate by hole axes: the holes line up and the faces stay seated (${JSON.stringify(r17.seat)})`);
   // sketches on faces, Fusion-style: editing one keeps the part solid and puts the grid on the face; a sketch on a
   // free plane still ghosts the bodies
   const skf = await p.evaluate(async () => {

@@ -1770,7 +1770,7 @@ async function exportAs(kind) {
     if (!solids.length) { toast('STEP needs exact solids (imported meshes have none)'); return; }
     // an assembly STEP: one named, coloured part per body (so CAD apps show the part names)
     // (a linked sub-assembly exports its own parts, named "Seat / Slat")
-    try { blob = K.R.exportSTEP(solids.flatMap(o => PJ.partsOf(o)).map(pt => ({ shape: pt.shape(), name: pt.name, color: pt.color })), { unit: 'MM' }); }
+    try { blob = K.R.exportSTEP(solids.flatMap(o => PJ.partsOf(o)).map(pt => ({ shape: pt.shape(), name: pt.name, color: K.stepColor(pt.color) })), { unit: 'MM' }); }
     catch (err) {
       console.warn('assembly STEP failed, writing a plain compound', err);
       try { const shapes = solids.map(o => K.worldShape(o).clone()); blob = (shapes.length === 1 ? shapes[0] : K.R.makeCompound(shapes)).blobSTEP(); }
@@ -1979,7 +1979,7 @@ function planeHere() {
   const pl = planeAt(pt, n, 'on face'); pl.face = { obj: o.id }; // sketches on it belong to that part (Join / Cut, follow it)
   // (a face looking down is seen from below: one of its axes has to run against the model's)
   const flip = ['X', 'Y', 'Z'].flatMap((A, k) => { const e = [0, 0, 0]; e[k] = 1; return M.dot(pl.u, e) < -0.999 ? [`its X is the model's −${A}`] : M.dot(pl.v, e) < -0.999 ? [`its Y is the model's −${A}`] : []; });
-  setDrawPlane(pl, 'Drawing plane set on that face — draw on it, or offset it from the Plane menu' + (flip.length ? ` (seen from outside: ${flip.join(', ')})` : ''));
+  setDrawPlane(pl, 'Drawing plane set on that face — draw on it, or offset it from the Plane menu' + (flip.length ? ' (seen from outside; typed X and Y are still the model’s own)' : ''));
 }
 // pick every sketch curve joined end to end with the picked ones (a slot's two lines and two arcs)
 function chainCurves() {

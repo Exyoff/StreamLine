@@ -288,7 +288,7 @@ export const revolve = {
   prepare(p) {
     const e = prepFeature(p); if (e) return e;
     const sk = SK.sketchById(p.pts[0].sk);
-    const lines = sk ? sk.ents.filter(x => x.t === 'line').sort((a, b) => (b.construction ? 1 : 0) - (a.construction ? 1 : 0)).slice(0, 8) : [];
+    const lines = sk ? sk.ents.filter(x => x.t === 'line').sort((a, b) => (b.construction ? 1 : 0) - (a.construction ? 1 : 0)).slice(0, 16) : [];
     // name each candidate axis by what it looks like: length and direction (↔ along the sketch's X, ↕ along Y)
     p._lines = lines.map(l => { const dx = l.b[0] - l.a[0], dy = l.b[1] - l.a[1], L = Math.hypot(dx, dy), dir = Math.abs(dy) < 1e-9 ? '↔' : Math.abs(dx) < 1e-9 ? '↕' : '⟋';
       return { v: 'l:' + l.id, label: `${l.construction ? '┄ ' : ''}${dir} ${fmtLen(L)}` }; });
@@ -806,7 +806,11 @@ export const draftOp = {
     // a new pull direction moves a neutral plane that was never typed to the part's base along that direction
     if (p._np && p._np !== p.pull && p.neutral === p._nAuto) draftNeutral(p);
     const d = AX[p.pull], x = Math.abs(d[2]) < 0.9 ? M.norm(M.cross([0, 0, 1], d)) : [1, 0, 0];
-    const res = guard(() => o.shape.draft(p.angle, () => ({ find: () => faces, delete() {} }), new R.Plane(M.mul(d, p.neutral), x, d)), 'Draft failed');
+    // draft tilts walls that run along the pull: a face looking along it has nothing to tilt
+    const along = p.faces.find(f => f.n && Math.abs(M.dot(M.norm(f.n), d)) > 0.99);
+    if (along) return `This face looks along the pull direction (+${p.pull.toUpperCase()}) — Draft tilts the side walls that run along it: pick ${['x', 'y', 'z'].filter(k => k !== p.pull).map(k => '+' + k.toUpperCase()).join(' or ')}`;
+    const round = p.faces.some(f => f.planar === false);
+    const res = guard(() => o.shape.draft(p.angle, () => ({ find: () => faces, delete() {} }), new R.Plane(M.mul(d, p.neutral), x, d)), round ? 'Draft failed on a round wall — draw the taper into its profile instead (a revolve, or a loft)' : 'Draft failed');
     if (typeof res === 'string') return res;
     K.setShape(o, res); S.ed.faces = [];
   },
@@ -814,7 +818,7 @@ export const draftOp = {
 
 // ---------- fasteners: thread and hole ----------
 // ISO metric coarse pitches by nominal diameter
-const ISO_PITCH = [[1.6, 0.35], [2, 0.4], [2.5, 0.45], [3, 0.5], [4, 0.7], [5, 0.8], [6, 1], [8, 1.25], [10, 1.5], [12, 1.75], [14, 2], [16, 2], [18, 2.5], [20, 2.5], [24, 3], [30, 3.5], [36, 4], [42, 4.5], [48, 5]];
+const ISO_PITCH = [[1.6, 0.35], [2, 0.4], [2.5, 0.45], [3, 0.5], [4, 0.7], [5, 0.8], [6, 1], [8, 1.25], [10, 1.5], [12, 1.75], [14, 2], [16, 2], [18, 2.5], [20, 2.5], [24, 3], [30, 3.5], [36, 4], [42, 4.5], [48, 5], [52, 5], [56, 5.5], [60, 5.5], [64, 6], [68, 6], [72, 6], [76, 6], [80, 6], [90, 6], [100, 6]];
 const isoPitch = d => ISO_PITCH.reduce((b, x) => (Math.abs(x[0] - d) < Math.abs(b[0] - d) ? x : b))[1];
 const fmtD = v => +v.toFixed(2);
 // a hole drilled at the ISO tap-drill size (D − P, e.g. Ø6.8 for M8) is threaded as that nominal size
@@ -1123,7 +1127,7 @@ export const recessOp = {
       if (typeof tool === 'string') return tool;
       if (p.tip && p.kind !== 'slot') { // a 118° drill-point cone under the socket
         const h = tipR / Math.tan(59 * Math.PI / 180);
-        const cone = guard(() => K.revolveProfile(c, n, fr.a, [[0, p.depth - 0.01], [tipR, p.depth - 0.01], [0, p.depth + h]]), 'Could not make the recess tip');
+        const cone = guard(() => K.revolveProfile(c, n, fr.a, [[0, p.depth], [tipR, p.depth], [0, p.depth + h]]), 'Could not make the recess tip'); // (from the floor exactly: a sliver of overlap spoilt the cut)
         if (typeof cone === 'string') return cone;
         tool = tool.fuse(cone);
       }
@@ -1245,7 +1249,16 @@ function solveMate(p) {
     const tgt = A0.kind === 'plane' ? (p.align === 'flush' || (!p.align && k > 0.9999) ? db : M.mul(db, -1)) : (k >= 0 ? db : M.mul(db, -1));
     if (M.dot(da, tgt) < 0.9999) turnObject(o, da, tgt, A0.kind === 'plane' ? A0.p : A0.c);
   }
+  // Mate by hole axes from two flat faces: a pin through both holes — the axes line up AND the tapped faces stay
+  // seated face to face (the part is turned round if they face the same way), with the gap between them
+  const seat = p.a._by && p.b._by && p.a.ln && p.b.ln;
+  const faceN = f => { const x = xfFor(objById(f.obj)), P = x.toW(f.lp); return { P, n: M.norm(M.sub(x.toW(M.add(f.lp, f.ln)), P)) }; };
+  if (seat) { const A = faceN(p.a), B = faceN(p.b); if (M.dot(A.n, B.n) > -0.9999) turnObject(o, A.n, M.mul(B.n, -1), A.P); }
   const r = mateSolve(p.a, p.b, +p.gap || 0); if (typeof r === 'string') return r;
+  if (seat && r.kind === 'axis') {
+    const A = faceN(p.a), B = faceN(p.b), d = mateGeom(p.b)?.d;
+    if (d) r.v = M.add(M.add(r.v, M.mul(d, M.dot(M.sub(B.P, M.add(A.P, r.v)), d))), M.mul(B.n, +p.gap || 0));
+  }
   if (M.len(r.v) > 1e-12) o.loc = M.add(o.loc, r.v).map(v => (Math.abs(v - Math.round(v * 1e9) / 1e9) < 1e-9 ? Math.round(v * 1e9) / 1e9 : v));
 }
 export const mateOp = {
@@ -1256,6 +1269,8 @@ export const mateOp = {
   // two flat faces each tapped beside a hole's rim can mean either: the faces, or the holes' axes (a pin through both)
   fields: p => {
     const by = mateNearRims(p) ? [{ key: 'by', label: 'Mate by', kind: 'choice', options: [['face', 'Flat faces'], ['axis', 'Hole axes']], wide: true }] : [];
+    if (by.length && p.by == null) p.by = 'face'; // (the choice shows which one is in use)
+    if (p.by === 'axis') return [...by, lenF('gap', 'Gap (− overlaps)')];
     return mateGeom(p.a)?.kind === 'plane' ? [...by, { key: 'align', label: 'Faces', kind: 'choice', options: [['face', 'Face to face'], ['flush', 'Flush']], wide: true }, lenF('gap', 'Gap (− overlaps)')] : by;
   },
   apply(p) {
@@ -1333,6 +1348,7 @@ export const insertComponent = {
     const s = componentShape(p.pid); if (!s) return 'The component’s project data is missing';
     const c = S.doc.components[p.pid];
     const o = newObject(c.name, null, [p.x, p.y, p.z], p._id);
+    if (c.parts?.length === 1 && c.parts[0].color) o.color = c.parts[0].color; // (its own colour, not the next palette one)
     K.setShape(o, s); o.link = { pid: p.pid };
     S.doc.objects.push(o);
     S.ed.selected = new Set([o.id]); S.ed.active = o.id;
