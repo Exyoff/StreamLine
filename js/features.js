@@ -978,7 +978,12 @@ function offFaceCheck(o, face, c, offs, what, quiet) {
       if (K.R.measureDistanceBetween(face, v) > 1e-4 && (offs.length === 1 || K.R.measureDistanceBetween(o.shape, v) > 1e-4)) off++;
     } catch (e) {}
   }
-  if (off === offs.length) return offs.length > 1 ? `None of the ${what}s land on the part — check the spacing and direction` : `The ${what} centre is off the face — check its X / Y / Z`;
+  if (off === offs.length) {
+    // (while a pattern is being edited one field at a time, the steps in between may miss the part: say so but
+    // keep the edit; a rebuild that still misses flags the step red)
+    if (offs.length > 1 && !quiet) { emit('toast', `None of the ${what}s land on the part yet — keep editing the centre, radius or spacing`); return; }
+    return offs.length > 1 ? `None of the ${what}s land on the part — check the spacing and direction` : `The ${what} centre is off the face — check its X / Y / Z`;
+  }
   if (off && !quiet) emit('toast', `${off} of ${offs.length} ${what}s fall outside the part`);
 }
 // how deep a drill of radius r from c along n must go to come out of the material it starts in

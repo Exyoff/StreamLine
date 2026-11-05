@@ -112,11 +112,16 @@ export async function syncComponent(pid) {
   runOp({
     label: () => `Sync ${rec.name}`, noRecord: true, touch: () => 'all',
     apply() {
+      const oldName = (S.doc.components || {})[pid]?.name;
       S.doc.components = { ...(S.doc.components || {}), [pid]: { name: rec.name, version: rec.version, brep: rec.exportBrep, parts: rec.parts || null } };
       const i = H.hist().findIndex(r => r.op === 'F.insertComponent' && r.params?.pid === pid);
       if (i < 0) return 'Component step missing';
       H.invalidate(i); H.regenerate(i);
-      for (const o of S.doc.objects) if (o.link?.pid === pid) o.name = rec.name;
+      // a renamed source renames its copies, keeping their own suffix ("Arm.001"); a name you gave a copy stays
+      if (oldName && oldName !== rec.name) for (const o of S.doc.objects) {
+        if (o.link?.pid !== pid) continue;
+        if (o.name === oldName) o.name = rec.name; else if (o.name.startsWith(oldName + '.')) o.name = rec.name + o.name.slice(oldName.length);
+      }
     },
   });
   toast(`Synced “${rec.name}” to its latest version`);

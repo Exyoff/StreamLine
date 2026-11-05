@@ -490,6 +490,9 @@ export function cardContent() {
   const xyFields = (lab, cb) => h('div', { class: 'fields' },
     field({ label: lab + ' ' + AU, kind: 'len', value: pv() ? pv()[0] : 0, cls: axCls(AU), onCommit: v => cb([v, pv() ? pv()[1] : 0], 0) }),
     field({ label: lab + ' ' + AV, kind: 'len', value: pv() ? pv()[1] : 0, cls: axCls(AV), onCommit: v => cb([st.typed.x ?? (pv() ? pv()[0] : 0), v], 1) }));
+  // Text: tap where it starts, or type the start point here (X then Y)
+  if (t === 'text' && (!st.cmd || st.cmd.stage === 'base')) return h('div', {}, title('Text', 'tap where it starts, or type X and Y'),
+    xyFields('Start', (p, k) => { typedTarget(); if (k === 0) { st.typed.x = p[0]; st.preview = p; emit('drawcard'); view.render(); return; } st.typed = {}; cmdPoint(p); emit('drawcard'); view.render(); }));
   const setStart = (p, k) => { typedTarget(); if (k === 0) { st.typed.x = p[0]; st.preview = p; emit('drawcard'); view.render(); return; } st.start = p; st.preview = p; st.typed = {}; emit('drawcard'); view.render(); };
   if (t === 'select') {
     const ents = [...S.ed.drawSel].map(id => SK.entById(s, id)).filter(Boolean);
