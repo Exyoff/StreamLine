@@ -395,9 +395,9 @@ body:has(#popover:not([hidden])) #toast { opacity: 0; }
   #topbar { gap: 6px; padding-left: calc(var(--sal) + 10px); padding-right: calc(var(--sar) + 10px); }
   /* the op dialog docks at the bottom, above the timeline; the view shifts up to keep the model visible */
   body.ws-model #lastop { top: auto; bottom: calc(var(--bot) + var(--cmdh) + var(--tlh) + 6px); left: calc(var(--sal) + 86px); right: calc(var(--sar) + 10px); width: auto; max-width: none; max-height: 48%; }
-  body.ws-model.has-lastop #vtools-c, body.ws-model.has-lastop #nav { visibility: hidden; }
   body.has-lastop #toast { top: calc(var(--topH) + 52px); }
-  #draw-card { left: calc(var(--sal) + 86px); right: calc(var(--sar) + 10px); width: auto; max-width: none; }
+  /* (the sketch tools' card leaves the zoom column on the right free: in a sketch it is nearly always open) */
+  #draw-card { left: calc(var(--sal) + 86px); right: calc(var(--sar) + 62px); width: auto; max-width: none; }
 }
 @media (max-width: 380px) {
   .circ { width: 42px; height: 42px; }
@@ -501,8 +501,6 @@ body:has(#popover:not([hidden])) #toast { opacity: 0; }
 .hmarker.end::before { background: var(--faint); }
 .btn.small { height: 30px; padding: 0 12px; font-size: 13px; }
 .btn.danger { background: var(--danger); color: #fff; }
-/* phone: view controls step aside while a draw card is open */
-@media (max-width: 500px) { body.has-drawcard #vtools-c, body.has-drawcard #nav { visibility: hidden; } }
 
 /* boot: the CAD kernel loads before the app starts */
 #boot { position: fixed; inset: 0; z-index: 100; display: grid; place-content: center; justify-items: center; gap: 14px; background: var(--bg); color: var(--muted); font-size: 14px; transition: opacity .35s; }
@@ -704,8 +702,12 @@ body.has-handle #toast.show { transform: translate(-50%, 0) scale(1); }
 .zb-thumb { position: relative; z-index: 1; width: 32px; height: 32px; border-radius: 50%; background: var(--accent); box-shadow: var(--accent-glow), inset 0 1px 0 rgba(255,255,255,.25); transition: transform .22s cubic-bezier(.2,.9,.3,1.3); }
 .zb-thumb::before { content: ''; position: absolute; left: 9px; right: 9px; top: 12px; height: 8px; border-top: 2px solid rgba(255,255,255,.75); border-bottom: 2px solid rgba(255,255,255,.75); }
 .zb-thumb.held { transition: none; }
-body.ws-model.has-lastop #zoombar, body.has-drawcard #zoombar, body.has-lastop #vtools-c, body.has-drawcard #vtools-c { visibility: hidden; }
-@media (min-width: 501px) { body.ws-model.has-lastop #zoombar, body.has-drawcard #zoombar, body.has-lastop #vtools-c, body.has-drawcard #vtools-c { visibility: visible; } }
+/* (with a card open, the app keeps the zoom bar to the room the cards leave, and hides the cube or view tools only
+   when a card is over them) */
+#zoombar.cramped .zb-tool:not(#btn-home2), #zoombar.cramped .zb-sep { display: none; }
+#btn-home2[hidden] { display: none; }
+#lastop .cardmore { width: 100%; height: 34px; margin-top: 8px; border-radius: 999px; background: var(--fill); color: var(--muted); font: 600 13px var(--font); }
+#lastop .cardmore:active { background: var(--fill-2); color: var(--text); }
 
 /* ---------- precision cursor + magnifier (hold a finger on the view) ---------- */
 #pcursor { position: absolute; z-index: 9; left: 0; top: 0; width: 44px; height: 44px; margin: -22px 0 0 -22px; pointer-events: none; }

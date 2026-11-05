@@ -436,7 +436,7 @@ function typeValue(first) {
   const last = getLast(), h = last && last.handle;
   if (!h && last && last.committed && last._typeKey && last.def === OPS.transform) {
     const key = last._typeKey, ang = key === 'angle';
-    openKeypad({ label: ang ? `Angle about ${String(last.params.axis).toUpperCase()}` : `Move ${key.toUpperCase()}`, kind: ang ? 'ang' : 'len', value: last.params[key] || 0, onCommit: v => { if (getLast() === last) { updateOp({ [key]: v }); emit('lastop', getLast()); view.render(); } } });
+    openKeypad({ label: ang ? `Angle about ${last.params.axis === 'm' ? 'the mate axis' : String(last.params.axis).toUpperCase()}` : `Move ${key.toUpperCase()}`, kind: ang ? 'ang' : 'len', value: last.params[key] || 0, onCommit: v => { if (getLast() === last) { updateOp({ [key]: v }); emit('lastop', getLast()); view.render(); } } });
     if (first) keypadKey(first);
     return true;
   }
