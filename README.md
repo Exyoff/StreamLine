@@ -43,11 +43,17 @@ Solids are exact boundary representations computed by **OpenCascade** (the kerne
 - **Mesh editing:** imported STL/OBJ files stay triangle meshes and keep vertex editing ("Edit mesh"). Solids are changed with features instead.
 - The kernel (about 7 MB compressed) loads once and is then cached for offline use. Licences: OpenCascade LGPL-2.1 and replicad MIT, both in `vendor/occ/`.
 
-## Fasteners: threads, holes, hex
+## Fasteners: threads, holes, recesses
 - **Thread:** in Face mode, tap a shaft or a round hole, then tap **Thread**. It cuts a true helical ISO thread (60°), exact geometry that exports to STEP. The ISO coarse pitch is suggested from the diameter (M8 gets 1.25). Pitch, length, the end it starts from and left-hand are all editable. A hole gets an internal thread.
-- **Hole:** tap a flat face, then **Hole**. Choose simple, counterbore or countersink; the depth is through all, or a set depth. The centre snaps to the grid and can be typed.
+- **Hole:** tap a flat face, then **Hole**. Choose simple, counterbore or countersink; the depth is through all, or a set depth. The centre snaps to the grid and can be typed. **Pattern** turns one hole into a row, a grid or a bolt circle in a single step, which you can still edit from the timeline.
+- **Recess:** tap a screw head's flat top, then **Recess**. Choose a slot, a cross (Phillips-style), a hex socket or a square drive. Set the size, depth and rotation; sockets get a 118° drill-point cone at the bottom. Recesses can be patterned like holes.
 - **Polygon:** size it **across flats** (13 mm for an M8 nut and head) or to a corner, and set its rotation.
 - **Array:** the default spacing comes from the selection's width.
+
+## Projects and assemblies
+- Every project saves on this device automatically (IndexedDB) and stays there offline. Open **Menu → Projects & assemblies** to open, rename, duplicate or delete projects, or to start a new one.
+- **Insert into this project** places another project's solids as a linked component (🔗). Move or rotate it, and measure, sketch on or snap to its faces like any body. Its shape is read-only here.
+- When the source project changes, the component shows **Sync ●**. Select it and tap **Sync** to bring in the latest version; its placement is kept and later steps rebuild. **Open source** jumps to the project it came from.
 
 ## Layout
 The interface follows the iOS "Liquid Glass" design language. The 3D view fills the whole screen, and every control floats over it as glass.

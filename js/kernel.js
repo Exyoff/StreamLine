@@ -240,6 +240,12 @@ export function revolveProfile(c, d, u, prof) {
   const es = []; for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length]; if (Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) > 1e-9) es.push(R.makeLine(a, b)); }
   return R.revolution(R.makeFace(R.assembleWire(es)), c, d, 360);
 }
+// a closed polygon (3D points in one plane) extruded along v
+export function polyPrism(P, v) {
+  const es = []; for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length]; if (Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) > 1e-9) es.push(R.makeLine(a, b)); }
+  return R.basicFaceExtrusion(R.makeFace(R.assembleWire(es)), vec(v));
+}
+export const compound = shapes => shapes.length === 1 ? shapes[0] : R.makeCompound(shapes);
 // a helical thread ridge: the triangular profile swept along a helix (binormal fixed to the axis)
 export function threadRidge(c, d, radius, pitch, length, prof, lefthand = false) {
   const helix = R.makeHelix(pitch, length, radius, c, d, lefthand);
