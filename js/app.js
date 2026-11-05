@@ -123,7 +123,19 @@ async function boot() {
   view.cam.ortho = false; view.cam.lock2D = false;
   view.frame(S.doc.objects.flatMap(worldVerts).concat(allSketchPoints()));
   if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !/localhost|127\.0\.0\.1/.test(location.hostname)) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    const hadController = !!navigator.serviceWorker.controller, bootT = performance.now();
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      // an app on the Home Screen can stay open for days: look for a new version whenever it comes back to the front
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+    }).catch(() => {});
+    // a new version took over: right after launch, load it at once (the page was drawn from the old files); later on,
+    // say so — reloading in the middle of work would be rude
+    let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloading) return; // (the very first install: these files are already the current ones)
+      if (performance.now() - bootT < 10000) { reloading = true; try { flushSaves(); } catch (e) {} location.reload(); }
+      else toast('StreamLine was updated — close and reopen it to use the new version', 6000);
+    });
   }
 }
 function defaultScene() {
