@@ -663,29 +663,80 @@ export const threadOp = {
 };
 
 // Hole: simple, counterbore or countersink, drilled into a flat face at the picked point
+// ---------- placing features on a flat face: centre, in-plane axes, patterns ----------
+// The face frame: n drills into the body, a follows world X where it can (else Y), b completes it, so
+// "angle 0" and pattern rows read the way the part sits on screen.
+function faceFrame(o, f0) {
+  const xf = xfFor(o), n = M.mul(locDir(xf, f0.p, f0.n), -1);
+  const ref = Math.abs(n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+  const a = M.norm(M.sub(ref, M.mul(n, M.dot(n, ref)))), b = M.cross(a, n);
+  return { xf, n, a, b };
+}
+function snapCentre(p) {
+  const f = p.faces[0], st = S.settings.snap ? S.settings.snapStep : 0;
+  if (p.x == null) { const q = st ? f.p.map(v => Math.round(v / st) * st) : f.p.slice(); const c = M.add(q, M.mul(f.n, f.w - M.dot(f.n, q))); [p.x, p.y, p.z] = c.map(v => +v.toFixed(6)); }
+}
+function flatFacePrep(p, what) {
+  p.faces ??= JSON.parse(JSON.stringify((S.ed.faces || []).slice(0, 1)));
+  if (!p.faces.length) return `Tap a flat face where the ${what} goes (Face mode)`;
+  if (p.faces[0].planar === false) return `${what[0].toUpperCase() + what.slice(1)}s go into flat faces`;
+  p.obj = p.faces[0].obj;
+  const e0 = solidOnly(objById(p.obj)); if (e0) return e0;
+  snapCentre(p);
+}
+// pattern offsets in the face plane (local coordinates): one, a row, a grid or a bolt circle
+const PATTERNS = [['one', 'Single'], ['row', 'Row'], ['grid', 'Grid'], ['circle', 'Circle']];
+function patternFields(p) {
+  const cnt = { key: 'count', label: 'Count', kind: 'int', min: 2, max: 200 };
+  const f = [{ key: 'pattern', label: 'Pattern', kind: 'choice', options: PATTERNS, wide: true }];
+  if (p.pattern === 'row') f.push(cnt, lenF('spacing', 'Spacing'), { key: 'pAngle', label: 'Direction', kind: 'ang' });
+  if (p.pattern === 'grid') f.push({ ...cnt, label: 'Columns' }, lenF('spacing', 'Column spacing'), { key: 'rows', label: 'Rows', kind: 'int', min: 1, max: 200 }, lenF('rowSpacing', 'Row spacing'), { key: 'pAngle', label: 'Direction', kind: 'ang' });
+  if (p.pattern === 'circle') f.push(cnt, lenF('radius', 'Circle radius'), { key: 'pAngle', label: 'Start angle', kind: 'ang' });
+  return f;
+}
+const patternDefaults = { pattern: 'one', count: 4, spacing: 10, rows: 2, rowSpacing: 10, radius: 10, pAngle: 0 };
+function patternOffsets(p, fr) {
+  const at = (x, y, rot = 0) => ({ d: M.add(M.mul(fr.a, x), M.mul(fr.b, y)), rot });
+  const ang = (p.pAngle || 0) * Math.PI / 180, ca = Math.cos(ang), sa = Math.sin(ang);
+  const out = [];
+  if (p.pattern === 'row' || p.pattern === 'grid') {
+    const cols = Math.max(1, Math.round(p.count || 1)), rows = p.pattern === 'grid' ? Math.max(1, Math.round(p.rows || 1)) : 1;
+    for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) { const x = i * (p.spacing || 0), y = j * (p.rowSpacing || 0); out.push(at(x * ca - y * sa, x * sa + y * ca)); }
+  } else if (p.pattern === 'circle') {
+    const k = Math.max(1, Math.round(p.count || 1));
+    for (let i = 0; i < k; i++) { const t = ang + i * 2 * Math.PI / k; out.push(at(p.radius * Math.cos(t), p.radius * Math.sin(t), t - ang)); }
+  } else out.push(at(0, 0));
+  return out;
+}
+const patternLabel = p => p.pattern === 'row' ? ` ×${p.count}` : p.pattern === 'grid' ? ` ${p.count}×${p.rows}` : p.pattern === 'circle' ? ` ×${p.count} on Ø${fmtD(p.radius * 2)}` : '';
+function patternCheck(p) {
+  if (p.pattern === 'row' || p.pattern === 'grid') { if (!(p.count >= 1)) return 'Count must be at least 1'; if (p.count > 1 && !(Math.abs(p.spacing) > 0)) return 'Spacing must not be 0'; }
+  if (p.pattern === 'grid' && p.rows > 1 && !(Math.abs(p.rowSpacing) > 0)) return 'Row spacing must not be 0';
+  if (p.pattern === 'circle' && !(p.radius > 0)) return 'Circle radius must be > 0';
+  if ((p.count || 1) * (p.pattern === 'grid' ? p.rows || 1 : 1) > 400) return 'That is more than 400 copies';
+}
+// cut every tool at once; a tool that misses the body is fine, an empty result is not
+function cutTools(o, tools, msg) {
+  const res = guard(() => o.shape.cut(K.compound(tools)), msg);
+  if (typeof res === 'string') return res;
+  if (K.isEmpty(res)) return 'Result is empty';
+  K.setShape(o, res); S.ed.faces = [];
+}
+
 export const holeOp = {
-  label: p => `Hole Ø${fmtD(p.dia)}${p.kind === 'cbore' ? ' counterbore' : p.kind === 'csink' ? ' countersink' : ''}`,
-  defaults: () => ({ dia: 5, depth: 0, kind: 'simple', cbDia: 9, cbDepth: 5, csDia: 10, csAngle: 90 }),
-  prepare(p) {
-    p.faces ??= JSON.parse(JSON.stringify((S.ed.faces || []).slice(0, 1)));
-    if (!p.faces.length) return 'Tap a flat face where the hole goes (Face mode)';
-    if (p.faces[0].planar === false) return 'Holes go into flat faces';
-    p.obj = p.faces[0].obj;
-    const e0 = solidOnly(objById(p.obj)); if (e0) return e0;
-    // the hole centre: the tapped point, rounded to the snap step in the face's plane
-    const f = p.faces[0], st = S.settings.snap ? S.settings.snapStep : 0;
-    if (p.x == null) { const q = st ? f.p.map(v => Math.round(v / st) * st) : f.p.slice(); const c = M.add(q, M.mul(f.n, f.w - M.dot(f.n, q))); [p.x, p.y, p.z] = c.map(v => +v.toFixed(6)); }
-  },
+  label: p => `Hole Ø${fmtD(p.dia)}${p.kind === 'cbore' ? ' counterbore' : p.kind === 'csink' ? ' countersink' : ''}${patternLabel(p)}`,
+  defaults: () => ({ dia: 5, depth: 0, kind: 'simple', cbDia: 9, cbDepth: 5, csDia: 10, csAngle: 90, ...patternDefaults }),
+  prepare(p) { return flatFacePrep(p, 'hole'); },
   touch: p => ({ ids: [p.obj], mesh: true }),
   fields: p => [lenF('dia', 'Diameter'), lenF('depth', 'Depth (0 = through)'), { key: 'kind', label: 'Type', kind: 'choice', options: [['simple', 'Simple'], ['cbore', 'Counterbore'], ['csink', 'Countersink']], wide: true },
     ...(p.kind === 'cbore' ? [lenF('cbDia', 'Counterbore Ø'), lenF('cbDepth', 'Counterbore depth')] : p.kind === 'csink' ? [lenF('csDia', 'Countersink Ø'), { key: 'csAngle', label: 'Countersink angle', kind: 'ang' }] : []),
-    lenF('x', 'Centre X'), lenF('y', 'Centre Y'), lenF('z', 'Centre Z')],
+    lenF('x', 'Centre X'), lenF('y', 'Centre Y'), lenF('z', 'Centre Z'), ...patternFields(p)],
   apply(p) {
     if (!(p.dia > 0)) return 'Diameter must be > 0';
     const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
     const f = findFaces(o, p.faces)?.[0]; if (!f) return 'The face it was drilled into no longer exists';
-    const xf = xfFor(o), n = M.mul(locDir(xf, p.faces[0].p, p.faces[0].n), -1); // drill into the body
-    const c = xf.toL([p.x, p.y, p.z]), u = M.norm(Math.abs(n[2]) < 0.9 ? M.cross(n, [0, 0, 1]) : M.cross(n, [1, 0, 0]));
+    const pe = patternCheck(p); if (pe) return pe;
+    const fr = faceFrame(o, p.faces[0]), n = fr.n, c = fr.xf.toL([p.x, p.y, p.z]);
     const bb = o.shape.boundingBox.bounds, through = Math.hypot(...[0, 1, 2].map(k => bb[1][k] - bb[0][k])) * 2 + 10;
     const D = p.depth > 0 ? p.depth : through, r = p.dia / 2;
     const prof = [[0, -0.01]];
@@ -693,10 +744,55 @@ export const holeOp = {
     else if (p.kind === 'csink') { if (!(p.csDia > p.dia)) return 'Countersink Ø must be larger than the hole'; const h = (p.csDia / 2 - r) / Math.tan((p.csAngle / 2) * Math.PI / 180); prof.push([p.csDia / 2 + 0.01, -0.01], [r, h]); }
     else prof.push([r, -0.01]);
     prof.push([r, D], [0, D]);
-    const res = guard(() => o.shape.cut(K.revolveProfile(c, n, u, prof)), 'Could not drill this hole');
-    if (typeof res === 'string') return res;
-    if (K.isEmpty(res)) return 'Result is empty';
-    K.setShape(o, res); S.ed.faces = [];
+    const tools = patternOffsets(p, fr).map(({ d }) => K.revolveProfile(M.add(c, d), n, fr.a, prof));
+    return cutTools(o, tools, 'Could not drill this hole');
+  },
+};
+
+// ---------- drive recesses: slot, cross (Phillips-style), hex socket, square ----------
+const RECESS = [['slot', 'Slot'], ['cross', 'Cross'], ['hex', 'Hex socket'], ['square', 'Square']];
+export const recessOp = {
+  label: p => `${(RECESS.find(r => r[0] === p.kind) || RECESS[0])[1]} recess ${fmtD(p.size)}${patternLabel(p)}`,
+  defaults: () => ({ kind: 'hex', size: 4, width: 1.2, depth: 3, rot: 0, tip: true, ...patternDefaults }),
+  prepare(p) { return flatFacePrep(p, 'recess'); },
+  touch: p => ({ ids: [p.obj], mesh: true }),
+  fields: p => [{ key: 'kind', label: 'Drive', kind: 'choice', options: RECESS, wide: true },
+    lenF('size', p.kind === 'hex' ? 'Across flats' : p.kind === 'square' ? 'Side' : 'Length'),
+    ...(p.kind === 'slot' || p.kind === 'cross' ? [lenF('width', 'Slot width')] : []),
+    lenF('depth', 'Depth'), { key: 'rot', label: 'Rotation', kind: 'ang' },
+    ...(p.kind !== 'slot' ? [{ key: 'tip', label: 'Cone at the bottom', kind: 'bool' }] : []),
+    lenF('x', 'Centre X'), lenF('y', 'Centre Y'), lenF('z', 'Centre Z'), ...patternFields(p)],
+  apply(p) {
+    if (!(p.size > 0) || !(p.depth > 0)) return 'Size and depth must be > 0';
+    if ((p.kind === 'slot' || p.kind === 'cross') && !(p.width > 0 && p.width < p.size)) return 'Slot width must be > 0 and smaller than the length';
+    const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
+    const f = findFaces(o, p.faces)?.[0]; if (!f) return 'The face for the recess no longer exists';
+    const pe = patternCheck(p); if (pe) return pe;
+    const fr = faceFrame(o, p.faces[0]), n = fr.n, c0 = fr.xf.toL([p.x, p.y, p.z]);
+    // the outline in face coordinates (x along a, y along b)
+    const s = p.size, w = p.width, hs = s / 2, hw = w / 2;
+    let poly;
+    if (p.kind === 'slot') poly = [[-hs, -hw], [hs, -hw], [hs, hw], [-hs, hw]];
+    else if (p.kind === 'square') poly = [[-hs, -hs], [hs, -hs], [hs, hs], [-hs, hs]];
+    else if (p.kind === 'hex') { const R0 = s / Math.sqrt(3); poly = [...Array(6)].map((_, i) => [R0 * Math.cos(i * Math.PI / 3), R0 * Math.sin(i * Math.PI / 3)]); }
+    else poly = [[hw, hw], [hs, hw], [hs, -hw], [hw, -hw], [hw, -hs], [-hw, -hs], [-hw, -hw], [-hs, -hw], [-hs, hw], [-hw, hw], [-hw, hs], [hw, hs]];
+    const tipR = p.kind === 'hex' ? s / Math.sqrt(3) : p.kind === 'square' ? hs * Math.SQRT2 : hs;
+    const tools = [];
+    for (const { d, rot } of patternOffsets(p, fr)) {
+      const t = (p.rot || 0) * Math.PI / 180 + rot, ct = Math.cos(t), st = Math.sin(t), c = M.add(c0, d);
+      const P = poly.map(([x, y]) => M.add(M.add(c, M.mul(fr.a, x * ct - y * st)), M.mul(fr.b, x * st + y * ct)));
+      const top = P.map(q => M.sub(q, M.mul(n, 0.01))); // start just outside the face so the cut is clean
+      let tool = guard(() => K.polyPrism(top, M.mul(n, p.depth + 0.01)), 'Could not make the recess');
+      if (typeof tool === 'string') return tool;
+      if (p.tip && p.kind !== 'slot') { // a 118° drill-point cone under the socket
+        const h = tipR / Math.tan(59 * Math.PI / 180);
+        const cone = guard(() => K.revolveProfile(c, n, fr.a, [[0, p.depth - 0.01], [tipR, p.depth - 0.01], [0, p.depth + h]]), 'Could not make the recess tip');
+        if (typeof cone === 'string') return cone;
+        tool = tool.fuse(cone);
+      }
+      tools.push(tool);
+    }
+    return cutTools(o, tools, 'Could not cut the recess');
   },
 };
 

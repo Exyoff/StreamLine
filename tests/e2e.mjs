@@ -313,6 +313,22 @@ try {
   });
   check(fast.t && /M8×1\.25/.test(fast.label) && fast.thread > 10, `Thread: a helical M8×1.25 thread (${fast.thread.toFixed(1)} mm³ of material cut into the shaft)`);
   check(fast.h && Math.abs(fast.removed - fast.expect) < 1e-6, `Hole: an exact counterbored hole (${fast.removed.toFixed(3)} mm³)`);
+  // hole patterns and drive recesses
+  const pat = await st(() => {
+    const L = StreamLine, F = L.F, XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    L.runOp(F.sketchOpNew('flange', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 1100, y: -30, w: 60, h: 60 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [1130, 0] }], distance: 6, mode: 'new', target: null });
+    const id = L.S.doc.objects.at(-1).id, v = () => L.K.volume(L.S.doc.objects.find(o => o.id === id).shape), v0 = v();
+    L.S.ed.faces = [{ obj: id, n: [0, 0, 1], w: 6, p: [1130, 0, 6], planar: true }];
+    const ok1 = L.runOp(F.holeOp, { dia: 4, pattern: 'circle', count: 6, radius: 20, x: 1130, y: 0, z: 6 }), v1 = v(), label = L.H.hist().at(-1).label;
+    L.S.ed.faces = [{ obj: id, n: [0, 0, 1], w: 6, p: [1130, 0, 6], planar: true }];
+    const ok2 = L.runOp(F.recessOp, { kind: 'hex', size: 5, depth: 3, tip: false, x: 1130, y: 0, z: 6 }), v2 = v();
+    L.S.ed.faces = [{ obj: id, n: [0, 0, 1], w: 6, p: [1110, -20, 6], planar: true }];
+    const ok3 = L.runOp(F.recessOp, { kind: 'cross', size: 6, width: 1, depth: 2, tip: false, pattern: 'row', count: 2, spacing: 40, x: 1110, y: -20, z: 6 }), v3 = v();
+    return { ok: ok1 && ok2 && ok3, holes: v0 - v1, hex: v1 - v2, cross: v2 - v3, label, eh: 6 * Math.PI * 4 * 6, ex: Math.sqrt(3) / 2 * 5 * 5 * 3, ec: 2 * 2 * (2 * 6 - 1) };
+  });
+  check(pat.ok && Math.abs(pat.holes - pat.eh) < 1e-6 && /×6 on Ø40/.test(pat.label), `Hole pattern: six exact holes on a Ø40 bolt circle (${pat.holes.toFixed(3)} mm³, “${pat.label}”)`);
+  check(Math.abs(pat.hex - pat.ex) < 1e-6 && Math.abs(pat.cross - pat.ec) < 1e-6, `Recesses: an exact hex socket (${pat.hex.toFixed(3)}) and a row of two cross recesses (${pat.cross.toFixed(3)} mm³)`);
   // assemblies: insert a saved project as a linked component, change its source, sync
   const asm = await p.evaluate(async () => {
     const L = StreamLine, PJ = await import('./js/projects.js'), ops = await import('./js/ops.js');
