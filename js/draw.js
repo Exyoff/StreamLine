@@ -159,7 +159,12 @@ function placeRect3(a, b, hgt) {
   const n = [-(b[1] - a[1]) / L * hgt, (b[0] - a[0]) / L * hgt];
   const P = [a, b, [b[0] + n[0], b[1] + n[1]], [a[0] + n[0], a[1] + n[1]]];
   if (Math.abs(n[0]) < 1e-12 || Math.abs(n[1]) < 1e-12) { placeRect(a, P[2]); return; } // axis aligned: a real rectangle entity
-  editSketch('Rectangle', s => { for (let i = 0; i < 4; i++) F.addEntity(s, { t: 'line', a: P[i].slice(), b: P[(i + 1) % 4].slice() }); });
+  // four lines held as a rectangle (opposite sides parallel, a right angle), so editing one side keeps the shape
+  editSketch('Rectangle', s => {
+    const L4 = P.map((q, i) => F.addEntity(s, { t: 'line', a: q.slice(), b: P[(i + 1) % 4].slice() }).id);
+    s.cons = s.cons || [];
+    for (const [t, a, b] of [['par', L4[0], L4[2]], ['par', L4[1], L4[3]], ['perp', L4[0], L4[1]]]) s.cons.push({ id: ++s.nextEnt, t, a, b });
+  });
   st.start = null; st.p2 = null; st.typed = {};
 }
 const rectHeight = (a, b, p) => { const L = SK.d2(a, b); return L < 1e-12 ? 0 : ((p[0] - a[0]) * -(b[1] - a[1]) + (p[1] - a[1]) * (b[0] - a[0])) / L; };

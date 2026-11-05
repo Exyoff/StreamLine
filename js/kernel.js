@@ -93,6 +93,39 @@ export function deserialize(str) { const s = R.deserializeShape(str); serCache.s
 // ---------- measures ----------
 export const volume = s => R.measureVolume(s);
 export const area = s => R.measureArea(s);
+// ---------- STEP import: one body per solid, with the file's part names and colours ----------
+// (this OpenCascade build has no XCAF reader, so names and colours are read from the STEP text: PRODUCT names in
+// order, and each STYLED_ITEM's colour traced back to its product)
+export function stepParts(shape, text) {
+  const solids = shape.solids || [];
+  if (solids.length <= 1) return [{ shape, name: null, color: null }];
+  const ent = new Map(), re = /#(\d+)\s*=\s*([A-Z_0-9]+)\s*\(([\s\S]*?)\)\s*;/g;
+  let m; while ((m = re.exec(text))) ent.set(+m[1], { t: m[2], a: m[3] });
+  const refs = a => [...a.matchAll(/#(\d+)/g)].map(x => +x[1]);
+  const products = [...ent].filter(([, e]) => e.t === 'PRODUCT').map(([id, e]) => ({ id, name: (e.a.match(/^\s*'((?:[^']|'')*)'/) || [])[1]?.replace(/''/g, "'") || null }));
+  const colorOf = new Map();
+  const lin = c => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4); // STEP stores sRGB; the app's colours went out linear
+  const hex = rgb => '#' + rgb.map(c => Math.round(Math.max(0, Math.min(1, lin(c))) * 255).toString(16).padStart(2, '0')).join('');
+  const bfs = (start, stop, maxDepth) => { let level = [start]; const seen = new Set(level); for (let d = 0; d < maxDepth && level.length; d++) { const next = []; for (const id of level) { const e = ent.get(id); if (!e) continue; if (d > 0 && stop(e, id)) return id; for (const r of refs(e.a)) if (!seen.has(r)) { seen.add(r); next.push(r); } } level = next; for (const id of level) { const e = ent.get(id); if (e && stop(e, id)) return id; } } return null; };
+  const repOf = new Map(), sdrOf = new Map();
+  for (const [id, x] of ent) {
+    if (/REPRESENTATION$/.test(x.t) && !/DEFINITION/.test(x.t)) for (const r of refs(x.a)) if (!repOf.has(r)) repOf.set(r, id);
+    if (x.t === 'SHAPE_DEFINITION_REPRESENTATION') for (const r of refs(x.a)) sdrOf.set(r, id);
+  }
+  for (const [, e] of ent) {
+    if (e.t !== 'STYLED_ITEM') continue;
+    const r = refs(e.a), item = r[r.length - 1];
+    const rgbId = bfs(r[0], x => x.t === 'COLOUR_RGB', 8); if (rgbId == null) continue;
+    const rgb = ent.get(rgbId).a.split(',').slice(1).map(Number);
+    // the representation holding the item, then the product it describes
+    const rep = repOf.get(item), sdr = rep != null ? sdrOf.get(rep) : null;
+    const prod = sdr != null ? bfs(sdr, x => x.t === 'PRODUCT', 6) : null;
+    if (prod != null && rgb.length === 3) colorOf.set(prod, hex(rgb));
+  }
+  const named = products.length === solids.length;
+  return solids.map((sh, i) => ({ shape: sh, name: named ? products[i].name : null, color: named ? colorOf.get(products[i].id) || null : null }));
+}
+
 // ---------- text outlines (engrave / emboss) ----------
 // Liberation Sans Bold (SIL OFL 1.1), loaded the first time text is outlined
 let fontP = null;

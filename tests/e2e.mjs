@@ -672,6 +672,50 @@ try {
     return { got: [0, 1].map(k => (bb[0][k] + bb[1][k]) / 2), want: at(60), errs: L.H.hist().filter(r => r.err).map(r => r.err) };
   });
   check(Math.hypot(hp.got[0] - hp.want[0], hp.got[1] - hp.want[1]) < 1e-3 && !hp.errs.length, `A plate sketched on a hinged part follows it when its Rotate changes (at ${hp.got.map(v => +v.toFixed(3)).join(', ')}, want ${hp.want.map(v => +v.toFixed(3)).join(', ')})`);
+  // round 13: STEP round trip keeps the parts (names, colours); Thread button on a shaft; pattern unions keep the
+  // original as target when the count drops; mate loops are refused
+  const r13 = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, K = L.K, ops = await import('./js/ops.js'), PJ = await import('./js/projects.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    await PJ.newProject();
+    const blob = K.R.exportSTEP([{ shape: K.R.makeBox([0, 0, 0], [10, 10, 10]), name: 'Cube', color: '#9fb6cf' }, { shape: K.R.makeBox([20, 0, 0], [24, 4, 4]), name: 'Small one', color: '#c9b79c' }], { unit: 'MM' });
+    const txt = await blob.text(), back = await K.R.importSTEP(new Blob([txt])), parts = K.stepParts(back, txt);
+    const imp = parts.map(pt => ({ name: pt.name, color: pt.color, v: +K.volume(pt.shape).toFixed(6) }));
+    // a shaft: the face bar offers Thread
+    L.runOp(F.sketchOpNew('sh', XY(0), null, k => { F.addEntity(k, { t: 'circle', c: [300, 0], r: 4 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [300, 0] }], distance: 20, mode: 'new', target: null }); const sh = L.S.doc.objects.at(-1).id;
+    L.S.ed.pick = 'face'; L.S.ed.selected = new Set(); L.S.ed.faces = [{ obj: sh, n: [1, 0, 0], p: [304, 0, 10], planar: false }]; L.refresh();
+    const thread = [...document.querySelectorAll('#actions button')].some(b => /Thread/.test(b.textContent));
+    L.S.ed.faces = []; L.S.ed.pick = 'solid';
+    // hub + blade → polar pattern 5 → union (copies tapped first) → count 3
+    L.runOp(F.sketchOpNew('hub', XY(0), null, k => { F.addEntity(k, { t: 'circle', c: [600, 0], r: 10 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [600, 0] }], distance: 5, mode: 'new', target: null }); const hub = L.S.doc.objects.at(-1).id;
+    L.runOp(F.sketchOpNew('bl', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 615, y: -2, w: 20, h: 4 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [620, 0] }], distance: 5, mode: 'new', target: null }); const bl = L.S.doc.objects.at(-1).id;
+    L.S.ed.selected = new Set([bl]); L.runOp(F.polarPattern, { count: 5, angle: 360, axis: 'z', cx: 600, cy: 0, cz: 0 });
+    const copies = L.S.doc.objects.filter(o => o.patternOf != null).map(o => o.id);
+    L.S.ed.selected = new Set([...copies.slice().reverse(), bl]); const tie = (() => { const pp = {}; F.bodyBoolean.prepare(pp); return pp.ids[0]; })();
+    L.S.ed.selected = new Set([...copies, bl, hub]); L.runOp(F.bodyBoolean, { kind: 'union' }); const target = L.getLast().params.ids[0];
+    const pr = L.H.hist().find(r => r.op === 'F.polarPattern'); L.BR.editStep(pr.id); ops.updateOp({ count: 3 }); ops.commit();
+    const u = L.H.hist().find(r => r.op === 'F.bodyBoolean'), hv = K.volume(L.S.doc.objects.find(o => o.id === hub).shape);
+    return { imp, thread, target, hub, bl, tie, uerr: u.err || '', hv };
+  });
+  check(r13.imp.length === 2 && r13.imp[0].name === 'Cube' && r13.imp[1].name === 'Small one' && r13.imp[0].v === 1000 && r13.imp[1].v === 64 && r13.imp[0].color === '#9fb6cf' && r13.imp[1].color === '#c9b79c',
+    `STEP import gives one body per part with its name and colour (${r13.imp.map(x => `${x.name} ${x.v} ${x.color}`).join('; ')})`);
+  check(r13.thread, 'Face mode on a shaft offers Thread');
+  check(r13.target === r13.hub && r13.tie === r13.bl && !r13.uerr && Math.abs(r13.hv - (Math.PI * 100 * 5 + 3 * 400)) < 1e-3,
+    `Union of a pattern: the hub stays the target; equal copies leave the original as target; count 5 → 3 rebuilds (${JSON.stringify([r13.target, r13.hub, r13.tie, r13.bl])} ${r13.hv.toFixed(3)} mm³${r13.uerr ? '; ' + r13.uerr : ''})`);
+  const loop = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    L.runOp(F.sketchOpNew('l1', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 900, y: 0, w: 20, h: 20 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [905, 5] }], distance: 10, mode: 'new', target: null }); const a = L.S.doc.objects.at(-1).id;
+    L.runOp(F.sketchOpNew('l2', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 1000, y: 0, w: 10, h: 10 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [1005, 5] }], distance: 5, mode: 'new', target: null }); const b = L.S.doc.objects.at(-1).id;
+    L.runOp(F.mateOp, { a: { obj: b, n: [0, 0, -1], p: [1005, 5, 0], planar: true }, b: { obj: a, n: [0, 0, 1], p: [905, 5, 10], planar: true }, gap: 0, align: 'face' });
+    const pos = () => L.S.doc.objects.filter(o => o.id === a || o.id === b).map(o => o.loc.join()).join('|'), p0 = pos();
+    L.runOp(F.mateOp, { a: { obj: a, n: [1, 0, 0], p: [920, 5, 5], planar: true }, b: { obj: b, n: [-1, 0, 0], p: [1000, 5, 12], planar: true }, gap: 0, align: 'face' });
+    return { errs: L.H.hist().filter(r => r.op === 'F.mateOp').map(r => r.err || ''), first: L.H.hist().filter(r => r.op === 'F.mateOp').at(-2).err || '' };
+  });
+  check(/loop/.test(loop.errs.at(-1)) && !loop.first, `A mate that would make a loop is flagged on the new step, the first one stays (“${loop.errs.at(-1)}”)`);
   await shot('5-timeline');
 } catch (e) {
   await p.screenshot({ path: OUT + 'crash.png' }).catch(() => {});

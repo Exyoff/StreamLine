@@ -646,6 +646,8 @@ function mateTap(x, y) {
   }
   const err = { kind: F.mateGeom(from)?.kind || gA.kind }; // (not parallel is fine: the Mate step turns the part to line them up)
   const A = objById(from.obj);
+  if (F.mateLoop(H.hist().filter(r => r.op === 'F.mateOp' && !r.off && !r.err).map(r => r.params), { a: from, b: to }))
+    return retry(`${objById(to.obj).name} is already mated onto ${A.name} — mate them the other way round (tap ${objById(to.obj).name}'s face first)`);
   S.ed.faces = []; S.ed.selected = new Set([A.id]); S.ed.active = A.id; // (stays in Face mode for the next mate)
   // a Mate step in the history: it is solved again whenever the parts change (e.g. after Sync)
   if (!runOp(F.mateOp, { a: JSON.parse(JSON.stringify(from)), b: JSON.parse(JSON.stringify(to)), gap: 0, align: 'face' })) return retry('Could not mate those faces');
@@ -932,9 +934,9 @@ function renderActions() {
     if (prof) c.push(act(I.extrude, 'Extrude', () => startExtrude(), 'primary'), act(I.revolve, 'Revolve', () => runOp(F.revolve)), ...(prof >= 2 ? [act(I.cone, 'Loft', () => runOp(F.loftOp))] : []), act(I.arc, 'Sweep', () => runOp(F.sweepOp)));
     const flat = S.ed.faces.every(f => f.planar !== false); // push/pull and draft work on flat faces
     // Thread only on round, straight faces (cylinders), not cones
-    const cyl = !flat && S.ed.faces.every(f => { if (f.planar !== false) return false; try { const o = objById(f.obj), h = K.faceAt(o.shape, xfFor(o).toL(f.p)); return !h || h.f.geomType === 'CYLINDER'; } catch (e) { return true; } });
+    const cyl = !flat && S.ed.faces.every(f => { if (f.planar !== false) return false; try { const o = objById(f.obj), h = K.faceAt(o.shape, xfFor(o).toL(f.p)); return !h || h.f.geomType === 'CYLINDRE'; } catch (e) { return true; } });
     if (S.ed.mateFrom) { row.replaceChildren(act(I.close, 'Cancel mate', () => { S.ed.mateFrom = null; refresh(); }, 'primary')); return; }
-    if (faces === 1 && S.doc.objects.filter(o => o.shape && isShown(o)).length > 1) c.push(act(I.join, 'Mate', () => startMate()));
+    if (faces === 1 && S.doc.objects.filter(o => o.shape && !o.hidden).length > 1) /* (also while isolated) */ c.push(act(I.join, 'Mate', () => startMate()));
     const faceLinked = faces && S.ed.faces.some(f => objById(f.obj)?.link);
     if (faces === 1) c.push(act(I.plane, 'Plane here', () => planeHere()));
     if (faces && faceLinked) { if (!c.length) c.push(act(I.measure, 'Inquiry', e => openInquiryMenu(e.currentTarget))); }
@@ -1452,12 +1454,16 @@ async function onFile(e) {
     if (ext === 'step' || ext === 'stp') {
       const shape = await K.R.importSTEP(file);
       const baseId = S.doc.nextId, nm = file.name.replace(/\.(step|stp)$/i, '');
+      let parts; try { parts = K.stepParts(shape, await file.text()); } catch (e) { parts = [{ shape }]; }
       runOp({
         label: () => `Import ${file.name}`, touch: () => ({ ids: [] }),
-        apply() { const o = newObject(nm, null, [0, 0, 0], baseId); K.setShape(o, shape); S.doc.objects.push(o); S.ed.selected = new Set([o.id]); S.ed.active = o.id; },
+        apply() {
+          const ids = parts.map((pt, k) => { const o = newObject(pt.name || (parts.length > 1 ? `${nm} ${k + 1}` : nm), null, [0, 0, 0], baseId + k); K.setShape(o, pt.shape); if (pt.color) o.color = pt.color; S.doc.objects.push(o); return o.id; });
+          S.ed.selected = new Set(ids); S.ed.active = ids[0];
+        },
       });
       view.frame(selectedObjs().flatMap(worldVerts));
-      toast(`Imported ${nm} · exact solid`);
+      toast(parts.length > 1 ? `Imported ${nm} · ${parts.length} exact solids` : `Imported ${nm} · exact solid`);
       return;
     }
     let items;
@@ -1600,7 +1606,9 @@ function setDrawPlane(pl, msg) { S.ed.cplane = pl; Draw.resetTool(); Draw.clearT
 function planeHere() {
   const f = S.ed.faces[0]; if (!f) return;
   const o = objById(f.obj); let n = f.n, pt = f.p;
-  try { const xf = xfFor(o), hit = K.faceAt(o.shape, xf.toL(f.p)); if (hit) { const v = hit.f.normalAt(xf.toL(f.p)), nl = M.norm([v.x, v.y, v.z]); n = M.norm(M.sub(xf.toW(M.add(xf.toL(f.p), nl)), f.p)); if (M.dot(n, f.n) < 0) n = M.mul(n, -1); } } catch (e) {}
+  try { const xf = xfFor(o), hit = K.faceAt(o.shape, xf.toL(f.p)); if (hit) { const v = hit.f.normalAt(xf.toL(f.p)), nl = M.norm([v.x, v.y, v.z]); n = M.norm(M.sub(xf.toW(M.add(xf.toL(f.p), nl)), f.p)); if (M.dot(n, f.n) < 0) n = M.mul(n, -1);
+    // on a cylinder the touch point goes exactly onto its radius (the tap point is float32: a few µm inside)
+    const cy = K.cylinderOf(hit.f); if (cy && cy.R) { const q = xf.toL(f.p), dc = M.sub(q, cy.c), ax = M.mul(cy.d, M.dot(dc, cy.d)), rad = M.sub(dc, ax), rl = M.len(rad); if (rl > 1e-9) { pt = xf.toW(M.add(M.add(cy.c, ax), M.mul(rad, cy.R / rl))); n = M.norm(M.sub(xf.toW(M.add(xf.toL(pt), M.mul(rad, (M.dot(nl, rad) >= 0 ? 1 : -1) / rl))), pt)); if (M.dot(n, f.n) < 0) n = M.mul(n, -1); } } } } catch (e) {}
   // the origin goes where the plane passes nearest the world origin, so typed X / Y / Z are the model's own
   // coordinates (the tapped point is only where the plane touches)
   n = M.norm(n); pt = M.mul(n, M.dot(n, pt));
