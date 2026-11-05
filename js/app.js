@@ -7,7 +7,7 @@ import * as PJ from './projects.js';
 import * as LIB from './library.js';
 import * as BR from './browser.js';
 import { view, camera } from './viewport.js';
-import { initGizmo, gizmoActive } from './gizmo.js';
+import { initGizmo, gizmoActive, valueTap, typeKey, gizmoPartAt } from './gizmo.js';
 import * as OPS from './operators.js';
 import { runOp, undo, redo, canUndo, canRedo, getLast, clearLast, updateOp, resetHistory, mergeLastUndo } from './ops.js';
 import { serialize, deserialize, newObject, xfFor, worldVerts, objMatrix } from './scene.js';
@@ -78,12 +78,15 @@ async function boot() {
   // what Frame should keep clear: the tool rail on the left, the top bar, and the controls along the bottom
   view.insets = () => {
     const vr = $('#viewport').getBoundingClientRect(), vis = el => el && !el.hidden && el.offsetParent !== null && el.getBoundingClientRect();
-    const rail = vis($('#toolrail')), top = vis($('#topbar'));
+    const rail = vis($('#toolrail')), top = vis($('#topbar')), tl = vis($('#timeline')), zb = vis($('#zoombar'));
     const l = rail && rail.left < vr.width / 2 ? rail.right - vr.left : 0;
-    const t = top ? top.bottom - vr.top : 0; // (the draw card shifts the picture itself, see renderLastOp)
-    const bottoms = ['#stationbar', '#vtools-r', '#nav', '#lastop', '#cmdbar', '#timeline'].map(q => vis($(q))).filter(Boolean).map(r => r.top - vr.top).filter(y => y > vr.height / 2);
+    // (the top bar and the history timeline under it; the draw card shifts the picture itself, see renderLastOp)
+    const t = Math.max(top ? top.bottom - vr.top : 0, tl ? tl.bottom - vr.top : 0);
+    const r = zb && zb.left > vr.width / 2 ? vr.right - zb.left : 0; // the zoom bar on the right
+    // (the cube and view tools ride up above the command line when it is open: they still keep the model clear)
+    const bottoms = ['#stationbar', '#vtools-r', '#nav', '#lastop', '#cmdbar'].map(q => vis($(q))).filter(Boolean).map(r => r.top - vr.top).filter(y => y > vr.height * 0.3);
     const b = bottoms.length ? vr.bottom - vr.top - Math.min(...bottoms) : 0;
-    return { l: Math.max(0, l), r: 0, t: Math.max(0, t), b: Math.max(0, b) };
+    return { l: Math.max(0, l), r: Math.max(0, r), t: Math.max(0, t), b: Math.max(0, b) };
   };
   PJ.initProjects({
     view, refresh: () => refresh(), renderSheet: () => { if (sheetOpen) renderSheet(); },
@@ -143,7 +146,7 @@ function routeDrag() {
     return false;
   };
   view.handlers.dragMove = (x, y, e) => (owner === 'draw' ? Draw.move(x, y) : owner && owner.move(x, y, e));
-  view.handlers.dragEnd = () => { if (owner === 'draw') Draw.up(); else if (owner) owner.end(); owner = null; };
+  view.handlers.dragEnd = () => { let r; if (owner === 'draw') Draw.up(); else if (owner) r = owner.end(); owner = null; return r; };
   view.handlers.dragCancel = () => { if (owner === 'draw') Draw.cancelPress(); else if (owner) owner.cancel(); owner = null; };
   view.handlers.hover = (x, y) => Draw.hover(x, y);
 }
@@ -292,7 +295,8 @@ function growEdges(all) {
   toast(all === 'loop' ? `Loop: ${S.ed.edges.length} edges` : all ? `All ${S.ed.edges.length} edges of the body` : S.ed.edges.length > before ? `Chain: ${S.ed.edges.length} edges` : 'No smooth continuation — Chain follows edges that meet tangentially (e.g. around a fillet)');
   selectionChanged();
 }
-function edgeTap(x, y, probe = false) { // probe: only report how close the nearest body edge is (px)
+// the nearest visible body edge to a screen point ({ d px, o, solid | W fe e, Q }), or null
+function edgeCandidate(x, y) {
   let best = null;
   const hit = view.pickObject(x, y), cands = [];
   for (const o of S.doc.objects) {
@@ -333,6 +337,10 @@ function edgeTap(x, y, probe = false) { // probe: only report how close the near
   // the nearest edge that can be seen: a back edge behind the part's own faces is not under the finger
   cands.sort((a, b) => a.d - b.d);
   for (const c of cands.slice(0, 16)) if (!view.occluded(c.Q)) { best = c; break; }
+  return best;
+}
+function edgeTap(x, y, probe = false) { // probe: only report how close the nearest body edge is (px)
+  const best = edgeCandidate(x, y);
   if (probe) return best ? best.d : Infinity;
   if (!best) { if (!S.ed.multi) S.ed.edges = []; return selectionChanged(); }
   if (best.solid) {
@@ -561,8 +569,11 @@ function onTap(x, y) {
   if (S.ed.mode === 'object' && (Draw.EDIT_TOOLS.has(S.ed.tool) || ['trim', 'dim', 'corner', 'extend'].includes(S.ed.tool))) return Draw.tap(x, y);
   if (S.ed.mode === 'object' && S.ed.mateFrom) return mateTap(x, y);
   if (S.ed.mode === 'object' && S.ed.consTool) return consTap(x, y);
-  if (S.ed.mode === 'object' && Draw.tapLabel(x, y, S.ed.editingSketch != null || S.ed.pick === 'edge')) return; // (constraint glyphs only while working on curves)
-  if (S.ed.mode === 'object') return smartTap(x, y);
+  // a gizmo's value bubble (tap to type the value), dimension labels and constraint glyphs first — small targets
+  // drawn on top — then what is under the finger
+  if (valueTap(x, y)) return;
+  if (S.ed.mode === 'object' && Draw.tapLabel(x, y, true)) return;
+  if (S.ed.mode === 'object') { Draw.clearConsSel(); return smartTap(x, y); }
   const o = activeObj(); if (!o) return;
   let verts = null;
   if (S.ed.selectMode === 'vert') { const v = view.pickVertex(x, y, { objs: [o] }); if (v) verts = [v.index]; }
@@ -643,6 +654,97 @@ function smartTapInner(x, y) {
   if (!S.ed.multi && S.ed.pick === 'face' && S.ed.faces.length === 1 && !S.ed.profiles.length && hit.face >= 0 && sameFaceHit(S.ed.faces[0], hit)) { setPickKind('solid'); return bodyTap(x, y); }
   if (hit.face < 0) { setPickKind('solid'); return bodyTap(x, y); } // (an imported mesh without faces)
   setPickKind('face'); return faceTap(x, y);
+}
+
+// ---------- precision cursor: hold (or drag) a finger on the view ----------
+// a cursor rides 72 px above the finger with a magnifier over it and a label of what is under it; letting go picks
+// that (the same as a tap there). Lets a finger pick a 1 mm edge or a small hole rim exactly.
+const CUR_DY = -72;
+let cur = null, hoverGroup = null, hoverKey = '';
+function describeAt(x, y) {
+  const lab = (kind, text, prev) => ({ kind, text, prev });
+  if (S.ed.consTool) { const c = probeCurve(x, y); return c ? lab('curve', `${CONS_NAME[S.ed.consTool]} → ${Draw.entName?.(c.e) || 'curve'}`, { k: c.k, e: c.e }) : lab(null, `Tap a curve for ${CONS_NAME[S.ed.consTool]}`); }
+  const c7 = probeCurve(x, y, 7); if (c7) return lab('curve', `Curve · ${Draw.entName?.(c7.e) || c7.e.t}`, { k: c7.k, e: c7.e });
+  const reg = probeRegion(x, y); if (reg && !reg.used) return lab('region', 'Profile', { k: reg.k, r: reg.r });
+  const ed = S.ed.editingSketch == null ? edgeCandidate(x, y) : null;
+  if (ed && ed.d <= EDGE_PX) {
+    const pts = ed.solid ? ed.solid.P : [ed.W[ed.e.a], ed.W[ed.e.b]];
+    const len = ed.solid ? ed.solid.e.len : M.dist(pts[0], pts[1]);
+    return lab('edge', `Edge${ed.solid?.e.type === 'CIRCLE' ? ' · rim' : ''} · ${fmtLen(len)}`, { pts });
+  }
+  if (reg) return lab('region', 'Profile', { k: reg.k, r: reg.r });
+  const c16 = probeCurve(x, y); if (c16) return lab('curve', `Curve · ${Draw.entName?.(c16.e) || c16.e.t}`, { k: c16.k, e: c16.e });
+  const hit = S.ed.editingSketch != null ? null : view.pickObject(x, y);
+  if (hit && hit.face >= 0) { const o = objById(hit.id); return lab('face', `Face · ${o?.name || ''}`, { o, tri: hit.face }); }
+  if (hit) return lab('body', objById(hit.id)?.name || 'Body', null);
+  return lab(null, 'Nothing here');
+}
+// a light highlight of what the cursor would pick
+function showHover(d) {
+  if (!hoverGroup) { hoverGroup = new THREE.Group(); view.overlayScene.add(hoverGroup); }
+  const key = d ? d.kind + JSON.stringify(d.prev ? [d.prev.pts?.[0], d.prev.e?.id, d.prev.tri, d.prev.k?.id, d.prev.r?.outer?.[0]] : null) : '';
+  if (key === hoverKey) return; hoverKey = key;
+  hoverGroup.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); }); hoverGroup.clear();
+  if (!d || !d.prev) { view.render(); return; }
+  const col = new THREE.Color(view.theme.act || '#8cc4ff').getHex(), p = d.prev;
+  if (p.pts) hoverGroup.add(Draw.fatLine(p.pts, col, 3.4, false));
+  else if (p.e) { const pl = SK.entPolyline(p.e); if (pl) hoverGroup.add(Draw.fatLine(pl.pts.map(q => SK.toW(p.k.plane, q)), col, 3.4, pl.closed)); }
+  else if (p.r) hoverGroup.add(Draw.fatLine(p.r.outer.map(q => SK.toW(p.k.plane, q)), col, 3, true));
+  else if (p.o && p.tri != null) {
+    const reg = regionOf(p.o, p.tri), W = worldVerts(p.o), pos = [];
+    for (const t of reg.faces) for (const i of p.o.mesh.f[t]) pos.push(...W[i]);
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    hoverGroup.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthTest: false, depthWrite: false })));
+  }
+  view.render();
+}
+function placeCursor() {
+  const { x, y } = cur, vp = $('#viewport').getBoundingClientRect(), pc = $('#pcursor'), lp = $('#loupe');
+  pc.style.transform = `translate(${x}px, ${y}px)`;
+  // the magnifier sits above the cursor, or beside it near the top of the screen
+  let lx = x - 62, ly = y - 124 - 40 - 30;
+  if (ly < 8) { ly = y - 62; lx = x + 34; if (lx + 124 > vp.width - 8) lx = x - 34 - 124; }
+  lx = Math.max(8, Math.min(vp.width - 132, lx));
+  lp.style.transform = `translate(${lx}px, ${ly}px)`;
+  const d = describeAt(x, y); cur.d = d;
+  const lab = lp.querySelector('.lp-label'); lab.textContent = d.text; lab.classList.toggle('none', !d.kind);
+  showHover(d);
+  view.magnify(lp.querySelector('canvas'), x, y, 2.4);
+}
+function initCursor() {
+  const cv = $('#loupe canvas'), dpr = Math.min(window.devicePixelRatio || 1, 3);
+  cv.width = 124 * dpr; cv.height = 124 * dpr;
+  let raf = 0;
+  const schedule = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (cur) placeCursor(); }); };
+  view.handlers.cursorStart = (fx, fy) => {
+    if (keypadOpen()) closeKeypad(false);
+    cur = { fx, fy, x: fx, y: fy + CUR_DY };
+    $('#pcursor').hidden = false; $('#loupe').hidden = false; document.body.classList.add('has-cursor');
+    placeCursor();
+  };
+  view.handlers.cursorMove = (fx, fy) => { if (!cur) return; cur.x = fx; cur.y = fy + CUR_DY; schedule(); };
+  const close = () => { cur = null; $('#pcursor').hidden = true; $('#loupe').hidden = true; document.body.classList.remove('has-cursor'); showHover(null); };
+  view.handlers.cursorEnd = () => { if (!cur) return; const { x, y } = cur; close(); onTap(x, y); };
+  view.handlers.cursorCancel = () => close();
+}
+// ---------- zoom bar (right side): push the handle up to zoom in, down to zoom out; it springs back ----------
+function initZoomBar() {
+  const bar = $('#zoombar'), track = bar.querySelector('.zb-track'), thumb = bar.querySelector('.zb-thumb');
+  let active = null;
+  const maxOff = () => Math.max(10, track.clientHeight / 2 - thumb.clientHeight / 2 - 2);
+  const tick = t => {
+    if (!active) return;
+    const dt = Math.min(0.05, (t - active.t) / 1000), k = active.off / maxOff(); active.t = t;
+    // (gentle near the middle, faster at the ends: up to ~3× per second)
+    if (Math.abs(k) > 0.03) view.zoom(Math.exp(Math.sign(k) * k * k * 1.15 * dt));
+    requestAnimationFrame(tick);
+  };
+  const move = e => { if (!active) return; const r = track.getBoundingClientRect(), m = maxOff(); active.off = Math.max(-m, Math.min(m, e.clientY - (r.top + r.height / 2))); thumb.style.transform = `translateY(${active.off}px)`; };
+  track.addEventListener('pointerdown', e => { track.setPointerCapture(e.pointerId); e.stopPropagation(); thumb.classList.add('held'); active = { off: 0, t: performance.now() }; move(e); requestAnimationFrame(tick); });
+  track.addEventListener('pointermove', move);
+  const up = () => { active = null; thumb.classList.remove('held'); thumb.style.transform = ''; };
+  track.addEventListener('pointerup', up); track.addEventListener('pointercancel', up);
+  bar.querySelectorAll('.zb-btn').forEach(b => { b.onclick = () => view.zoom(b.dataset.z === 'in' ? 0.8 : 1.25); });
 }
 
 function setMode(mode) {
@@ -1044,7 +1146,7 @@ function buildStatic() {
   $('#sheet-close').innerHTML = I.close;
   $('#btn-frame').innerHTML = I.frame; $('#btn-snap').innerHTML = I.magnet; $('#btn-xray').innerHTML = I.xray;
   $('#btn-multi').innerHTML = I.multi; $('#btn-all').innerHTML = I.all;
-  $('#btn-browser').innerHTML = I.tree; $('#browser-close').innerHTML = I.close;
+  $('#btn-browser').innerHTML = I.tree; $('#browser-close').innerHTML = I.close; $('#btn-home').innerHTML = I.home;
 }
 
 function bindEvents() {
@@ -1058,6 +1160,8 @@ function bindEvents() {
   $('#btn-look').onclick = () => openLook();
   $('#btn-history').onclick = () => openPanel('history');
   $('#btn-browser').onclick = () => toggleBrowser();
+  $('#btn-home').onclick = () => { view.setView('iso'); setTimeout(() => view.frame(S.doc.objects.filter(isShown).flatMap(worldVerts).concat(allSketchPoints())), 240); };
+  initZoomBar(); initCursor();
   $('#browser-close').onclick = () => toggleBrowser(false);
   $('#sheet-close').onclick = () => toggleSheet(false);
   $('#sheet-tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { sheetTab = b.dataset.tab; $('#sheet-body').scrollTop = 0; renderSheet(); } });
@@ -1146,7 +1250,7 @@ function renderViewButtons() {
 function act(icon, label, fn, cls = '') { return h('button', { class: 'act ' + cls, onclick: fn }, h('span', { html: icon }), h('span', {}, label)); }
 function renderActions() {
   const row = $('#actions');
-  const key = (S.ed.pickLock || '') + (S.ed.consTool || '') + (S.ed.pendingRun ? 'pend' : '') + (S.ed.mateFrom ? 'mate' : '') + (S.ed.isolate ? 'iso' : '') + S.ed.workspace + S.ed.mode + S.ed.selectMode + S.ed.pick + (S.ed.editingSketch ?? '') + (getLast() && getLast().committed && !$('#lastop').hidden ? 'op' : '') + selectedObjs().map(o => o.id + (o.link ? (PJ.outOfDate(o.link.pid) ? 'L!' : 'L') : '')).join(':') + S.ed.faces.map(f => f.planar === false ? 'c' : 'f').join('') + [S.ed.drawSel.size, S.ed.profiles.length, S.ed.faces.length, S.ed.edges.length, S.ed.pick === 'solid' ? S.ed.selected.size : 0].join();
+  const key = (Draw.consSelected()?.cid ?? '') + '|' + (S.ed.pickLock || '') + (S.ed.consTool || '') + (S.ed.pendingRun ? 'pend' : '') + (S.ed.mateFrom ? 'mate' : '') + (S.ed.isolate ? 'iso' : '') + S.ed.workspace + S.ed.mode + S.ed.selectMode + S.ed.pick + (S.ed.editingSketch ?? '') + (getLast() && getLast().committed && !$('#lastop').hidden ? 'op' : '') + selectedObjs().map(o => o.id + (o.link ? (PJ.outOfDate(o.link.pid) ? 'L!' : 'L') : '')).join(':') + S.ed.faces.map(f => f.planar === false ? 'c' : 'f').join('') + [S.ed.drawSel.size, S.ed.profiles.length, S.ed.faces.length, S.ed.edges.length, S.ed.pick === 'solid' ? S.ed.selected.size : 0].join();
   if (row.dataset.k === key) return;
   row.dataset.k = key;
   if (S.ed.workspace === 'draw') {
@@ -1205,6 +1309,8 @@ function renderActions() {
     const c = [];
     // an operation's dialog is open: the bar offers finishing it instead of unrelated commands
     const lop = getLast();
+    // a picked constraint glyph: remove it, or put it down
+    if (Draw.consSelected()) { const cs = Draw.consSelected(); row.replaceChildren(act(I.trash, `Delete ${Draw.consName(cs.t)}`, () => Draw.deleteConsSel(), 'danger'), act(I.check, 'Done', () => { Draw.clearConsSel(); S.ed.drawSel = new Set(); selectionChanged(); })); return; }
     // a command or constraint waiting for picks: a way out
     if (S.ed.consTool) { row.replaceChildren(act(I.check, 'Done', () => { S.ed.consTool = null; S.ed.drawSel = new Set(); refresh(); }, 'primary')); return; }
     if (S.ed.pickLock && !curves && !prof && !faces && !edges && !solids) { row.replaceChildren(act(I.close, 'Cancel', () => { S.ed.pickLock = null; S.ed.pendingRun = null; refresh(); }, 'primary')); return; }
@@ -1316,7 +1422,8 @@ function renderHud() {
     const plural = (n, w) => `${n} ${n === 1 ? w : w === 'body' ? 'bodies' : w + 's'}`;
     const sel = [[S.ed.drawSel.size, 'curve'], [S.ed.profiles.length, 'profile'], [S.ed.faces.length, 'face'], [S.ed.edges.length, 'edge'], [S.ed.pick === 'solid' ? S.ed.selected.size : 0, 'body']].filter(q => q[0]).map(([n, w]) => plural(n, w));
     const bodyName = S.ed.pick === 'solid' && S.ed.selected.size === 1 ? objById([...S.ed.selected][0])?.name : null;
-    if (S.ed.consTool) parts.push(`<b>${CONS_NAME[S.ed.consTool]}</b> · tap ${CONS_NEED[S.ed.consTool] === 1 ? 'a curve' : `two curves (${S.ed.drawSel.size}/2)`}`, 'Pick another constraint, or Select to stop');
+    if (Draw.consSelected()) parts.push(`<b>${Draw.consName(Draw.consSelected().t)} constraint</b>`, 'Delete removes it · the curves it ties are shown picked');
+    else if (S.ed.consTool) parts.push(`<b>${CONS_NAME[S.ed.consTool]}</b> · tap ${CONS_NEED[S.ed.consTool] === 1 ? 'a curve' : `two curves (${S.ed.drawSel.size}/2)`}`, 'Pick another constraint, or Select to stop');
     else if (S.ed.pickLock && !hasPicks()) parts.push(`<b>Tap ${S.ed.pickLock === 'edge' ? 'edges' : S.ed.pickLock === 'face' ? 'a face' : 'a body'}</b>`, S.ed.pendingRun ? 'The command goes on once you tap it' : 'Then choose the command again');
     else if (drawing) parts.push(`<b>${S.ed.tool[0].toUpperCase() + S.ed.tool.slice(1)}</b> · draw on the grid or on any face`, `${S.ed.sketch && SK.activeSketch() ? esc(SK.activeSketch().name) + ' · ' : ''}${Draw.dofText ? Draw.dofText() : ''}`);
     else if (bodyName) parts.push(`<b>${esc(bodyName)}</b> · whole body selected`, 'Tap it again for the face under your finger');
@@ -1378,6 +1485,7 @@ function commands() {
   ];
 }
 function deleteSelection() {
+  if (Draw.consSelected()) return Draw.deleteConsSel();
   if (S.ed.mode === 'edit') return runOp(OPS.deleteGeom);
   if (S.ed.drawSel.size) return Draw.deleteSelected();
   if (S.ed.selected.size) return runOp(OPS.deleteObjs);
@@ -1846,6 +1954,8 @@ async function onFile(e) {
 function onKey(e) {
   if (keypadKey(e)) return;
   if (e.target.closest && e.target.closest('input, textarea')) return;
+  // Plasticity's number typing: with a handle up (Extrude, Push/Pull, Fillet…), digits type its value
+  if (!e.metaKey && !e.ctrlKey && typeKey(e)) { e.preventDefault(); return; }
   const k = e.key.toLowerCase(), cmd = e.metaKey || e.ctrlKey;
   if (cmd && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if (cmd && k === 'y') { e.preventDefault(); redo(); return; }
@@ -1919,7 +2029,7 @@ OPS.setPivotHook(o => {
   const k = [0, 1, 2].reduce((a, i) => (Math.abs(r.d[i]) > Math.abs(r.d[a]) ? i : a), 0);
   return { c: r.c, d: r.d[k] < 0 ? M.mul(r.d, -1) : r.d };
 });
-window.StreamLine = { K, S, view, OPS, F, SK, Draw, Cmd, runOp, undo, redo, getLast, M, serialize, setWorkspace, H, BR, isShown, addSketchedPrim, refresh: () => selectionChanged() };
+window.StreamLine = { gizmoPartAt, K, S, view, OPS, F, SK, Draw, Cmd, runOp, undo, redo, getLast, M, serialize, setWorkspace, H, BR, isShown, addSketchedPrim, refresh: () => selectionChanged() };
 
 // Primitives are built the parametric way: a sketch on a base plane plus an Extrude / Revolve,
 // so they appear in the timeline and can be resized by editing the sketch or the feature.

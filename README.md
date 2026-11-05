@@ -86,6 +86,29 @@ A mix of Fusion 360 and Plasticity. The 3D view fills the whole screen and every
   - **Layers.**
 - **Bottom right:** the view controls and the axis navigator.
 
+### Touch controls
+- **Tap** picks what is under your finger: a face, an edge, a sketch curve or region, a dimension, or a constraint glyph. A picked constraint shows the curves it ties, and **Delete** removes it.
+- **Precision cursor:** hold a finger on the view, or drag it, to bring up a cursor 72 px above the finger with a **magnifier** over it.
+  - The magnifier says what is under the cursor, for example "Edge · rim · 18.85 mm", and lights it up.
+  - Letting go picks it. This makes 1 mm edges and small hole rims easy to hit.
+- **Rotating the view:** one finger never moves the view. Turn it with the **orientation cube** at the bottom right (Fusion's ViewCube):
+  - Drag the cube to turn the view.
+  - Tap a face for its flat view, or an edge or corner for a 3D view.
+  - **Home** (above the cube) goes back to the 3D view of everything.
+- **Zooming:** use the **zoom bar** on the right side.
+  - Push its handle up to zoom in, or down to zoom out. The further you push, the faster it zooms, and the handle springs back to the middle.
+  - **+** and **−** zoom by steps.
+- **Two fingers** still pan and pinch.
+- **Gizmos on what you pick** (Plasticity):
+  - **A body** gets move arrows, plane squares, rotation arcs and a free-move centre. Drag one to move or turn the body; Snap applies.
+  - **A flat face** gets a push / pull arrow.
+  - **A sketch profile** gets an extrude arrow.
+  - **Edges** get a fillet ball; drag it to round them.
+  - A tap on a gizmo that doesn't drag it is an ordinary tap, so nothing is added to the history.
+- **Number typing** (Plasticity):
+  - An operation's handle shows its value in a bubble beside the arrow; tap it to type an exact value.
+  - With a keyboard, just type: digits go to the handle's value, or after a gizmo move or turn, to the distance or angle just dragged.
+
 ### Sketches on faces (Fusion-style)
 - **Curve colours:**
   - Blue while a curve is free to move; white (black on the Daylight theme) once it is fully constrained.

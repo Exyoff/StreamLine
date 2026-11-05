@@ -471,6 +471,7 @@ try {
       L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [2002, 2] }], distance: 10, mode: 'new', target: null });
       L.runOp(F.sketchOpNew('pin', XY(0), null, k => { F.addEntity(k, { t: 'circle', c: [2060, 40], r: 3 }); }));
       L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [2060, 40] }], distance: 30, mode: 'new', target: null });
+      L.S.settings.cmdline = false; // (the AutoCAD command line from an earlier check would lift the cube over the parts)
       L.S.ed.selected = new Set(); L.S.ed.pick = 'face'; L.S.ed.drawSel = new Set(); L.S.ed.profiles = []; L.S.ed.faces = []; L.S.ed.edges = []; L.refresh(); return L.S.doc.objects.at(-1).id;
     });
     await p.evaluate(() => { [...document.querySelectorAll('#keypad button')].find(b => b.textContent === 'Cancel')?.click(); document.querySelector('#lastop .ib[aria-label=Done]')?.click(); }); await p.waitForTimeout(200);
@@ -933,6 +934,90 @@ try {
   });
   check(skf.onFace.xray === false && skf.onFace.grid === 6 && skf.onFace.dark === true && (!skf.hadGround || (skf.free.xray === true && skf.free.dark === false)) && skf.after == null,
     `Editing a sketch on a face keeps the part solid with the grid on the face; a sketch on a free plane ghosts the bodies (${JSON.stringify(skf)})`);
+  // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
+  // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
+  // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
+  {
+    await p.evaluate(() => { const L = StreamLine; document.querySelector('#scrim')?.click(); L.S.ed.tool = 'select'; L.S.ed.selected = new Set(); L.S.ed.faces = []; L.S.ed.edges = []; L.S.ed.drawSel = new Set(); L.S.ed.profiles = []; L.refresh(); });
+    await p.evaluate(async () => { const m = await import('./js/ops.js'); m.clearLast(); });
+    const tid = await p.evaluate(() => {
+      const L = StreamLine, F = L.F, XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+      L.runOp(F.sketchOpNew('tc', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 50000, y: -20, w: 60, h: 40 }); F.addEntity(k, { t: 'circle', c: [50012, 10], r: 3 }); }));
+      L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [50002, -18] }], distance: 12, mode: 'new', target: null });
+      L.S.ed.sketch = null; L.S.ed.selected = new Set(); L.refresh(); L.view.setView('iso');
+      return L.S.doc.objects.at(-1).id;
+    });
+    await p.waitForTimeout(400); await frame([50000, -20, 0], [50060, 20, 12]); await p.waitForTimeout(700);
+    const cdp2 = await ctx.newCDPSession(p);
+    const touch = (type, x, y) => cdp2.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1, radiusX: 4, radiusY: 4 }] });
+    const tdrag = async (a, b, n = 10) => { await touch('touchStart', a.x, a.y); for (let i = 1; i <= n; i++) { await touch('touchMove', a.x + (b.x - a.x) * i / n, a.y + (b.y - a.y) * i / n); await p.waitForTimeout(25); } await touch('touchEnd'); await p.waitForTimeout(400); };
+    const tapT = async q => { await touch('touchStart', q.x, q.y); await touch('touchEnd'); await p.waitForTimeout(400); };
+    const camKey = () => p.evaluate(() => { const c = StreamLine.view.cam; return [c.yaw, c.pitch, c.dist].map(v => v.toFixed(4)).join(); });
+    // one finger dragged across empty space: the view stays put
+    await p.waitForTimeout(600); const k0 = await camKey(); await tdrag({ x: 200, y: 560 }, { x: 290, y: 515 }); const k1 = await camKey();
+    check(k0 === k1, `A one-finger drag never moves the view (${k0} → ${k1})`);
+    // the orientation cube: tap its middle (the TOP face in this iso view) → top view
+    const nav = await p.locator('#nav').boundingBox();
+    await p.mouse.click(nav.x + nav.width / 2, nav.y + nav.height / 2 - 16); await p.waitForTimeout(500);
+    const top = await p.evaluate(() => [StreamLine.view.cam.yaw, StreamLine.view.cam.pitch].map(v => Math.round(v * 180 / Math.PI)).join());
+    check(top === '-90,90', `Tapping the orientation cube's TOP face gives the top view (${top})`);
+    await p.evaluate(() => StreamLine.view.setView('iso')); await p.waitForTimeout(400);
+    // the zoom bar: push the handle up → closer
+    const zb = await p.locator('#zoombar .zb-thumb').boundingBox(), d0 = await p.evaluate(() => StreamLine.view.cam.dist);
+    await p.mouse.move(zb.x + zb.width / 2, zb.y + zb.height / 2); await p.mouse.down(); await p.mouse.move(zb.x + zb.width / 2, zb.y + zb.height / 2 - 40, { steps: 4 }); await p.waitForTimeout(400); await p.mouse.up(); await p.waitForTimeout(300);
+    const d1 = await p.evaluate(() => StreamLine.view.cam.dist);
+    check(d1 < d0 * 0.95, `Pushing the zoom bar's handle up zooms in (${d0.toFixed(1)} → ${d1.toFixed(1)})`);
+    await frame([50000, -20, 0], [50060, 20, 12]); await p.waitForTimeout(700);
+    // hold above-left of the hole rim: the cursor rides above the finger, the magnifier names the rim, release picks it
+    const rim = await projW([50015, 10, 12]);
+    await touch('touchStart', rim.x, rim.y + 72 + 12); await p.waitForTimeout(450);
+    for (let i = 1; i <= 4; i++) { await touch('touchMove', rim.x, rim.y + 72 + 12 - i * 3); await p.waitForTimeout(40); }
+    await p.waitForTimeout(250);
+    const lp = await p.evaluate(() => ({ shown: !document.querySelector('#loupe').hidden, text: document.querySelector('#loupe .lp-label').textContent }));
+    await shot('7-loupe');
+    await touch('touchEnd'); await p.waitForTimeout(400);
+    const rimPick = await p.evaluate(() => ({ pick: StreamLine.S.ed.pick, edges: StreamLine.S.ed.edges.length, loupe: !document.querySelector('#loupe').hidden }));
+    check(lp.shown && /Edge · rim/.test(lp.text) && rimPick.pick === 'edge' && rimPick.edges === 1 && !rimPick.loupe, `Holding a finger shows the precision cursor and magnifier ("${lp.text}"); letting go picks it`);
+    // a face: its push / pull arrow drags the face out, and its value bubble takes a typed value
+    await p.evaluate(() => { const L = StreamLine; L.S.ed.edges = []; L.refresh(); }); await p.waitForTimeout(300);
+    const v0 = await p.evaluate(id => StreamLine.K.volume(StreamLine.S.doc.objects.find(o => o.id === id).shape), tid);
+    let q = await projW([50040, -5, 12]); await tapT(q);
+    const wpp = await p.evaluate(() => StreamLine.view.worldPerPixel([50040, -5, 12]));
+    const a0 = await projW([50040, -5, 12 + wpp * 84 * 0.8 * 0.6]), a1 = await projW([50040, -5, 12 + wpp * 84 * 0.8 * 0.6 + 6]);
+    await tdrag(a0, a1);
+    const pp = await p.evaluate(id => ({ v: StreamLine.K.volume(StreamLine.S.doc.objects.find(o => o.id === id).shape), op: StreamLine.H.hist().at(-1).op }), tid);
+    const vb = await p.evaluate(() => { const el = [...document.querySelectorAll('#labels .vlabel.val')].find(e => e.style.display !== 'none'); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+    if (vb) { await tapT(vb); await p.waitForTimeout(300); for (const kk of ['4', 'ok']) { await p.tap(`#keypad [data-k="${kk}"]`); await p.waitForTimeout(200); } await p.waitForTimeout(300); }
+    const typed = await p.evaluate(id => StreamLine.K.volume(StreamLine.S.doc.objects.find(o => o.id === id).shape), tid);
+    const area = 60 * 40 - Math.PI * 9;
+    check(pp.op === 'F.pushPullOp' && pp.v > v0 + 1 && vb && Math.abs(typed - (v0 + area * 4)) < 1e-6, `A picked face gets a push / pull arrow to drag, and its value bubble takes a typed 4 mm (${(typed - v0).toFixed(3)} mm³)`);
+    // a body (the face tapped again): move arrows and rotation arcs; dragging an arc turns it
+    await p.evaluate(async () => { const m = await import('./js/ops.js'); m.clearLast(); }); await p.waitForTimeout(600);
+    await p.evaluate(() => { const L = StreamLine; L.S.ed.faces = []; L.S.ed.selected = new Set(); L.refresh(); }); await p.waitForTimeout(300);
+    q = await projW([50040, -5, 16]); await tapT(q); await tapT(q);
+    const piv = await p.evaluate(() => StreamLine.OPS.computePivot()), s = await p.evaluate(pv => StreamLine.view.worldPerPixel(pv) * 84, piv);
+    const g0 = await projW([piv[0] + s * 0.74 * Math.cos(0.45), piv[1] + s * 0.74 * Math.sin(0.45), piv[2]]), g1 = await projW([piv[0] + s * 0.74 * Math.cos(1.15), piv[1] + s * 0.74 * Math.sin(1.15), piv[2]]);
+    const part = await p.evaluate(q => { const r = document.querySelector('#gl').getBoundingClientRect(); return StreamLine.gizmoPartAt(q.x - r.left, q.y - r.top); }, g0);
+    await tdrag(g0, g1);
+    const rot = await p.evaluate(() => { const r = StreamLine.H.hist().at(-1); return { op: r.op, mode: r.params.mode, axis: r.params.axis, angle: r.params.angle }; });
+    check(part === 'arc-z' && rot.op === 'O.transform' && rot.mode === 'rotate' && rot.axis === 'z' && Math.abs(rot.angle) >= 15, `A picked body gets move arrows and rotation arcs: dragging the Z arc turns it (${JSON.stringify(rot)})`);
+    await p.evaluate(async () => { const m = await import('./js/ops.js'); m.clearLast(); const L = StreamLine; L.S.ed.selected = new Set(); L.S.ed.faces = []; L.refresh(); });
+    // a constraint glyph is picked like anything else, and Delete removes the constraint
+    const cgSk = await p.evaluate(() => {
+      const L = StreamLine, F = L.F, XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+      L.runOp(F.sketchOpNew('cg', XY(0), null, k => { F.addEntity(k, { t: 'line', a: [50100, 0], b: [50140, 3] }); }));
+      const sk = L.S.ed.sketch, id = L.SK.sketchById(sk).ents[0].id;
+      L.S.ed.drawSel = new Set([id]); L.Draw.constrain('h'); L.S.ed.drawSel = new Set(); L.refresh();
+      return sk;
+    });
+    await frame([50095, -12, 0], [50145, 12, 0]); await p.waitForTimeout(600);
+    const glyph = await p.evaluate(() => { const el = [...document.querySelectorAll('#labels .vlabel.cons')].find(e => e.style.display !== 'none'); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+    if (glyph) await tapT(glyph);
+    const cs = await p.evaluate(() => StreamLine.Draw.consSelected());
+    if (cs) { await p.locator('#actions .act', { hasText: 'Delete' }).tap(); await p.waitForTimeout(300); }
+    const consLeft = await p.evaluate(sk => (StreamLine.SK.sketchById(sk).cons || []).length, cgSk);
+    check(glyph && cs && cs.t === 'h' && consLeft === 0, `A tap on a constraint glyph picks the constraint, and Delete removes it (${cs && cs.t}, ${consLeft} left)`);
+  }
   // Look: theme, lighting, surface and edge width from the top bar's Look button
   await p.tap('#btn-look'); await p.waitForTimeout(400);
   const lookBtn = async txt => { await p.locator('#popover .swatch', { hasText: txt }).first().tap(); await p.waitForTimeout(250); };

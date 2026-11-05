@@ -653,6 +653,11 @@ function bindPointer() {
   document.addEventListener('gesturechange', e => e.preventDefault());
   canvas.addEventListener('contextmenu', e => e.preventDefault());
 
+  // one finger never moves the view (the orientation cube turns it, the zoom bar zooms, two fingers pan / pinch):
+  // a tap picks, a drag on a handle drags it, and a held (or dragged) finger brings up the precision cursor
+  let holdT = 0;
+  const cursorOn = () => !!view.handlers.cursorStart && !view.cam.lock2D;
+  const startCursor = (x, y) => { clearTimeout(holdT); if (mode !== 'pending' || !cursorOn()) return; mode = 'cursor'; view.handlers.cursorStart(x, y); };
   canvas.addEventListener('pointerdown', e => {
     canvas.setPointerCapture(e.pointerId);
     const p = rel(e);
@@ -661,8 +666,10 @@ function bindPointer() {
       moved = false; startT = performance.now(); multiTap = null;
       if (e.pointerType === 'mouse' && (e.button === 1 || e.button === 2 || e.shiftKey)) mode = 'pan';
       else if (view.handlers.dragStart && view.handlers.dragStart(p.x, p.y, e)) mode = 'gizmo';
-      else mode = 'pending';
+      else { mode = 'pending'; if (e.pointerType !== 'mouse') holdT = setTimeout(() => startCursor(p.x, p.y), 320); }
     } else if (pts.size === 2) {
+      clearTimeout(holdT);
+      if (mode === 'cursor') view.handlers.cursorCancel && view.handlers.cursorCancel();
       if (mode === 'gizmo') view.handlers.dragCancel && view.handlers.dragCancel();
       const [a, b] = [...pts.values()];
       pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
@@ -680,8 +687,8 @@ function bindPointer() {
     const thr = e.pointerType === 'mouse' ? 3 : 8;
     if (Math.hypot(q.x - p.sx, q.y - p.sy) > thr) { moved = true; if (multiTap && pts.size >= 2) multiTap = null; }
     p.x = q.x; p.y = q.y;
-    if (mode === 'pending' && moved) mode = 'orbit';
-    if (mode === 'orbit') (view.cam.lock2D ? view.pan(dx, dy) : view.orbit(dx, dy));
+    if (mode === 'pending' && moved) { clearTimeout(holdT); if (cursorOn()) { mode = 'cursor'; view.handlers.cursorStart(p.sx, p.sy); } else mode = view.cam.lock2D ? 'pan' : 'none'; }
+    if (mode === 'cursor') view.handlers.cursorMove(q.x, q.y);
     else if (mode === 'pan') view.pan(dx, dy);
     else if (mode === 'gizmo') view.handlers.dragMove(q.x, q.y, e);
     else if (mode === 'pinch' && pts.size === 2) {
@@ -695,8 +702,9 @@ function bindPointer() {
   const up = e => {
     const p = pts.get(e.pointerId);
     if (!p) return;
-    pts.delete(e.pointerId);
-    if (mode === 'gizmo') { view.handlers.dragEnd(); mode = null; }
+    pts.delete(e.pointerId); clearTimeout(holdT);
+    if (mode === 'cursor') { mode = null; if (e.type === 'pointerup') view.handlers.cursorEnd(); else view.handlers.cursorCancel(); }
+    if (mode === 'gizmo') { const r = view.handlers.dragEnd(); mode = null; if (r === 'tap' && e.type === 'pointerup' && pts.size === 0) view.handlers.tap && view.handlers.tap(p.x, p.y, e); } // (a press on a gizmo that never dragged is a tap)
     else if (mode === 'pending' && pts.size === 0 && e.type === 'pointerup') { mode = null; view.handlers.tap && view.handlers.tap(p.x, p.y, e); }
     if (pts.size === 0) {
       if (multiTap && performance.now() - multiTap.t < 350) emit(multiTap.n === 3 ? 'gestureRedo' : 'gestureUndo');
@@ -712,45 +720,94 @@ function bindPointer() {
   }, { passive: false });
 }
 
-// ---------- navigation gizmo (axis bubbles) ----------
+// ---------- orientation cube (Fusion's ViewCube): drag to turn the view; tap a face, edge or corner ----------
+// faces: normal, the label's right and up directions (seen from outside)
+const CUBE = [
+  { n: [0, 0, 1], r: [1, 0, 0], u: [0, 1, 0], label: 'TOP' }, { n: [0, 0, -1], r: [1, 0, 0], u: [0, -1, 0], label: 'BOTTOM' },
+  { n: [0, -1, 0], r: [1, 0, 0], u: [0, 0, 1], label: 'FRONT' }, { n: [0, 1, 0], r: [-1, 0, 0], u: [0, 0, 1], label: 'BACK' },
+  { n: [1, 0, 0], r: [0, 1, 0], u: [0, 0, 1], label: 'RIGHT' }, { n: [-1, 0, 0], r: [0, -1, 0], u: [0, 0, 1], label: 'LEFT' },
+];
+const NAMED = { '0,0,1': 'top', '0,0,-1': 'bottom', '0,-1,0': 'front', '0,1,0': 'back', '1,0,0': 'right', '-1,0,0': 'left' };
+// look along a direction (toward the viewer): a named face gives its orthographic view, an edge or corner a 3D one
+view.lookDir = d => {
+  const key = d.map(v => Math.round(v)).join(), name = NAMED[key];
+  if (name && Math.abs(Math.hypot(...d) - 1) < 1e-6) return view.setView(name);
+  const c = view.cam, n = M3norm(d);
+  if (c.autoOrtho) { c.ortho = false; c.autoOrtho = false; }
+  animateTo(Math.atan2(n[1], n[0]), Math.asin(Math.max(-1, Math.min(1, n[2]))));
+  emit('viewchange');
+};
+const M3norm = v => { const l = Math.hypot(...v) || 1; return v.map(x => x / l); };
 view.initNav = (cv) => {
   const ctx = cv.getContext('2d');
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
-  const SZ = 96; cv.width = SZ * dpr; cv.height = SZ * dpr; cv.style.width = SZ + 'px'; cv.style.height = SZ + 'px';
-  let bubbles = [];
-  const axes = [['x', 1, '#f2545b', 'X'], ['y', 1, '#7cc243', 'Y'], ['z', 1, '#4f8ff7', 'Z'], ['x', -1, '#f2545b', ''], ['y', -1, '#7cc243', ''], ['z', -1, '#4f8ff7', '']];
+  const SZ = 104, R = 27, C = SZ / 2;
+  cv.width = SZ * dpr; cv.height = SZ * dpr; cv.style.width = SZ + 'px'; cv.style.height = SZ + 'px';
+  let faces = [], press = null;
+  const proj = (v, inv) => { const t = new THREE.Vector3(...v).transformDirection(inv); return { x: t.x * R, y: -t.y * R, z: t.z }; };
   function draw() {
-    const cam = camera();
+    const inv = camera().matrixWorldInverse;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, SZ, SZ);
-    const inv = cam.matrixWorldInverse;
-    const R = 34, c = SZ / 2;
-    bubbles = axes.map(([a, s, col, lab]) => {
-      const v = new THREE.Vector3(a === 'x' ? s : 0, a === 'y' ? s : 0, a === 'z' ? s : 0).transformDirection(inv);
-      return { a, s, col, lab, x: c + v.x * R, y: c - v.y * R, z: v.z };
-    }).sort((p, q) => p.z - q.z);
-    ctx.fillStyle = view.theme.nav; ctx.beginPath(); ctx.arc(c, c, R + 12, 0, Math.PI * 2); ctx.fill();
-    for (const b of bubbles) {
-      if (b.s > 0) { ctx.strokeStyle = b.col; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(c, c); ctx.lineTo(b.x, b.y); ctx.stroke(); }
-      ctx.beginPath(); ctx.arc(b.x, b.y, b.s > 0 ? 10 : 8, 0, Math.PI * 2);
-      if (b.s > 0) { ctx.fillStyle = b.col; ctx.fill(); }
-      else { ctx.fillStyle = b.col + '55'; ctx.fill(); ctx.strokeStyle = b.col; ctx.lineWidth = 1.5; ctx.stroke(); }
-      if (b.lab) { ctx.fillStyle = '#111'; ctx.font = '700 11px -apple-system,system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(b.lab, b.x, b.y + 0.5); }
+    const light = view.theme.name === 'Daylight';
+    faces = CUBE.map(f => ({ ...f, N: proj(f.n, inv), U: proj(f.r, inv), V: proj(f.u, inv) })).filter(f => f.N.z > 1e-3).sort((a, b) => a.N.z - b.N.z);
+    // the axis triad from the cube's back-left-bottom corner
+    const O = proj([-1, -1, -1], inv);
+    for (const [v, col] of [[[1, 0, 0], '#f2545b'], [[0, 1, 0], '#7cc243'], [[0, 0, 1], '#4f8ff7']]) {
+      const e = proj(v, inv); ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath();
+      ctx.moveTo(C + O.x, C + O.y); ctx.lineTo(C + O.x + e.x * 2.6, C + O.y + e.y * 2.6); ctx.stroke();
+    }
+    for (const f of faces) {
+      const q = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([s, t]) => ({ x: C + f.N.x + f.U.x * s + f.V.x * t, y: C + f.N.y + f.U.y * s + f.V.y * t }));
+      const shade = 0.78 + 0.22 * f.N.z, hot = press && press.face === f.label;
+      ctx.fillStyle = hot ? '#3d8bfd' : light ? `rgb(${Math.round(235 * shade)},${Math.round(239 * shade)},${Math.round(246 * shade)})` : `rgba(${Math.round(214 * shade)},${Math.round(222 * shade)},${Math.round(236 * shade)},0.94)`;
+      ctx.strokeStyle = light ? 'rgba(20,30,50,0.45)' : 'rgba(10,14,24,0.65)'; ctx.lineWidth = 1;
+      ctx.beginPath(); q.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.closePath(); ctx.fill(); ctx.stroke();
+      // the label, painted on the face (an affine map of the face's own right / down directions)
+      if (f.N.z > 0.25) {
+        const k = 0.011;
+        ctx.save();
+        ctx.setTransform(f.U.x * dpr * k, f.U.y * dpr * k, -f.V.x * dpr * k, -f.V.y * dpr * k, (C + f.N.x) * dpr, (C + f.N.y) * dpr);
+        ctx.fillStyle = hot ? '#ffffff' : '#1d2433'; ctx.font = `700 ${f.label.length > 4 ? 30 : 34}px -apple-system,system-ui,sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.globalAlpha = Math.min(1, (f.N.z - 0.25) * 3); ctx.fillText(f.label, 0, 2); ctx.restore();
+      }
     }
   }
   view.renderHooks.push(draw);
+  // what a point on the cube means: a face (its middle), an edge (its outer band) or a corner (both bands)
+  const regionAt = (x, y) => {
+    for (const f of faces.slice().reverse()) {
+      const px = x - C - f.N.x, py = y - C - f.N.y, det = f.U.x * f.V.y - f.U.y * f.V.x; if (Math.abs(det) < 1e-6) continue;
+      const s = (px * f.V.y - py * f.V.x) / det, t = (f.U.x * py - f.U.y * px) / det;
+      if (Math.abs(s) > 1.02 || Math.abs(t) > 1.02) continue;
+      const d = f.n.slice();
+      if (Math.abs(s) > 0.6) for (let i = 0; i < 3; i++) d[i] += Math.sign(s) * f.r[i];
+      if (Math.abs(t) > 0.6) for (let i = 0; i < 3; i++) d[i] += Math.sign(t) * f.u[i];
+      return { face: f.label, dir: d };
+    }
+    return null;
+  };
   let drag = null;
-  cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); drag = { x: e.offsetX, y: e.offsetY, sx: e.offsetX, sy: e.offsetY, moved: false }; e.stopPropagation(); });
+  cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); drag = { x: e.offsetX, y: e.offsetY, sx: e.offsetX, sy: e.offsetY, moved: false }; press = regionAt(e.offsetX, e.offsetY); view.render(); e.stopPropagation(); });
   cv.addEventListener('pointermove', e => {
     if (!drag) return;
     const dx = e.offsetX - drag.x, dy = e.offsetY - drag.y; drag.x = e.offsetX; drag.y = e.offsetY;
-    if (Math.hypot(e.offsetX - drag.sx, e.offsetY - drag.sy) > 4) drag.moved = true;
+    if (Math.hypot(e.offsetX - drag.sx, e.offsetY - drag.sy) > 4) { drag.moved = true; press = null; }
     if (drag.moved) view.orbit(dx * 1.6, dy * 1.6);
   });
-  cv.addEventListener('pointerup', e => {
-    if (drag && !drag.moved) {
-      const hit = bubbles.slice().reverse().find(b => Math.hypot(b.x - e.offsetX, b.y - e.offsetY) < 14);
-      if (hit) view.alignAxis(hit.a, hit.s);
-    }
-    drag = null;
-  });
+  const end = e => {
+    if (drag && !drag.moved && e.type === 'pointerup') { const r = regionAt(e.offsetX, e.offsetY); if (r) view.lookDir(r.dir); }
+    drag = null; press = null; view.render();
+  };
+  cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
 };
+// a magnified copy of the view around (x, y), for the precision cursor's loupe (drawn right after a render, so
+// the drawing buffer is still there)
+view.magnify = (dst, x, y, k = 2.4) => {
+  renderFrame();
+  const src = renderer.domElement, pr = src.width / Math.max(1, canvas.clientWidth);
+  // (k is the magnification on screen: the source span is the loupe's CSS size / k, in the view's device pixels)
+  const g = dst.getContext('2d'), w = dst.width, h = dst.height, sw = (dst.clientWidth || w) / k * pr, sh = (dst.clientHeight || h) / k * pr;
+  g.imageSmoothingEnabled = true; g.clearRect(0, 0, w, h);
+  g.drawImage(src, x * pr - sw / 2, y * pr - sh / 2, sw, sh, 0, 0, w, h);
+};
+
