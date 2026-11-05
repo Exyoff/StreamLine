@@ -1094,12 +1094,12 @@ export function mateGeom(f) {
   return null;
 }
 // the move that puts face a onto face b: { v, kind } or an error message
-export function mateSolve(a, b) {
+export function mateSolve(a, b, gap = 0) {
   const A = mateGeom(a), B = mateGeom(b);
   if (!A || !B) return 'Mate works with flat and round faces';
   if (A.kind === 'plane' && B.kind === 'plane') {
     if (Math.abs(M.dot(A.n, B.n)) < 0.9999) return 'Those faces are not parallel (rotate the part first)';
-    return { kind: 'plane', v: M.mul(B.n, M.dot(B.n, M.sub(B.p, A.p))) }; // slide along the normal onto the other plane
+    return { kind: 'plane', v: M.mul(B.n, M.dot(B.n, M.sub(B.p, A.p)) + gap) }; // slide along the normal onto the other plane (a gap stands it off)
   }
   if (A.kind === 'axis' && B.kind === 'axis') {
     if (Math.abs(M.dot(A.d, B.d)) < 0.9999) return 'Those axes are not parallel (rotate the part first)';
@@ -1118,12 +1118,14 @@ function solveMate(p) {
     const da = A0.kind === 'plane' ? A0.n : A0.d, db = B0.kind === 'plane' ? B0.n : B0.d, k = M.dot(da, db);
     if (Math.abs(k) < 0.9999) turnObject(o, da, A0.kind === 'plane' ? M.mul(db, -1) : (k >= 0 ? db : M.mul(db, -1)), A0.kind === 'plane' ? A0.p : A0.c);
   }
-  const r = mateSolve(p.a, p.b); if (typeof r === 'string') return r;
+  const r = mateSolve(p.a, p.b, +p.gap || 0); if (typeof r === 'string') return r;
   if (M.len(r.v) > 1e-12) o.loc = M.add(o.loc, r.v).map(v => (Math.abs(v - Math.round(v * 1e9) / 1e9) < 1e-9 ? Math.round(v * 1e9) / 1e9 : v));
 }
 export const mateOp = {
   label: p => `Mate ${objById(p.a.obj)?.name || 'part'} → ${objById(p.b.obj)?.name || 'part'}`,
   touch: p => ({ ids: [p.a.obj], mesh: false }),
+  // flat-to-flat mates take a gap: a clearance (0.5 mm round a drawer), or − to overlap
+  fields: p => (mateGeom(p.a)?.kind === 'plane' ? [lenF('gap', 'Gap (− overlaps)')] : []),
   apply(p) { return solveMate(p); },
 };
 // re-solve every mate in the history (after any edit), in order, twice so chains of mates settle

@@ -16,6 +16,7 @@ import { editAndSolve, dof as sketchDof, constrainedEntities } from './constrain
 import { defSize } from './operators.js';
 import { I } from './icons.js';
 import * as H from './history.js';
+import * as K from './kernel.js';
 
 const D = Math.PI / 180;
 export const corner = { kind: 'fillet', size: null };
@@ -212,7 +213,7 @@ export function move(x, y) {
   view.render(); emit('drawcard');
 }
 export function hover(x, y) {
-  if ((S.ed.workspace !== 'draw' && !studio()) || ['select', 'move', 'rotate', 'scale', 'measure', 'edge', 'trim', 'dim', 'corner', 'extend'].includes(tool())) return;
+  if ((S.ed.workspace !== 'draw' && !studio()) || (['select', 'move', 'rotate', 'scale', 'measure', 'edge', 'trim', 'dim', 'corner', 'extend'].includes(tool()) && !curveCmd())) return;
   if (studio() && !DRAW_PRIMARY.has(tool()) && !EDIT_TOOLS.has(tool())) return;
   if (studio() && DRAW_PRIMARY.has(tool()) && waitingFirstPoint()) chooseTarget(x, y);
   if (!sk()) return;
@@ -927,6 +928,45 @@ function ensureCmd() {
   if ((t === 'erase' || t === 'explode' || t === 'list' || t === 'arrayrect') && S.ed.drawSel.size) { runSelectionCommand(t); }
   return st.cmd;
 }
+// Outline: selected text becomes closed glyph curves (lines) that Extrude / Cut can emboss or engrave; the
+// letters' filled regions come back selected, ready for Extrude
+export async function outlineText() {
+  const s = sk(); if (!s) return;
+  const texts = [...S.ed.drawSel].map(id => SK.entById(s, id)).filter(e => e && e.t === 'text');
+  if (!texts.length) return toast('Select some text first');
+  let font; try { font = await K.textFont(); } catch (err) { return toast('Could not load the outline font'); }
+  const inks = [], plan = texts.map(e => {
+    const a = (e.rot || 0) * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a);
+    const T = q => [e.p[0] + q[0] * c - q[1] * sn, e.p[1] + q[0] * sn + q[1] * c];
+    const loops = K.textContours(font, e.str, e.h).map(L => L.map(T));
+    // filled areas: contours nested an even number of levels deep; a point just inside one edge, outside its holes
+    const depth = L => loops.filter(M => M !== L && SK.pointInPoly(L[0], M)).length;
+    loops.forEach(L => {
+      const d = depth(L); if (d % 2) return;
+      const holes = loops.filter(M => M !== L && depth(M) === d + 1 && SK.pointInPoly(M[0], L)), eps = e.h * 0.01;
+      for (let i = 0; i < L.length; i++) {
+        const A = L[i], B = L[(i + 1) % L.length], len = SK.d2(A, B); if (len < eps * 2) continue;
+        const m = [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2], nrm = [-(B[1] - A[1]) / len, (B[0] - A[0]) / len];
+        const pt = [1, -1].map(sg => [m[0] + nrm[0] * eps * sg, m[1] + nrm[1] * eps * sg]).find(q => SK.pointInPoly(q, L) && !holes.some(hh => SK.pointInPoly(q, hh)));
+        if (pt) { inks.push(pt); break; }
+      }
+    });
+    return { e, loops };
+  });
+  if (!plan.some(p => p.loops.length)) return toast('That text has no letters to outline');
+  runOp(F.sketchOp('Outline text', s.id, k => {
+    for (const { e, loops } of plan) {
+      k.ents = k.ents.filter(x => x.id !== e.id);
+      for (const L of loops) for (let i = 0; i < L.length; i++) F.addEntity(k, { t: 'line', a: L[i].slice(), b: L[(i + 1) % L.length].slice() });
+    }
+  }));
+  S.ed.drawSel = new Set(); S.ed.faces = []; S.ed.edges = [];
+  S.ed.profiles = inks.map(pt => ({ sk: s.id, pt }));
+  toast(`${inks.length} letter areas selected — Extrude to emboss, or Extrude into the body to engrave`);
+  emit('selection');
+}
+/* a 2D Move/Rotate/Scale on selected curves (same tool names as the 3D gizmo) */
+export const curveCmd = () => !!(st.cmd && st.cmd.tool === tool() && ['move', 'rotate', 'scale'].includes(tool()) && S.ed.drawSel.size);
 export function startCommand() { st.cmd = null; if (EDIT_TOOLS.has(tool())) ensureCmd(); emit('drawcard'); view.render(); }
 function pointStage() { const c = st.cmd; return c && ['base', 'second', 'center', 'vertex', 'first', 'side', 'p1', 'p2', 'collect', 'axis', 'other'].includes(c.stage); }
 function fromPt() {

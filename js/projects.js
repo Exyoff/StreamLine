@@ -36,7 +36,7 @@ function exportParts() {
   return S.doc.objects.filter(o => o.shape && !o.hidden).flatMap(o => partsOf(o)).map(pt => ({ name: pt.name, color: pt.color, brep: K.serialize(pt.shape()) }));
 }
 const sigCache = new WeakMap();
-const shapeSig = sh => { let v = sigCache.get(sh); if (!v) { v = [K.volume(sh), K.area(sh)]; sigCache.set(sh, v); } return v; };
+const shapeSig = sh => { let v = sigCache.get(sh); if (!v) { v = K.massSig(sh); sigCache.set(sh, v); } return v; };
 let saveT = 0, saving = null;
 export function scheduleLibrarySave() { clearTimeout(saveT); saveT = setTimeout(() => saveNow(), 1500); }
 export async function saveNow() {

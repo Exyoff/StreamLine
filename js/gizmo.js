@@ -7,6 +7,7 @@ import * as OPS from './operators.js';
 import { fmtLen, fmtAng, fmtNum } from './units.js';
 import * as M from './mesh.js';
 import { xfFor } from './scene.js';
+import * as Draw from './draw.js';
 
 const AX = [
   { k: 'x', v: [1, 0, 0], col: '#f2545b' },
@@ -38,7 +39,7 @@ function kind() {
   if (last && last.handle) return 'handle';
   if (S.ed.workspace !== 'model') return null;
   if (S.ed.mode === 'object' && S.ed.pick && S.ed.pick !== 'solid' && !OPS.subSelection()) return null;
-  if (['move', 'rotate', 'scale'].includes(S.ed.tool) && OPS.computePivot()) return S.ed.tool;
+  if (['move', 'rotate', 'scale'].includes(S.ed.tool) && !Draw.curveCmd?.() && OPS.computePivot()) return S.ed.tool;
   return null;
 }
 

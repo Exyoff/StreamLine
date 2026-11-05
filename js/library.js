@@ -23,7 +23,7 @@ export async function list() {
 export const get = id => tx('readonly', s => s.get(id));
 export const put = rec => tx('readwrite', s => s.put(rec));
 export const remove = id => tx('readwrite', s => s.delete(id));
-export async function rename(id, name) { const r = await get(id); if (r) { r.name = name; r.updated = Date.now(); await put(r); } }
+export async function rename(id, name) { const r = await get(id); if (r) { r.name = name; await put(r); } }
 export async function duplicate(id) {
   const r = await get(id); if (!r) return null;
   const c = { ...r, id: newId(), name: r.name + ' copy', created: Date.now(), updated: Date.now(), version: 1 };

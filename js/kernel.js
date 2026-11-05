@@ -93,6 +93,30 @@ export function deserialize(str) { const s = R.deserializeShape(str); serCache.s
 // ---------- measures ----------
 export const volume = s => R.measureVolume(s);
 export const area = s => R.measureArea(s);
+// ---------- text outlines (engrave / emboss) ----------
+// Liberation Sans Bold (SIL OFL 1.1), loaded the first time text is outlined
+let fontP = null;
+export const textFont = () => (fontP ??= R.loadFont(new URL('../vendor/fonts/LiberationSans-Bold.ttf', import.meta.url).href, 'streamline'));
+// the glyph contours of a string as closed 2D polylines (y up, origin at the baseline start); h = capital height
+export function textContours(font, str, h) {
+  const capEm = (font.tables?.os2?.sCapHeight || 0.72 * font.unitsPerEm) / font.unitsPerEm, size = h / capEm;
+  const cmds = font.getPath(str, 0, 0, size).commands, out = [], N = 8;
+  let cur = null, last = null;
+  const P = (x, y) => [x, -y], push = p => { if (!cur.length || SK.d2(cur[cur.length - 1], p) > 1e-6 * h) cur.push(p); };
+  const close = () => { if (cur && cur.length > 2) { if (SK.d2(cur[0], cur[cur.length - 1]) < 1e-6 * h) cur.pop(); if (cur.length > 2) out.push(cur); } cur = null; };
+  for (const c of cmds) {
+    if (c.type === 'M') { close(); cur = []; last = [c.x, c.y]; push(P(c.x, c.y)); }
+    else if (c.type === 'L') { last = [c.x, c.y]; push(P(c.x, c.y)); }
+    else if (c.type === 'Q') { const [x0, y0] = last; for (let i = 1; i <= N; i++) { const t = i / N, a = (1 - t) ** 2, b = 2 * t * (1 - t), d = t * t; push(P(a * x0 + b * c.x1 + d * c.x, a * y0 + b * c.y1 + d * c.y)); } last = [c.x, c.y]; }
+    else if (c.type === 'C') { const [x0, y0] = last; for (let i = 1; i <= N; i++) { const t = i / N, a = (1 - t) ** 3, b = 3 * t * (1 - t) ** 2, e = 3 * t * t * (1 - t), d = t ** 3; push(P(a * x0 + b * c.x1 + e * c.x2 + d * c.x, a * y0 + b * c.y1 + e * c.y2 + d * c.y)); } last = [c.x, c.y]; }
+    else if (c.type === 'Z') close();
+  }
+  close();
+  return out;
+}
+
+/* volume, area and both centroids: a geometric fingerprint that changes when a feature moves even if size doesn't */
+export const massSig = s => { const v = R.measureShapeVolumeProperties(s), a = R.measureShapeSurfaceProperties(s); const out = [v.volume, ...v.centerOfMass, a.area, ...a.centerOfMass]; try { v.delete(); a.delete(); } catch (e) {} return out; };
 
 // ---------- exact sketch regions → faces ----------
 // All closed regions of a sketch, as exact planar faces: the sketch curves split a large face on the

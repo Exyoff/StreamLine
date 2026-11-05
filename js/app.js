@@ -12,7 +12,7 @@ import * as OPS from './operators.js';
 import { runOp, undo, redo, canUndo, canRedo, getLast, clearLast, updateOp, resetHistory, mergeLastUndo } from './ops.js';
 import { serialize, deserialize, newObject, xfFor, worldVerts, objMatrix } from './scene.js';
 import * as M from './mesh.js';
-import { fmtLen, fmtAng, fmtArea, fmtNum, unitFactor } from './units.js';
+import { fmtLen, fmtAng, fmtArea, fmtNum, unitFactor, evalExpr } from './units.js';
 import { I } from './icons.js';
 import { $, h, toast, field, choice, toggle, stepper, popover, closePopover, menuItem, closeKeypad, keypadOpen, keypadKey } from './ui.js';
 import * as IO from './io.js';
@@ -88,7 +88,8 @@ function defaultScene() {
 }
 function allSketchPoints() { return (S.doc.sketches || []).filter(isShown).flatMap(k => k.ents.flatMap(e => SK.keyPoints(e).map(q => SK.toW(k.plane, q.p)))); }
 const GIZMO_TOOLS = new Set(['move', 'rotate', 'scale', 'measure', 'edge']);
-const studioDraws = () => S.ed.workspace === 'model' && S.ed.mode === 'object' && !GIZMO_TOOLS.has(S.ed.tool);
+const isGizmoTool = t => GIZMO_TOOLS.has(t) && !Draw.curveCmd();
+const studioDraws = () => S.ed.workspace === 'model' && S.ed.mode === 'object' && !isGizmoTool(S.ed.tool);
 
 // ---------- drag routing: gizmo first, then drawing tools ----------
 function routeDrag() {
@@ -404,8 +405,8 @@ function curveOrEdgeTap(x, y) {
   }
   const hit = S.ed.editingSketch != null ? null : view.pickObject(x, y); // bodies are ghosted while a sketch is edited
   // a sketch a feature already used (its lines run along the body's edges) yields to a body edge under the finger
-  if (best && S.ed.editingSketch == null && H.firstUsing([best.k.id]) >= 0 && edgeTap(x, y, true) <= 16) best = null;
-  if (best && (!hit || best.t <= hit.distance + view.worldPerPixel(hit.point) * 8)) {
+  if (best && !S.settings.xray && S.ed.editingSketch == null && H.firstUsing([best.k.id]) >= 0 && edgeTap(x, y, true) <= 16) best = null;
+  if (best && (!hit || S.settings.xray || best.t <= hit.distance + view.worldPerPixel(hit.point) * 8)) {
     if (S.ed.sketch !== best.k.id || !S.ed.multi) S.ed.drawSel = new Set();
     S.ed.sketch = best.k.id; Draw.clearTarget();
     if (S.ed.drawSel.has(best.e.id) && S.ed.multi) S.ed.drawSel.delete(best.e.id); else S.ed.drawSel.add(best.e.id);
@@ -427,12 +428,12 @@ function regionOrFaceTap(x, y) {
     if (r && (!best || w.distanceTo(ray.origin) < best.t)) best = { k, p2, r, t: w.distanceTo(ray.origin) };
   }
   const hit = S.ed.editingSketch != null ? null : view.pickObject(x, y); // bodies are ghosted while a sketch is edited
-  // a sketch a feature already used (its lines run along the body's edges) yields to a body edge under the finger
-  if (best && S.ed.editingSketch == null && H.firstUsing([best.k.id]) >= 0 && edgeTap(x, y, true) <= 16) best = null;
-  // a region a feature already built from, lying on the body's face, yields to that face; and tapping the
-  // picked region again (without Multi) goes through to the face under it
-  if (best && hit && S.ed.editingSketch == null) {
-    const used = H.hist().some(r => (r.params?.pts || []).some(it => it.sk === best.k.id && SK.regionAt(best.k, it.pt) === best.r));
+  // a region a feature already built from yields to a body edge under the finger, and (lying on the body's face) to
+  // that face; a region not used yet stays pickable however narrow (a 5 mm ring); tapping the picked region again
+  // (without Multi) goes through to the face under it. X-ray: sketch regions always win.
+  const used = best && H.hist().some(r => (r.params?.pts || []).some(it => it.sk === best.k.id && SK.regionAt(best.k, it.pt) === best.r));
+  if (best && used && !S.settings.xray && S.ed.editingSketch == null && edgeTap(x, y, true) <= 16) best = null;
+  if (best && hit && S.ed.editingSketch == null && !S.settings.xray) {
     const again = !S.ed.multi && S.ed.profiles.length === 1 && S.ed.profiles[0].sk === best.k.id && SK.regionAt(best.k, S.ed.profiles[0].pt) === best.r;
     if ((used && Math.abs(best.t - hit.distance) < view.worldPerPixel(hit.point) * 8) || again) best = null;
   }
@@ -638,7 +639,7 @@ function mateTap(x, y) {
   const A = objById(from.obj);
   S.ed.faces = []; S.ed.selected = new Set([A.id]); S.ed.active = A.id; // (stays in Face mode for the next mate)
   // a Mate step in the history: it is solved again whenever the parts change (e.g. after Sync)
-  if (!runOp(F.mateOp, { a: JSON.parse(JSON.stringify(from)), b: JSON.parse(JSON.stringify(to)) })) return retry('Could not mate those faces');
+  if (!runOp(F.mateOp, { a: JSON.parse(JSON.stringify(from)), b: JSON.parse(JSON.stringify(to)), gap: 0 })) return retry('Could not mate those faces');
   toast(`${A.name} mated to ${objById(to.obj).name}${err.kind === 'axis' ? ' (same axis — slide it along with Move)' : ''}`);
   selectionChanged();
 }
@@ -853,7 +854,7 @@ function renderViewButtons() {
 function act(icon, label, fn, cls = '') { return h('button', { class: 'act ' + cls, onclick: fn }, h('span', { html: icon }), h('span', {}, label)); }
 function renderActions() {
   const row = $('#actions');
-  const key = (S.ed.mateFrom ? 'mate' : '') + (S.ed.isolate ? 'iso' : '') + S.ed.workspace + S.ed.mode + S.ed.selectMode + S.ed.pick + (S.ed.editingSketch ?? '') + (getLast() && getLast().committed && !$('#lastop').hidden ? 'op' : '') + selectedObjs().map(o => o.link ? (PJ.outOfDate(o.link.pid) ? 'L!' : 'L') : '').join('') + S.ed.faces.map(f => f.planar === false ? 'c' : 'f').join('') + [S.ed.drawSel.size, S.ed.profiles.length, S.ed.faces.length, S.ed.edges.length, S.ed.pick === 'solid' ? S.ed.selected.size : 0].join();
+  const key = (S.ed.mateFrom ? 'mate' : '') + (S.ed.isolate ? 'iso' : '') + S.ed.workspace + S.ed.mode + S.ed.selectMode + S.ed.pick + (S.ed.editingSketch ?? '') + (getLast() && getLast().committed && !$('#lastop').hidden ? 'op' : '') + selectedObjs().map(o => o.id + (o.link ? (PJ.outOfDate(o.link.pid) ? 'L!' : 'L') : '')).join(':') + S.ed.faces.map(f => f.planar === false ? 'c' : 'f').join('') + [S.ed.drawSel.size, S.ed.profiles.length, S.ed.faces.length, S.ed.edges.length, S.ed.pick === 'solid' ? S.ed.selected.size : 0].join();
   if (row.dataset.k === key) return;
   row.dataset.k = key;
   if (S.ed.workspace === 'draw') {
@@ -927,6 +928,8 @@ function renderActions() {
     else if (faces) c.push(...(flat ? [] : [act(I.thread, 'Thread', () => runOp(F.threadOp), 'primary')]), ...(flat ? [act(I.extrude, 'Push/Pull', () => modifier('pushpull'), prof ? '' : 'primary'), act(I.hole, 'Hole', () => runOp(F.holeOp)), act(I.recess, 'Recess', () => runOp(F.recessOp))] : []), act(I.inset, 'Shell', () => modifier('shell'), flat || prof ? '' : 'primary'), ...(flat ? [act(I.cone, 'Draft', () => runOp(F.draftOp))] : []), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)));
     if (edges) c.push(act(I.fillet, 'Fillet', () => modifier('fillet'), 'primary'), act(I.chamfer, 'Chamfer', () => modifier('chamfer')),
       ...(S.ed.edges.some(q => q.pts) ? [act(I.next, 'Chain', () => growEdges(false)), act(I.select, 'Loop', () => growEdges('loop')), act(I.all, 'All edges', () => growEdges(true))] : []));
+    const textSel = curves && [...S.ed.drawSel].some(id => SK.sketchById(S.ed.sketch)?.ents.find(e => e.id === id)?.t === 'text');
+    if (textSel) c.push(act(I.extrude, 'Outline', () => Draw.outlineText(), 'primary'));
     if (curves) c.push(act(I.next, 'Chain', () => chainCurves()), act(I.move, 'Move', () => acadTool('move')), act(I.dup, 'Copy', () => acadTool('copy')), act(I.rotate, 'Rotate', () => acadTool('rotate')), act(I.flip, 'Mirror', () => acadTool('mirror')), act(I.scale, 'Scale', () => acadTool('scale')), act(I.inset, 'Offset', () => acadTool('offset')), act(I.array, 'Array', () => acadTool('arrayrect')), act(I.constrain, 'Constrain', e => openConstrainMenu(e.currentTarget)), act(I.line, 'Construction', () => Draw.toggleConstruction()), act(I.trash, 'Delete', () => Draw.deleteSelected(), 'danger'));
     if (S.ed.isolate) c.push(act(I.eye, 'Show all', () => isolate(false), 'primary'));
     if (solids >= 2) c.push(act(I.intersect, 'Interference', () => checkInterference(selectedObjs())));
@@ -1013,7 +1016,7 @@ function renderHud() {
     return;
   }
   if (S.ed.workspace === 'model' && S.ed.mode === 'object') {
-    const drawing = !GIZMO_TOOLS.has(S.ed.tool) && S.ed.tool !== 'select';
+    const drawing = !isGizmoTool(S.ed.tool) && S.ed.tool !== 'select';
     const sel = [[S.ed.drawSel.size, 'curve'], [S.ed.profiles.length, 'region'], [S.ed.faces.length, 'face'], [S.ed.edges.length, 'edge'], [S.ed.pick === 'solid' ? S.ed.selected.size : 0, 'solid']].filter(q => q[0]).map(([n, w]) => `${n} ${w}${n === 1 ? '' : 's'}`);
     parts.push(drawing ? `<b>${S.ed.tool[0].toUpperCase() + S.ed.tool.slice(1)}</b> · draw on the grid or on any face` : `<b>${{ edge: 'Edge', face: 'Face', solid: 'Solid' }[S.ed.pick]} select</b>${sel.length ? ' · ' + sel.join(', ') : ''}`);
     parts.push(drawing ? `${S.ed.sketch && SK.activeSketch() ? esc(SK.activeSketch().name) + ' · ' : ''}${Draw.dofText ? Draw.dofText() : ''}` : '<span class="kbhint">Space or 🔍 for commands · 2 Edge · 3 Face · 4 Solid</span>');
@@ -1038,7 +1041,7 @@ function renderHud() {
 function planeName(sk) { for (const [k, p] of Object.entries(SK.PLANES)) if (p.n.every((c, i) => Math.abs(c - sk.plane.n[i]) < 1e-9)) { const off = M.dot(sk.plane.o, p.n); return p.label + (Math.abs(off) > 1e-9 ? ` +${fmtLen(off)}` : ''); } return 'custom plane'; }
 function renderDrawCard() {
   const el = $('#draw-card');
-  const content = (S.ed.workspace === 'draw' || (S.ed.workspace === 'model' && S.ed.mode === 'object' && (!GIZMO_TOOLS.has(S.ed.tool) && (S.ed.tool !== 'select' || S.ed.drawSel.size)))) && !gizmoActive() ? Draw.cardContent() : null;
+  const content = (S.ed.workspace === 'draw' || (S.ed.workspace === 'model' && S.ed.mode === 'object' && (!isGizmoTool(S.ed.tool) && (S.ed.tool !== 'select' || S.ed.drawSel.size)))) && !gizmoActive() ? Draw.cardContent() : null;
   el.hidden = !content; document.body.classList.toggle('has-drawcard', !!content);
   if (content) el.replaceChildren(content);
   renderLastOp();
@@ -1579,6 +1582,9 @@ function planeHere() {
   const f = S.ed.faces[0]; if (!f) return;
   const o = objById(f.obj); let n = f.n, pt = f.p;
   try { const xf = xfFor(o), hit = K.faceAt(o.shape, xf.toL(f.p)); if (hit) { const v = hit.f.normalAt(xf.toL(f.p)), nl = M.norm([v.x, v.y, v.z]); n = M.norm(M.sub(xf.toW(M.add(xf.toL(f.p), nl)), f.p)); if (M.dot(n, f.n) < 0) n = M.mul(n, -1); } } catch (e) {}
+  // the origin goes where the plane passes nearest the world origin, so typed X / Y / Z are the model's own
+  // coordinates (the tapped point is only where the plane touches)
+  n = M.norm(n); pt = M.mul(n, M.dot(n, pt));
   setDrawPlane(planeAt(pt, n, 'on face'), 'Drawing plane set on that face — draw on it, or offset it from the Plane menu');
 }
 // pick every sketch curve joined end to end with the picked ones (a slot's two lines and two arcs)
@@ -1613,10 +1619,19 @@ function openPlaneMenu(anchor) {
     menuItem(I.plane, 'Right (YZ)', set(SK.PLANES.YZ, 'Right'), planeLabel() === 'YZ' ? '✓' : ''),
     h('div', { class: 'msep' }),
     menuItem(I.plane, 'Offset this plane…', () => setTimeout(() => BR.askText(anchor, 'Offset distance (mm, − goes the other way)', '10', v => {
-      const d = parseFloat(v); if (!isFinite(d)) return toast('Type a number');
-      const c = S.ed.cplane || SK.PLANES.XY, pl = planeAt(M.add(c.o, M.mul(c.n, d)), c.n, `${planeLabel()} ${d >= 0 ? '+' : ''}${d}`);
+      let d; try { d = evalExpr(v, 'len'); } catch (e) { return toast(e.message || 'Type a distance'); }
+      const c = S.ed.cplane || SK.PLANES.XY, pl = planeAt(M.add(c.o, M.mul(c.n, d)), c.n, `${planeLabel()} ${d >= 0 ? '+' : ''}${+d.toFixed(4)}`);
       pl.u = c.u.slice(); pl.v = c.v.slice();
       setDrawPlane(pl, `Drawing plane offset ${fmtLen(d)}`);
+    }), 0)),
+    // tilt about the plane's horizontal (X) direction through its origin: a 15° slot, a sloped face
+    menuItem(I.rotate, 'Tilt this plane…', () => setTimeout(() => BR.askText(anchor, 'Tilt angle about the plane\'s X direction (°)', '15', v => {
+      let a; try { a = evalExpr(v, 'ang'); } catch (e) { return toast(e.message || 'Type an angle'); }
+      const c = S.ed.cplane || SK.PLANES.XY, r = a * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+      const n = M.add(M.mul(c.n, cs), M.mul(c.v, -sn)), vv = M.add(M.mul(c.v, cs), M.mul(c.n, sn));
+      const cl = x => Math.abs(x - Math.round(x * 1e9) / 1e9) < 1e-9 ? Math.round(x * 1e9) / 1e9 || 0 : x;
+      const pl = { o: c.o.slice(), u: c.u.slice(), v: vv.map(cl), n: n.map(cl), label: `${planeLabel()} ∠${+a.toFixed(3)}°` };
+      setDrawPlane(pl, `Drawing plane tilted ${fmtAng(a)}`);
     }), 0))), { above: true });
 }
 function renderActionsForce() { $('#actions').dataset.k = ''; refresh(); }

@@ -34,7 +34,13 @@ function apply(op) {
   op.handle = null;
   let r;
   try { r = op.def.apply(op.params, op); } catch (err) { console.error(err); r = err.message || 'Operation failed'; }
-  if (typeof r !== 'string' && !op.def.sketchOnly && !op.def.presentation) H.solveConstraints(); // mated parts follow
+  if (typeof r !== 'string' && !op.def.sketchOnly && !op.def.presentation) { // mated parts follow
+    const xf = /^(Move|Rotate)$/.test(op.def.label?.(op.params) || '') ? new Set(op.def.touch?.(op.params)?.ids || []) : null;
+    const pose = () => S.doc.objects.filter(o => xf?.has(o.id)).map(o => [...o.loc, ...o.rot].map(v => (+v).toFixed(4)).join()).join('|');
+    const before = pose(); H.solveConstraints();
+    // a move the mates took back (dragging a part along a direction a mate holds)
+    op.heldByMate = !!xf?.size && pose() !== before;
+  }
   return r;
 }
 
@@ -79,6 +85,7 @@ export function updateOp(params) {
 export function commit() {
   if (!last || last.committed) return;
   last.committed = true;
+  if (last.heldByMate) emit('toast', 'Mates hold this part — it can only slide where its mates leave it free (delete or edit a mate to move it further)');
   undoStack.push(last.undoSnap); if (undoStack.length > MAX_UNDO) undoStack.shift();
   redoStack.length = 0;
   afterApply(last);
