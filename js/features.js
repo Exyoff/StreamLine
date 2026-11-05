@@ -333,7 +333,12 @@ export const bodyBoolean = {
     if (t.link) return `“${t.name}” is a linked component — tap another body first to make it the target`;
     const objs = tools.map(objById).filter(Boolean);
     if (t.shape && objs.every(o => o.shape)) {
-      const res = guard(() => { let s = t.shape; for (const o of objs) s = K.boolean(p.kind, s, K.toLocal(K.worldShape(o), t)); return s; }, 'Boolean failed');
+      const res = guard(() => {
+        const locals = objs.map(o => K.toLocal(K.worldShape(o), t).clone());
+        // many cutters (gear teeth, vents): one cut with all of them is much faster than one cut each
+        if (p.kind === 'subtract' && locals.length > 1) { try { const r = t.shape.cut(K.compound(locals)); if (!K.isEmpty(r)) return r; } catch (e) { /* one by one */ } }
+        let s = t.shape; for (const l of locals) s = K.boolean(p.kind, s, l); return s;
+      }, 'Boolean failed');
       if (typeof res === 'string') return res;
       if (K.isEmpty(res)) return 'Result is empty';
       K.setShape(t, res);

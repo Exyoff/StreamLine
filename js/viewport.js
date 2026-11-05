@@ -151,7 +151,9 @@ view.zoom = (f, sx, sy) => {
   if (sx != null) {
     const { w, h } = view.size();
     const k = (1 - nd / c.dist);
-    view.pan((w / 2 - sx) * k, (h / 2 - sy) * k);
+    // the picture's centre moves with a docked dialog's view offset; zoom about the point under the fingers
+    const cx = w / 2 - (view.offsetX || 0), cy = h / 2 - (view.offsetY || 0);
+    view.pan((cx - sx) * k, (cy - sy) * k);
   }
   c.dist = nd; view.render(); emit('viewchange');
 };
