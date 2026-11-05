@@ -892,7 +892,7 @@ function renderActions() {
       act(I.subtract, 'Subtract', () => runOp(F.bodyBoolean, { kind: 'subtract' })),
       act(I.intersect, 'Intersect', () => runOp(F.bodyBoolean, { kind: 'intersect' })),
       act(I.subdiv, 'Slice', () => runOp(F.sliceOp)),
-      act(I.revolve, 'Pattern', () => runOp(F.polarPattern)),
+      act(I.revolve, 'Pattern', e => openPatternMenu(e.currentTarget)),
       act(I.face, 'On face', () => startFacePick()),
       act(I.sketch, 'Sketch', e => openSketchMenu(e.currentTarget)),
       act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'),
@@ -923,7 +923,7 @@ function renderActions() {
     else if (faces) c.push(...(flat ? [] : [act(I.thread, 'Thread', () => runOp(F.threadOp), 'primary')]), ...(flat ? [act(I.extrude, 'Push/Pull', () => modifier('pushpull'), prof ? '' : 'primary'), act(I.hole, 'Hole', () => runOp(F.holeOp)), act(I.recess, 'Recess', () => runOp(F.recessOp))] : []), act(I.inset, 'Shell', () => modifier('shell'), flat || prof ? '' : 'primary'), ...(flat ? [act(I.cone, 'Draft', () => runOp(F.draftOp))] : []), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)));
     if (edges) c.push(act(I.fillet, 'Fillet', () => modifier('fillet'), 'primary'), act(I.chamfer, 'Chamfer', () => modifier('chamfer')),
       ...(S.ed.edges.some(q => q.pts) ? [act(I.next, 'Chain', () => growEdges(false)), act(I.select, 'Loop', () => growEdges('loop')), act(I.all, 'All edges', () => growEdges(true))] : []));
-    if (curves) c.push(act(I.move, 'Move', () => acadTool('move')), act(I.dup, 'Copy', () => acadTool('copy')), act(I.rotate, 'Rotate', () => acadTool('rotate')), act(I.flip, 'Mirror', () => acadTool('mirror')), act(I.scale, 'Scale', () => acadTool('scale')), act(I.inset, 'Offset', () => acadTool('offset')), act(I.array, 'Array', () => acadTool('arrayrect')), act(I.constrain, 'Constrain', e => openConstrainMenu(e.currentTarget)), act(I.line, 'Construction', () => Draw.toggleConstruction()), act(I.trash, 'Delete', () => Draw.deleteSelected(), 'danger'));
+    if (curves) c.push(act(I.next, 'Chain', () => chainCurves()), act(I.move, 'Move', () => acadTool('move')), act(I.dup, 'Copy', () => acadTool('copy')), act(I.rotate, 'Rotate', () => acadTool('rotate')), act(I.flip, 'Mirror', () => acadTool('mirror')), act(I.scale, 'Scale', () => acadTool('scale')), act(I.inset, 'Offset', () => acadTool('offset')), act(I.array, 'Array', () => acadTool('arrayrect')), act(I.constrain, 'Constrain', e => openConstrainMenu(e.currentTarget)), act(I.line, 'Construction', () => Draw.toggleConstruction()), act(I.trash, 'Delete', () => Draw.deleteSelected(), 'danger'));
     if (S.ed.isolate) c.push(act(I.eye, 'Show all', () => isolate(false), 'primary'));
     if (solids >= 2) c.push(act(I.intersect, 'Interference', () => checkInterference(selectedObjs())));
     if (solids && !S.ed.isolate) c.push(act(I.eye, 'Isolate', () => isolate(true)));
@@ -931,7 +931,7 @@ function renderActions() {
     if (linked) c.push(act(I.history, PJ.outOfDate(linked.link.pid) ? 'Sync ●' : 'Sync', () => PJ.syncComponent(linked.link.pid), PJ.outOfDate(linked.link.pid) ? 'primary' : ''), act(I.folder, 'Open source', () => PJ.openSource(linked.link.pid)));
     if (linked) c.push(act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; refresh(); } }), act(I.array, 'Array', () => runOp(OPS.arrayOp)), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'));
     else if (solids && selectedObjs().some(o => o.link)) c.push(act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; refresh(); } }), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger')); // linked parts are read-only
-    else if (solids) c.push(act(I.union, 'Boolean', e => openBoolMenu(e.currentTarget), c.length ? '' : 'primary'), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.inset, 'Shell', () => runOp(F.shellOp)), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)), act(I.revolve, 'Pattern', () => runOp(F.polarPattern)), act(I.plane, 'Thicken', () => runOp(F.thickenOp)),
+    else if (solids) c.push(act(I.union, 'Boolean', e => openBoolMenu(e.currentTarget), c.length ? '' : 'primary'), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.inset, 'Shell', () => runOp(F.shellOp)), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)), act(I.revolve, 'Pattern', e => openPatternMenu(e.currentTarget)), act(I.plane, 'Thicken', () => runOp(F.thickenOp)),
       act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; toast('Duplicated — drag the gizmo or type an offset'); refresh(); } }), act(I.array, 'Array', () => runOp(OPS.arrayOp)), act(I.join, 'Join', () => runOp(OPS.joinObjs)), act(I.apply, 'Apply', () => runOp(OPS.applyXf)), act(I.origin, 'Origin', () => runOp(OPS.setOrigin)), act(I.subdiv, 'Edit mesh', () => setPick('mesh')), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'));
     if (!c.length || (c.length === 1 && S.ed.isolate)) c.push(act(I.plus, 'Add solid', e => openAddMenu(e.currentTarget), 'primary'), act(I.line, 'Line', () => setTool('line')), act(I.rect, 'Rectangle', () => setTool('rect')), act(I.circle, 'Circle', () => setTool('circle')), act(I.plane, `Plane ${planeLabel()}`, e => openPlaneMenu(e.currentTarget)), act(I.measure, 'Inquiry', e => openInquiryMenu(e.currentTarget)));
     row.replaceChildren(...c);
@@ -1051,7 +1051,7 @@ function commands() {
     C('Extrude', 'E', () => (S.ed.profiles.length ? startExtrude() : modifier('pushpull')), 'push pull'), C('Revolve', '', () => runOp(F.revolve)), C('Loft', '', () => runOp(F.loftOp)), C('Sweep', '', () => runOp(F.sweepOp)),
     C('Fillet edges', 'F', () => modifier('fillet'), 'round'), C('Chamfer edges', '⇧C', () => modifier('chamfer'), 'bevel'), C('Push / pull face (offset face)', 'O', () => modifier('pushpull'), 'offset face move face'),
     C('Shell', 'H', () => modifier('shell'), 'hollow'), C('Draft', '', () => runOp(F.draftOp), 'taper'), C('Thicken', '', () => runOp(F.thickenOp)), C('Mirror', 'M', () => modifier('mirror')), C('Slice', '', () => runOp(F.sliceOp), 'cut split'),
-    C('Pattern (polar)', '', () => runOp(F.polarPattern), 'array circular'), C('Union', '', () => runOp(F.bodyBoolean, { kind: 'union' }), 'boolean join add'), C('Subtract', '', () => runOp(F.bodyBoolean, { kind: 'subtract' }), 'boolean difference cut'), C('Intersect', '', () => runOp(F.bodyBoolean, { kind: 'intersect' }), 'boolean'),
+    C('Pattern (polar)', '', () => runOp(F.polarPattern), 'array circular'), C('Pattern (linear)', '', () => runOp(F.linearPattern), 'array row grid repeat vents slots'), C('Union', '', () => runOp(F.bodyBoolean, { kind: 'union' }), 'boolean join add'), C('Subtract', '', () => runOp(F.bodyBoolean, { kind: 'subtract' }), 'boolean difference cut'), C('Intersect', '', () => runOp(F.bodyBoolean, { kind: 'intersect' }), 'boolean'),
     C('Move', 'G', tool('move'), 'grab translate'), C('Rotate', 'R', tool('rotate')), C('Scale', 'S', tool('scale')), C('Duplicate', '⇧D', () => runOp(OPS.duplicate), 'copy'), C('Delete', 'X', () => deleteSelection(), 'erase remove'),
     ...OPS.PRIM_TYPES.map(([t, l]) => C(`Add ${l}`, '', () => addSketchedPrim(t), 'primitive solid box')),
     C('Select: Edge mode', '2', () => setPick('edge'), 'curve'), C('Select: Face mode', '3', () => setPick('face'), 'region'), C('Select: Solid mode', '4', () => setPick('solid'), 'body'), C('Edit mesh (polygons)', 'Tab', () => setPick('mesh')),
@@ -1555,6 +1555,29 @@ function startExtrude() {
 
 // the construction plane new curves go on when not drawn on a face
 function planeLabel() { const c = S.ed.cplane; return !c || c === SK.PLANES.XY ? 'XY' : c === SK.PLANES.XZ ? 'XZ' : 'YZ'; }
+// pick every sketch curve joined end to end with the picked ones (a slot's two lines and two arcs)
+function chainCurves() {
+  const sk = SK.sketchById(S.ed.sketch); if (!sk) return;
+  const ends = e => { const pl = SK.entPolyline(e); return pl && !pl.closed ? [pl.pts[0], pl.pts[pl.pts.length - 1]] : null; };
+  const sel = new Set(S.ed.drawSel), list = sk.ents.filter(e => e.t !== 'dim' && ends(e));
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const e of list) {
+      if (sel.has(e.id)) continue;
+      const E = ends(e);
+      if ([...sel].some(id => { const o = SK.entById(sk, id), O = o && ends(o); return O && O.some(a => E.some(b => SK.d2(a, b) < 1e-6)); })) { sel.add(e.id); grew = true; }
+    }
+  }
+  const added = sel.size - S.ed.drawSel.size; S.ed.drawSel = sel;
+  toast(added ? `Chain: ${sel.size} curves` : 'Nothing else joins these curves end to end');
+  selectionChanged();
+}
+function openPatternMenu(anchor) {
+  popover(anchor, h('div', {}, h('div', { class: 'mtitle' }, 'Pattern'),
+    menuItem(I.array, 'Linear (rows / grid)', () => runOp(F.linearPattern)),
+    menuItem(I.revolve, 'Polar (around an axis)', () => runOp(F.polarPattern))), { above: true });
+}
 function openPlaneMenu(anchor) {
   // turn to look straight at the plane (orthographic), so what is drawn lands where the finger is
   const set = (pl, name) => () => { S.ed.cplane = pl; Draw.resetTool(); view.setView(name.toLowerCase()); toast(`New curves go on the ${name} plane (or on any face you draw on) — rotate the view any time`); renderActionsForce(); };

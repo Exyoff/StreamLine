@@ -421,6 +421,18 @@ try {
   });
   check(enc.ok1 && !enc.errs.length, `A hole centred on a standoff follows it when the standoff moves in its sketch (now at ${enc.h.join(', ')})`);
   check(Math.abs(enc.port - Math.PI * 9 * 2) < 1e-6, `A "through" port drills only the wall it starts in (${enc.port.toFixed(3)} mm³)`);
+  // repetition: a row of vent-slot cutters (Linear Pattern) subtracted from a plate in one step
+  const vents = await st(() => {
+    const L = StreamLine, F = L.F, K = L.K, XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    L.runOp(F.sketchOpNew('base', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 6000, y: 0, w: 100, h: 40 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [6005, 5] }], distance: 5, mode: 'new', target: null }); const base = L.S.doc.objects.at(-1).id;
+    L.runOp(F.sketchOpNew('slot', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 6010, y: 10, w: 3, h: 20 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [6011, 15] }], distance: 10, mode: 'new', target: null });
+    L.S.ed.selected = new Set([L.S.doc.objects.at(-1).id]); L.runOp(F.linearPattern, { count: 5, spacing: 8 });
+    L.S.ed.selected = new Set([base, ...L.S.ed.selected]); L.S.ed.active = base; L.runOp(F.bodyBoolean, { kind: 'subtract' });
+    return K.volume(L.S.doc.objects.find(o => o.id === base).shape);
+  });
+  check(Math.abs(vents - (20000 - 1500)) < 1e-6, `Linear Pattern: five vent cutters subtracted in one step (${vents.toFixed(2)} mm³)`);
   // Mate: a pin's round face onto a hole's round face (same axis), by touch
   {
     const ids = await st(() => {
