@@ -633,7 +633,7 @@ function mateTap(x, y) {
   const retry = m => { S.ed.mateFrom = from; S.ed.faces = prev; toast(m + ' — tap another face, or Cancel mate'); refresh(); };
   const err = F.mateSolve(from, to); if (typeof err === 'string') return retry(err);
   const A = objById(from.obj);
-  S.ed.faces = []; S.ed.pick = 'solid'; S.ed.selected = new Set([A.id]); S.ed.active = A.id;
+  S.ed.faces = []; S.ed.selected = new Set([A.id]); S.ed.active = A.id; // (stays in Face mode for the next mate)
   // a Mate step in the history: it is solved again whenever the parts change (e.g. after Sync)
   if (!runOp(F.mateOp, { a: JSON.parse(JSON.stringify(from)), b: JSON.parse(JSON.stringify(to)) })) return retry('Could not mate those faces');
   toast(`${A.name} mated to ${objById(to.obj).name}${err.kind === 'axis' ? ' (same axis — slide it along with Move)' : ''}`);
@@ -660,7 +660,7 @@ function checkInterference(objs) {
   if (!hits.length) { toast(`No interference between ${list.length} solids`); return; }
   S.ed.selected = new Set(hits.flatMap(x => [x.a.id, x.b.id])); S.ed.active = hits[0].a.id; S.ed.pick = 'solid';
   popover($('#btn-menu'), h('div', {}, h('div', { class: 'mtitle' }, `Interference · ${hits.length} pair${hits.length > 1 ? 's' : ''}`),
-    ...hits.map(x => { const small = x.v < 0.01 * Math.min(K.volume(x.a.shape), K.volume(x.b.shape)); return h('div', { class: 'mnote', style: 'padding:6px 12px' }, `${x.a.name} ↔ ${x.b.name}: ${fmtVol(x.v)} overlap${small ? ' (slight — mating threads or a press fit overlap a little by design)' : ''}`); }),
+    ...hits.map(x => { const small = x.v < 1 && x.v < 0.005 * Math.min(K.volume(x.a.shape), K.volume(x.b.shape)); /* e.g. mating threads, not a real clash */ return h('div', { class: 'mnote', style: 'padding:6px 12px' }, `${x.a.name} ↔ ${x.b.name}: ${fmtVol(x.v)} overlap${small ? ' (slight — mating threads or a press fit overlap a little by design)' : ''}`); }),
     h('div', { class: 'mnote', style: 'padding:6px 12px;opacity:.75' }, 'The overlapping bodies are selected. Move one (or Mate it), or change its size in its own project.')));
   selectionChanged();
 }

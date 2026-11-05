@@ -133,7 +133,7 @@ export function render() {
   const show = S.ed.workspace === 'draw' || S.ed.workspace === 'cad' || (S.ed.workspace === 'model' && !!S.settings.cmdline);
   bar.hidden = !show;
   document.body.classList.toggle('has-cmd', show);
-  if (!show) return;
+  if (!show) { const pan = $('#cmdhistory'); if (pan) pan.hidden = true; logOpen = false; return; } // a hidden command line takes its history panel with it
   let text = 'Command:', options = [];
   if (pending) text = `${pending.name} ${pending.prompt}`;
   else if (S.ed.workspace !== 'cad') ({ text, options } = Draw.prompt());
