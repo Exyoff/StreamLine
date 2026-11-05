@@ -189,8 +189,9 @@ export function faceAt(shape, p, n = null) {
   });
   const t = tess(shape);
   if (best && best.d < t.tol * 4 + 1e-6) return best;
-  // the face moved (an earlier step changed the body): a flat face with the same normal, nearest in
-  // offset, that contains the point slid along the normal onto its plane
+  // the face moved (an earlier step changed the body): the flat face with the same normal that is nearest in
+  // offset — scored by offset plus how far the old point (slid onto its plane) lies outside it, so a rim that got
+  // narrower still beats a floor far below that happens to contain the point
   if (!n) return null;
   let alt = null;
   faces.forEach((f, i) => {
@@ -199,9 +200,11 @@ export function faceAt(shape, p, n = null) {
     try { fn = f.normalAt(); c = f.center; c = typeof c === 'function' ? c() : c; } catch (e) { return; }
     const nn = [fn.x, fn.y, fn.z]; if (nn[0] * n[0] + nn[1] * n[1] + nn[2] * n[2] < 1 - 1e-6) return;
     const dw = (c.x - p[0]) * n[0] + (c.y - p[1]) * n[1] + (c.z - p[2]) * n[2];
-    const q = [p[0] + n[0] * dw, p[1] + n[1] * dw, p[2] + n[2] * dw];
-    if (R.measureDistanceBetween(f, R.makeVertex(q)) > t.tol * 4 + 1e-6) return;
-    if (!alt || Math.abs(dw) < Math.abs(alt.dw)) alt = { d: 0, i, f, dw, q };
+    let q = [p[0] + n[0] * dw, p[1] + n[1] * dw, p[2] + n[2] * dw];
+    const out = R.measureDistanceBetween(f, R.makeVertex(q));
+    const score = Math.abs(dw) + 4 * out;
+    if (out > t.tol * 4 + 1e-6) q = [c.x, c.y, c.z]; // (the point is off the face: follow its centre instead)
+    if (!alt || score < alt.score) alt = { d: 0, i, f, dw, q, score };
   });
   return alt;
 }
@@ -310,6 +313,16 @@ export function shell(shape, faces, t) {
 export function coneAxis(face) {
   if (face.geomType !== 'CONE') return null;
   return circleAxisOf(face);
+}
+// axis of a surface of revolution (a revolved jug wall), or null when this build cannot tell
+export function revolutionAxis(face) {
+  if (face.geomType !== 'REVOLUTION_SURFACE') return null;
+  let ad = null;
+  try {
+    ad = new oc.BRepAdaptor_Surface(face.wrapped, true);
+    const ax = ad.AxeOfRevolution(), L = ax.Location(), D = ax.Direction();
+    return { c: [L.X(), L.Y(), L.Z()], d: [D.X(), D.Y(), D.Z()] };
+  } catch (e) { return circleAxisOf(face); } finally { try { ad && ad.delete(); } catch (e) {} }
 }
 // centre, normal and radius of the largest circular edge of a face (a boss's rim, not a hole in it)
 export function circleAxisOf(face) {

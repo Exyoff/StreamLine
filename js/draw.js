@@ -471,6 +471,15 @@ export function cardContent() {
   const title = (txt, hint) => h('div', { class: 'head' }, h('div', { class: 'title' }, txt, hint ? h('small', {}, hint) : null),
     (st.start || st.arc || st.dimA) ? h('button', { class: 'ib', 'aria-label': 'Cancel', html: I.close, onclick: () => resetTool() }) : null);
   // before the first point the typed values go on the construction plane (see typedTarget)
+  if (t === 'text' && st.cmd && st.cmd.stage === 'string') {
+    const inp = h('input', { class: 'textin', placeholder: 'Text, e.g. 1.7 L', enterkeyhint: 'done', autocomplete: 'off', spellcheck: 'false' });
+    const place = () => { const v = inp.value.trim(); if (v) typed(v); };
+    inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); place(); } });
+    setTimeout(() => inp.focus(), 60);
+    return h('div', {}, title('Text', 'type it, set the height, Place'), inp,
+      h('div', { class: 'fields' }, field({ label: 'Height', kind: 'len', value: acad.textH ?? defSize() / 8, onCommit: v => { acad.textH = Math.max(1e-6, v); } })),
+      h('div', { class: 'btnrow' }, h('button', { class: 'btn', onclick: () => resetTool() }, 'Cancel'), h('button', { class: 'btn primary', onclick: place }, 'Place')));
+  }
   const [AU, AV] = axisNames(studio() && DRAW_PRIMARY.has(t) && waitingFirstPoint() && !target && S.ed.editingSketch == null ? cplane() : s.plane);
   const xyFields = (lab, cb) => h('div', { class: 'fields' },
     field({ label: lab + ' ' + AU, kind: 'len', value: pv() ? pv()[0] : 0, cls: axCls(AU), onCommit: v => cb([v, pv() ? pv()[1] : 0], 0) }),
@@ -961,7 +970,8 @@ function cmdPoint(p) {
   const c = ensureCmd(), t = c.tool;
   if (INQUIRY.has(t)) return inquiryPoint(c, p);
   if (t === 'text') {
-    if (c.stage === 'base') { c.base = p; c.stage = 'height'; return; }
+    // (on a phone: tap where it starts, then type the text and its height on the card)
+    if (c.stage === 'base') { c.base = p; c.stage = 'string'; acad.textH ??= defSize() / 8; emit('drawcard'); return; }
     if (c.stage === 'height') { acad.textH = Math.max(1e-6, SK.d2(c.base, p)); c.stage = 'string'; return; }
     return;
   }

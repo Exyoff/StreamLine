@@ -268,7 +268,7 @@ export function historyTab(group) {
   if (!hist.length) return [h('p', { class: 'note' }, 'Every sketch and feature you make is recorded here, in order. Tap a step to change it — everything after it rebuilds.')];
   // a sketch belongs to the first feature that uses it (shown as a chip on that feature)
   const owner = new Map();
-  hist.forEach((r, i) => { if (r.kind !== 'sketch' || !r.sk) return; const j = hist.findIndex((q, k) => k > i && q.params && new RegExp(`"sk":${r.sk}[,}]`).test(JSON.stringify(q.params))); if (j >= 0) owner.set(i, j); });
+  hist.forEach((r, i) => { if (r.kind !== 'sketch' || !r.sk) return; const j = hist.findIndex((q, k) => k > i && q.params && (new RegExp(`"sk":${r.sk}[,}]`).test(JSON.stringify(q.params)) || (q.op === 'F.sweepOp' && q.params.path === r.sk))); if (j >= 0) owner.set(i, j); });
   const ownedBy = new Map([...owner].map(([si, fi]) => [fi, [...(ownedBy0(owner, fi))]]));
   function ownedBy0(m, fi) { return [...m].filter(([, f]) => f === fi).map(([si]) => si); }
   const editing = S.ed.editingSketch, editStepId = ctx.editingStepId?.();

@@ -317,7 +317,8 @@ export const bodyBoolean = {
       const sel = [...S.ed.selected].map(objById).filter(Boolean);
       // subtract: the target is the biggest body (cutters are smaller) — so a pattern of cutters selected
       // first, then the blank, still cuts the blank
-      if (p.kind === 'subtract' && sel.every(o => o.shape)) sel.sort((a, b) => Math.abs(K.volume(K.worldShape(b))) - Math.abs(K.volume(K.worldShape(a))));
+      // (union / intersect too: the result keeps the main body's name, colour and placement, not a tool's)
+      if (sel.every(o => o.shape)) sel.sort((a, b) => Math.abs(K.volume(K.worldShape(b))) - Math.abs(K.volume(K.worldShape(a))));
       p.ids = sel.map(o => o.id);
     }
     // tools that came from a pattern follow the pattern (its copies are made again when its count changes)
@@ -720,7 +721,12 @@ export const sweepOp = {
     const ps = SK.sketchById(p.path); if (!ps) return 'Path sketch missing';
     const tool = guard(() => {
       const fc = typeof f.center === 'function' ? f.center() : f.center, c = vec3(fc), spine = pathWire(ps, c); if (!spine) throw new Error('no open path');
-      return R.genericSweep(f.clone().outerWire(), spine, { frenet: true, transitionMode: 'round' });
+      // the outline swept, minus each hole swept the same way (a ring profile makes a tube)
+      const opts = { frenet: true, transitionMode: 'round' };
+      let solid = R.genericSweep(f.clone().outerWire(), spine, opts);
+      let holes = []; try { holes = f.clone().innerWires(); } catch (e) { holes = []; }
+      for (const w of holes) solid = solid.cut(R.genericSweep(w, pathWire(ps, c), opts));
+      return solid;
     }, 'Sweep failed — the profile should sit at the start of the path');
     if (typeof tool === 'string') return tool;
     return applyBody(p, tool, 'Sweep');
@@ -1073,7 +1079,7 @@ export function mateGeom(f) {
     const fn = hit.f.normalAt(), c0 = hit.f.center, c = typeof c0 === 'function' ? c0() : c0;
     return { kind: 'plane', o, n: toWd(M.norm([fn.x, fn.y, fn.z])), p: xf.toW([c.x, c.y, c.z]) };
   }
-  const cy = K.cylinderOf(hit.f) || K.coneAxis(hit.f);
+  const cy = K.cylinderOf(hit.f) || K.coneAxis(hit.f) || K.revolutionAxis(hit.f);
   if (cy) { if (cy.R) f._ax = { c: cy.c, d: cy.d, R: cy.R }; return { kind: 'axis', o, c: xf.toW(cy.c), d: toWd(cy.d) }; }
   let best = null;
   for (const e of o.brep.edges) {
