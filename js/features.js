@@ -24,11 +24,51 @@ export const newSketch = {
     if (p._id >= S.doc.nextId) S.doc.nextId = p._id + 1;
     const ents = [];
     let nextEnt = 1;
-    if (p.face && p.face.loops) for (const L of p.face.loops) for (const e of projectLoop(L.map(w => SK.toP(plane, w)))) ents.push({ id: ++nextEnt, ...e, proj: true });
+    // the face's boundary as projected geometry: exact from its B-rep edges (older sketches: from its outline points)
+    if (p.face && p.face.edges) { for (const d of p.face.edges) for (const e of dataToSketch(plane, d)) ents.push({ id: ++nextEnt, ...e, proj: true }); }
+    else if (p.face && p.face.loops) for (const L of p.face.loops) for (const e of projectLoop(L.map(w => SK.toP(plane, w)))) ents.push({ id: ++nextEnt, ...e, proj: true });
     S.doc.sketches.push({ id: p._id, name: `Sketch ${p._n}`, plane, ents, face: p.face ? { obj: p.face.obj } : null, hidden: false, nextEnt, layer: S.doc.layer ?? 1 });
     S.ed.sketch = p._id; if (S.ed.workspace !== 'model') S.ed.workspace = 'draw'; S.ed.drawSel = new Set(); S.ed.profiles = [];
   },
 };
+
+// An exact B-rep edge (its part's own coordinates, xf to world) as world-space data that can be projected later: a
+// line's ends; a circle's or arc's centre, radius and normal (an arc's start, middle and end); other curves sampled
+export function edgeData(E, xf) {
+  const W = v => xf.toW([v.x, v.y, v.z]), at = t => W(E.pointAt(t));
+  if (E.geomType === 'LINE') return { t: 'line', a: W(E.startPoint), b: W(E.endPoint) };
+  const pts = []; for (let i = 0; i <= 32; i++) pts.push(at(i / 32));
+  if (E.geomType === 'CIRCLE') {
+    const A = at(0), B = at(1 / 3), C = at(2 / 3), u = M.sub(B, A), v = M.sub(C, A), w = M.cross(u, v), w2 = M.dot(w, w);
+    if (w2 > 1e-18) {
+      const c = M.add(A, M.mul(M.add(M.mul(M.cross(w, u), M.dot(v, v)), M.mul(M.cross(v, w), M.dot(u, u))), 1 / (2 * w2))), r = M.dist(A, c), Z = at(1);
+      return M.dist(A, Z) < 1e-9 * Math.max(1, r) ? { t: 'circle', c, r, n: M.norm(w), pts } : { t: 'arc', c, r, n: M.norm(w), s: A, m: at(0.5), e: Z, pts };
+    }
+  }
+  return { t: 'poly', pts };
+}
+// that data seen on a sketch plane: a line as a line; a circle or arc parallel to the plane as the exact circle or
+// arc; anything else as the lines of its outline along the plane's normal
+export function dataToSketch(pl, d) {
+  const toP = w => SK.toP(pl, w), d2 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const cl = x => { const q = Math.round(x * 1e9) / 1e9; return Math.abs(q - x) < 1e-9 ? q || 0 : x; }, c2 = q => q.map(cl);
+  if (d.t === 'line') { const a = toP(d.a), b = toP(d.b); return d2(a, b) > 1e-9 ? [{ t: 'line', a: c2(a), b: c2(b) }] : []; }
+  if ((d.t === 'circle' || d.t === 'arc') && Math.abs(M.dot(d.n, pl.n)) > 1 - 1e-9) {
+    const c = c2(toP(d.c)), r = cl(d.r);
+    if (d.t === 'circle') return [{ t: 'circle', c, r }];
+    const ang = q => Math.atan2(q[1] - c[1], q[0] - c[0]), a0 = ang(toP(d.s)), a1 = ang(toP(d.e)), am = ang(toP(d.m));
+    const T = 2 * Math.PI, ccw = ((a1 - a0) % T + T) % T >= ((am - a0) % T + T) % T;
+    return [ccw ? { t: 'arc', c, r, a0, a1 } : { t: 'arc', c, r, a0: a1, a1: a0 }];
+  }
+  const Q = []; for (const w of d.pts) { const q = toP(w); if (!Q.length || d2(q, Q.at(-1)) > 1e-9) Q.push(q); }
+  return Q.slice(1).map((q, i) => ({ t: 'line', a: c2(Q[i]), b: c2(q) }));
+}
+// a face's exact boundary edges (seams left out) as edge data
+export function faceEdgeData(o, tri) {
+  const fc = o.shape && o.faceOf && o.shape.faces[o.faceOf[tri]]; if (!fc) return null;
+  const es = fc.edges, n = new Map(); for (const E of es) n.set(E.hashCode, (n.get(E.hashCode) || 0) + 1);
+  const xf = xfFor(o); return es.filter(E => n.get(E.hashCode) === 1).map(E => edgeData(E, xf));
+}
 
 // A face boundary loop (2D) → sketch entities: one exact circle if the loop is a circle,
 // otherwise lines with collinear runs merged (Fusion-style "projected" geometry).
