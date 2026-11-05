@@ -1134,6 +1134,22 @@ try {
   await p.tap('#btn-home'); await p.waitForTimeout(2500);
   const lookAt = await p.evaluate(() => { const L = StreamLine, r = [L.view.cam.yaw, L.view.cam.pitch].map(v => Math.round(v * 180 / Math.PI)).join(); L.finishSketchEdit(); return r; });
   check(lookAt === '-90,0', `Inside a sketch, Home looks straight at it again (${lookAt})`);
+  // Project (Fusion): a body's face comes into the open sketch as exact reference geometry (its outline and its hole's
+  // circle), a rim already there is not added twice, and the projected curves close profiles
+  await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, m = await import('./js/ops.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    L.runOp(F.sketchOpNew('pb', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 76000, y: -15, w: 40, h: 30 }); F.addEntity(k, { t: 'circle', c: [76028, 0], r: 5 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [76005, -10] }], distance: 10, mode: 'new', target: null }); m.commit();
+    L.S.ed.sketch = null; L.refresh();
+    L.sketchOn({ planeDef: { ...XY(30), label: 'XY · Z 30' } });
+  });
+  await p.waitForTimeout(900); await frame([75995, -20, 10], [76045, 20, 10]); await p.waitForTimeout(500);
+  await p.tap('#tools .tool[data-tool=project]'); await p.waitForTimeout(300);
+  let q = await projW([76008, 6, 10]); await tapV(q.x, q.y);
+  const pj1 = await p.evaluate(() => StreamLine.SK.sketchById(StreamLine.S.ed.editingSketch).ents.map(e => e.t + (e.proj ? 'P' : '') + (e.r ? ':' + e.r : '')).sort().join());
+  q = await projW([76033, 0, 10]); await tapV(q.x, q.y);
+  const pj2 = await p.evaluate(() => { const L = StreamLine, k = L.SK.sketchById(L.S.ed.editingSketch), r = { n: k.ents.length, regs: L.SK.regions(k).length }; L.S.ed.tool = 'select'; L.finishSketchEdit(); return r; });
+  check(pj1 === 'circleP:5,lineP,lineP,lineP,lineP' && pj2.n === 5 && pj2.regs === 2, `Project brings a body's face into the sketch exactly (${pj1}), a rim already there is not added twice (${pj2.n} curves), and they close profiles (${pj2.regs})`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked

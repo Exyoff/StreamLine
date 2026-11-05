@@ -201,7 +201,7 @@ export function down(x, y) {
   if (studio() && DRAW_PRIMARY.has(t) && waitingFirstPoint()) { chooseTarget(x, y); st.pressed = true; }
   const s = sk(); if (!s) return false;
   if (t === 'select') return gripDown(x, y);
-  if (t === 'trim' || t === 'dim' || t === 'corner' || t === 'extend') return false; // handled as taps
+  if (t === 'trim' || t === 'dim' || t === 'corner' || t === 'extend' || t === 'project') return false; // handled as taps
   if (EDIT_TOOLS.has(t)) { ensureCmd(); if (!pointStage()) return false; }
   st.press = { x, y, moved: false };
   snapAt(x, y); st.press.p = st.preview;
@@ -218,7 +218,7 @@ export function move(x, y) {
   view.render(); emit('drawcard');
 }
 export function hover(x, y) {
-  if ((S.ed.workspace !== 'draw' && !studio()) || (['select', 'move', 'rotate', 'scale', 'measure', 'edge', 'trim', 'dim', 'corner', 'extend'].includes(tool()) && !curveCmd())) return;
+  if ((S.ed.workspace !== 'draw' && !studio()) || (['select', 'move', 'rotate', 'scale', 'measure', 'edge', 'trim', 'dim', 'corner', 'extend', 'project'].includes(tool()) && !curveCmd())) return;
   if (studio() && !DRAW_PRIMARY.has(tool()) && !EDIT_TOOLS.has(tool())) return;
   if (studio() && DRAW_PRIMARY.has(tool()) && waitingFirstPoint()) chooseTarget(x, y);
   if (!sk()) return;
@@ -1173,6 +1173,7 @@ export function enter() {
 import { evalExpr } from './units.js';
 export function typed(raw) {
   const str = raw.trim(); if (!str) return false;
+  tapXY = null; // (a typed point is exactly what was typed: DIST / ID must not snap it to a body under an old tap)
   typedTarget();
   const t = tool(), c = st.cmd;
   const num = (x, kind = 'len') => evalExpr(x, kind);
