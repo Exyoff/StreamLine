@@ -182,6 +182,18 @@ function update() {
       const text = `${h.key === 'size' ? (last.params.kind === 'chamfer' ? '◢ ' : 'R ') : ''}${fmtLen(v)}`;
       view.labelAt(x, y, text, 'readout val'); valueBubble = { x, y, key: h.key };
     }
+  } else if (!drag && (k === 'combo' || k === 'move' || k === 'rotate')) {
+    // after a drag along an arrow or round a ring, the amount stays on screen: tap it to type the exact one (on a
+    // phone there was only the card)
+    const last = getLast(), tk = last && last.committed && last.def === OPS.transform && last._typeKey;
+    if (tk) {
+      const c = view.project(ps.p), ins = view.insets?.() || { t: 0, b: 0, l: 0, r: 0 }, sz = view.size();
+      if (c.front) {
+        const x = Math.max(ins.l + 60, Math.min(sz.w - ins.r - 60, c.x - 96)), y = Math.max(ins.t + 24, Math.min(sz.h - ins.b - 24, c.y + 58));
+        const v = last.params[tk] || 0, text = tk === 'angle' ? `${last.params.axis === 'm' ? '⟲' : String(last.params.axis).toUpperCase()} ${fmtAng(v)}` : `${tk.toUpperCase()} ${fmtLen(v)}`;
+        view.labelAt(x, y, text, 'readout val'); valueBubble = { x, y, key: tk };
+      }
+    }
   }
   for (const part of parts) {
     if (part.billboard) part.obj.quaternion.copy(camera().quaternion);
