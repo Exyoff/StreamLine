@@ -4,6 +4,7 @@ import { S, on, emit, activeObj, selectedObjs, objById, loadSettings, saveSettin
 import * as H from './history.js';
 import * as K from './kernel.js';
 import * as PJ from './projects.js';
+import * as LIB from './library.js';
 import * as BR from './browser.js';
 import { view, camera } from './viewport.js';
 import { initGizmo, gizmoActive } from './gizmo.js';
@@ -47,6 +48,16 @@ async function boot() {
   S.ed.workspace = 'model'; // the studio: one 3D space for curves, regions and solids
   resetHistory();
   bindEvents();
+  // what Frame should keep clear: the tool rail on the left, the top bar, and the controls along the bottom
+  view.insets = () => {
+    const vr = $('#viewport').getBoundingClientRect(), vis = el => el && !el.hidden && el.offsetParent !== null && el.getBoundingClientRect();
+    const rail = vis($('#toolrail')), top = vis($('#topbar'));
+    const l = rail && rail.left < vr.width / 2 ? rail.right - vr.left : 0;
+    const t = top ? top.bottom - vr.top : 0; // (the draw card shifts the picture itself, see renderLastOp)
+    const bottoms = ['#stationbar', '#vtools-r', '#nav', '#lastop'].map(q => vis($(q))).filter(Boolean).map(r => r.top - vr.top).filter(y => y > vr.height / 2);
+    const b = bottoms.length ? vr.bottom - vr.top - Math.min(...bottoms) : 0;
+    return { l: Math.max(0, l), r: 0, t: Math.max(0, t), b: Math.max(0, b) };
+  };
   PJ.initProjects({
     view, refresh: () => refresh(), renderSheet: () => { if (sheetOpen) renderSheet(); },
     newScene: () => newScene(),
@@ -182,7 +193,38 @@ function activateSketch(id) {
 }
 
 // ---------- CAD taps: profiles & bodies ----------
-function edgeTap(x, y) {
+// a body edge as a selection item (world coordinates)
+function solidEdgeItem(o, e) {
+  const xf = xfFor(o), P = e.pts.map(xf.toW), mid = K.polyMid(P);
+  let circle;
+  if (e.type === 'CIRCLE' && e.closed) { const c = M.centroid(P.slice(0, -1)); circle = { loop: P, c, R: M.dist(P[0], c) }; }
+  return { obj: o.id, p: mid, a: P[0], b: P[P.length - 1], len: e.len, type: e.type, pts: P, ...(circle ? { circle } : {}) };
+}
+const edgeOfItem = (o, q) => o.brep.edges.find(e => !e.seam && e.i >= 0 && K.polyDist(xfFor(o).toL(q.p), e.pts) < 1e-6 * Math.max(1, e.len) + o.brep.tol);
+// grow the edge selection along edges that continue smoothly (tangent chains), or take every edge of the body
+function growEdges(all) {
+  const o = objById(S.ed.edges[0]?.obj); if (!o || !o.brep) return;
+  const E = o.brep.edges.filter(e => !e.seam && e.i >= 0);
+  let pick;
+  if (all) pick = E;
+  else {
+    const tol = Math.max(o.brep.tol * 4, 1e-6), d = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    const ends = e => { const p = e.pts, n = p.length; return [{ q: p[0], t: M.norm(M.sub(p[1], p[0])) }, { q: p[n - 1], t: M.norm(M.sub(p[n - 1], p[n - 2])) }]; };
+    pick = S.ed.edges.filter(q => q.obj === o.id).map(q => edgeOfItem(o, q)).filter(Boolean);
+    for (let k = 0; k < pick.length; k++) {
+      if (pick[k].closed) continue;
+      for (const A of ends(pick[k])) for (const e of E) {
+        if (pick.includes(e) || e.closed) continue;
+        if (ends(e).some(B => d(A.q, B.q) < tol && Math.abs(M.dot(A.t, B.t)) > Math.cos(8 * Math.PI / 180))) pick.push(e);
+      }
+    }
+  }
+  const before = S.ed.edges.length;
+  S.ed.edges = pick.map(e => solidEdgeItem(o, e));
+  toast(all ? `All ${S.ed.edges.length} edges of the body` : S.ed.edges.length > before ? `Chain: ${S.ed.edges.length} edges` : 'No smooth continuation from these edges');
+  selectionChanged();
+}
+function edgeTap(x, y, probe = false) { // probe: only report how close the nearest body edge is (px)
   let best = null;
   const hit = view.pickObject(x, y);
   for (const o of S.doc.objects) {
@@ -220,12 +262,11 @@ function edgeTap(x, y) {
       if (!best || d < best.d) best = { d, o, W, fe, e };
     }
   }
+  if (probe) return best ? best.d : Infinity;
   if (!best) { if (!S.ed.multi) S.ed.edges = []; return selectionChanged(); }
   if (best.solid) {
-    const { e, P } = best.solid, mid = K.polyMid(P);
-    let circle;
-    if (e.type === 'CIRCLE' && e.closed) { const c = M.centroid(P.slice(0, -1)); circle = { loop: P, c, R: M.dist(P[0], c) }; }
-    const item = { obj: best.o.id, p: mid, a: P[0], b: P[P.length - 1], len: e.len, type: e.type, pts: P, ...(circle ? { circle } : {}) };
+    const { e, P } = best.solid;
+    const item = solidEdgeItem(best.o, e);
     const sameS = q => q.obj === best.o.id && q.p && K.polyDist(q.p, P) < 1e-6 * Math.max(1, e.len);
     const i = S.ed.edges.findIndex(sameS);
     if (i >= 0) { if (S.ed.multi) S.ed.edges.splice(i, 1); } // a second tap keeps the pick (multi-select toggles)
@@ -342,6 +383,8 @@ function curveOrEdgeTap(x, y) {
     if (e && e.t !== 'hatch' && (!best || w.distanceTo(ray.origin) < best.t)) best = { k, e, t: w.distanceTo(ray.origin) };
   }
   const hit = S.ed.editingSketch != null ? null : view.pickObject(x, y); // bodies are ghosted while a sketch is edited
+  // a sketch a feature already used (its lines run along the body's edges) yields to a body edge under the finger
+  if (best && S.ed.editingSketch == null && H.firstUsing([best.k.id]) >= 0 && edgeTap(x, y, true) <= 16) best = null;
   if (best && (!hit || best.t <= hit.distance + view.worldPerPixel(hit.point) * 8)) {
     if (S.ed.sketch !== best.k.id || !S.ed.multi) S.ed.drawSel = new Set();
     S.ed.sketch = best.k.id; Draw.clearTarget();
@@ -364,6 +407,8 @@ function regionOrFaceTap(x, y) {
     if (r && (!best || w.distanceTo(ray.origin) < best.t)) best = { k, p2, r, t: w.distanceTo(ray.origin) };
   }
   const hit = S.ed.editingSketch != null ? null : view.pickObject(x, y); // bodies are ghosted while a sketch is edited
+  // a sketch a feature already used (its lines run along the body's edges) yields to a body edge under the finger
+  if (best && S.ed.editingSketch == null && H.firstUsing([best.k.id]) >= 0 && edgeTap(x, y, true) <= 16) best = null;
   if (best && (!hit || best.t <= hit.distance + view.worldPerPixel(hit.point) * 8)) {
     const i = S.ed.profiles.findIndex(q => q.sk === best.k.id && SK.regionAt(best.k, q.pt) === best.r);
     if (i >= 0) { if (S.ed.multi) S.ed.profiles.splice(i, 1); } // a second tap keeps the pick (multi-select toggles)
@@ -733,7 +778,8 @@ function renderActions() {
     if (prof) c.push(act(I.extrude, 'Extrude', () => startExtrude(), 'primary'), act(I.revolve, 'Revolve', () => runOp(F.revolve)), ...(prof >= 2 ? [act(I.cone, 'Loft', () => runOp(F.loftOp))] : []), act(I.arc, 'Sweep', () => runOp(F.sweepOp)));
     const flat = S.ed.faces.every(f => f.planar !== false); // push/pull and draft work on flat faces
     if (faces) c.push(...(flat ? [] : [act(I.thread, 'Thread', () => runOp(F.threadOp), 'primary')]), ...(flat ? [act(I.extrude, 'Push/Pull', () => modifier('pushpull'), prof ? '' : 'primary'), act(I.hole, 'Hole', () => runOp(F.holeOp)), act(I.recess, 'Recess', () => runOp(F.recessOp))] : []), act(I.inset, 'Shell', () => modifier('shell'), flat || prof ? '' : 'primary'), ...(flat ? [act(I.cone, 'Draft', () => runOp(F.draftOp))] : []), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)));
-    if (edges) c.push(act(I.fillet, 'Fillet', () => modifier('fillet'), 'primary'), act(I.chamfer, 'Chamfer', () => modifier('chamfer')));
+    if (edges) c.push(act(I.fillet, 'Fillet', () => modifier('fillet'), 'primary'), act(I.chamfer, 'Chamfer', () => modifier('chamfer')),
+      ...(S.ed.edges.some(q => q.pts) ? [act(I.next, 'Chain', () => growEdges(false)), act(I.all, 'All edges', () => growEdges(true))] : []));
     if (curves) c.push(act(I.move, 'Move', () => acadTool('move')), act(I.dup, 'Copy', () => acadTool('copy')), act(I.rotate, 'Rotate', () => acadTool('rotate')), act(I.flip, 'Mirror', () => acadTool('mirror')), act(I.scale, 'Scale', () => acadTool('scale')), act(I.inset, 'Offset', () => acadTool('offset')), act(I.array, 'Array', () => acadTool('arrayrect')), act(I.constrain, 'Constrain', e => openConstrainMenu(e.currentTarget)), act(I.line, 'Construction', () => Draw.toggleConstruction()), act(I.trash, 'Delete', () => Draw.deleteSelected(), 'danger'));
     const linked = solids === 1 ? selectedObjs().find(o => o.link) : null;
     if (linked) c.push(act(I.history, PJ.outOfDate(linked.link.pid) ? 'Sync ●' : 'Sync', () => PJ.syncComponent(linked.link.pid), PJ.outOfDate(linked.link.pid) ? 'primary' : ''), act(I.folder, 'Open source', () => PJ.openSource(linked.link.pid)));
@@ -940,12 +986,16 @@ function renderLastOp() {
   const el = $('#lastop'), op = getLast();
   const show = op && op.committed && (op.def.fields || op.info) && $('#draw-card').hidden;
   el.hidden = !show || gizmoActive(); document.body.classList.toggle('has-lastop', !el.hidden);
+  document.body.classList.toggle('has-handle', !!(op && op.handle));
   const more = () => el.classList.toggle('more', el.scrollHeight - el.scrollTop - el.clientHeight > 4);
   el.onscroll = more; requestAnimationFrame(more);
   requestAnimationFrame(() => {
     const docked = !el.hidden && matchMedia('(max-width: 500px)').matches;
     const side = !el.hidden && matchMedia('(orientation: landscape) and (max-height: 500px)').matches;
-    const off = docked ? el.offsetHeight / 2 : 0, offX = side ? -(el.offsetWidth + 40) / 2 : 0; // move the model out from under the dialog
+    // a draw card across the top (phone) pushes the picture down by half its height instead
+    const dc = $('#draw-card'), dcTop = !dc.hidden && matchMedia('(max-width: 500px)').matches && dc.getBoundingClientRect().top < innerHeight / 3;
+    const dcOff = dcTop ? -Math.max(0, dc.getBoundingClientRect().bottom - $('#topbar').getBoundingClientRect().bottom) / 2 : 0;
+    const off = docked ? el.offsetHeight / 2 : dcOff, offX = side ? -(el.offsetWidth + 40) / 2 : 0; // move the model out from under the dialog
     if (Math.abs((view.offsetY || 0) - off) > 1 || Math.abs((view.offsetX || 0) - offX) > 1) { view.offsetY = off; view.offsetX = offX; view.render(); }
   });
   if (!show) return;
@@ -1196,8 +1246,10 @@ async function exportAs(kind) {
   if (r !== 'cancelled') toast(`Exported ${objs.length} object${objs.length > 1 ? 's' : ''} (mm)`);
 }
 async function saveProject() {
-  const blob = new Blob([JSON.stringify(serialize())], { type: 'application/json' });
-  const r = await IO.deliver(blob, `scene-${new Date().toISOString().slice(0, 10)}.streamline.json`);
+  // the history rebuilds the solids on open, so the file only needs the light document
+  const blob = new Blob([JSON.stringify(serialize(true))], { type: 'application/json' });
+  const nm = (PJ.projectName() || 'project').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'project';
+  const r = await IO.deliver(blob, `${nm}.streamline.json`);
   if (r !== 'cancelled') toast('Project saved');
 }
 async function onFile(e) {
@@ -1209,6 +1261,9 @@ async function onFile(e) {
       const txt = await file.text();
       const before = JSON.stringify(serialize());
       try { deserialize(txt); } catch (err) { deserialize(before); throw err; }
+      if (S.doc.objects.some(o => o.regen)) { H.resetCache(); H.regenerate(0); for (const o of S.doc.objects) delete o.regen; }
+      // an opened file becomes its own project on this device (it never overwrites the one it came from)
+      S.doc.project = { id: LIB.newId(), name: S.doc.project?.name || file.name.replace(/\.streamline\.json$|\.json$/i, ''), created: Date.now() };
       resetHistory(); scheduleSave(); refresh(); view.markSelDirty();
       S.ed.tool = S.ed.tools[S.ed.workspace] || 'select'; Draw.resetTool();
       if (S.ed.workspace === 'draw' && SK.activeSketch()) enterSketchView(SK.activeSketch()); else { view.cam.lock2D = false; view.frame(S.doc.objects.flatMap(worldVerts)); }
@@ -1309,7 +1364,7 @@ function onKey(e) {
 
 boot();
 // console/debug access
-window.StreamLine = { K, S, view, OPS, F, SK, Draw, Cmd, runOp, undo, redo, getLast, M, serialize, setWorkspace, H, BR, isShown, addSketchedPrim };
+window.StreamLine = { K, S, view, OPS, F, SK, Draw, Cmd, runOp, undo, redo, getLast, M, serialize, setWorkspace, H, BR, isShown, addSketchedPrim, refresh: () => selectionChanged() };
 
 // Primitives are built the parametric way: a sketch on a base plane plus an Extrude / Revolve,
 // so they appear in the timeline and can be resized by editing the sketch or the feature.
@@ -1343,7 +1398,8 @@ function startExtrude() {
 // the construction plane new curves go on when not drawn on a face
 function planeLabel() { const c = S.ed.cplane; return !c || c === SK.PLANES.XY ? 'XY' : c === SK.PLANES.XZ ? 'XZ' : 'YZ'; }
 function openPlaneMenu(anchor) {
-  const set = (pl, name) => () => { S.ed.cplane = pl; Draw.resetTool(); toast(`New curves go on the ${name} plane (or on any face you draw on)`); renderActionsForce(); };
+  // turn to look straight at the plane (orthographic), so what is drawn lands where the finger is
+  const set = (pl, name) => () => { S.ed.cplane = pl; Draw.resetTool(); view.setView(name.toLowerCase()); toast(`New curves go on the ${name} plane (or on any face you draw on) — rotate the view any time`); renderActionsForce(); };
   popover(anchor, h('div', {}, h('div', { class: 'mtitle' }, 'Drawing plane'),
     menuItem(I.plane, 'Top (XY)', set(null, 'Top'), planeLabel() === 'XY' ? '✓' : ''),
     menuItem(I.plane, 'Front (XZ)', set(SK.PLANES.XZ, 'Front'), planeLabel() === 'XZ' ? '✓' : ''),

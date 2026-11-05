@@ -95,13 +95,13 @@ try {
   await shot('1-extrude');
 
   // --- draw a circle directly on the top face (no sketch setup), extrude → auto-join
-  await p.locator('.tool[data-tool=circle]').tap();
+  await p.locator('.tool[data-tool=circle]').tap(); await p.waitForTimeout(300); // the view settles below the draw card
   const a = await projW([12, 6, 8]), b2 = await projW([15, 6, 8]);
   await drag([[a.x, a.y], [b2.x + 2, b2.y]]);
   const fs = await st(() => StreamLine.S.doc.sketches.map(k => ({ n: k.plane.n, z: k.plane.o[2], face: !!k.face, ents: k.ents.map(e => e.t + (e.r ? ':' + e.r : '')) })));
   check(fs.length === 2 && fs[1].face && fs[1].n[2] === 1 && Math.abs(fs[1].z - 8) < 1e-9 && fs[1].ents.some(e => e.startsWith('circle')), `pressing on the top face draws on that face (${JSON.stringify(fs[1] && fs[1].ents)})`);
   const r2 = await st(() => StreamLine.S.doc.sketches[1].ents.find(e => e.t === 'circle').r);
-  await p.locator('.tool[data-tool=select]').tap();
+  await p.locator('.tool[data-tool=select]').tap(); await p.waitForTimeout(300);
   c = await projW([12, 6, 8]); await tapV(c.x, c.y);
   check(await st(() => StreamLine.S.ed.profiles.length === 1 && StreamLine.S.ed.profiles[0].sk === StreamLine.S.doc.sketches[1].id), 'the circle on the face is a region you can pick');
   await p.locator('#actions .act', { hasText: 'Extrude' }).tap();
@@ -329,6 +329,32 @@ try {
   });
   check(pat.ok && Math.abs(pat.holes - pat.eh) < 1e-6 && /×6 on Ø40/.test(pat.label), `Hole pattern: six exact holes on a Ø40 bolt circle (${pat.holes.toFixed(3)} mm³, “${pat.label}”)`);
   check(Math.abs(pat.hex - pat.ex) < 1e-6 && Math.abs(pat.cross - pat.ec) < 1e-6, `Recesses: an exact hex socket (${pat.hex.toFixed(3)}) and a row of two cross recesses (${pat.cross.toFixed(3)} mm³)`);
+  // round edges keep their fillets when the sketch they came from changes size (outer vs inner rim)
+  const mug = await st(() => {
+    const L = StreamLine, F = L.F, K = L.K, XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    L.runOp(F.sketchOpNew('mug', XY(0), null, k => { F.addEntity(k, { t: 'circle', c: [-400, 0], r: 40 }); }));
+    const skId = L.S.ed.sketch;
+    L.runOp(F.extrude, { pts: [{ sk: skId, pt: [-400, 0] }], distance: 95, mode: 'new', target: null });
+    const id = L.S.doc.objects.at(-1).id, O = () => L.S.doc.objects.find(o => o.id === id);
+    L.S.ed.faces = [{ obj: id, n: [0, 0, 1], w: 95, p: [-390, 0, 95], planar: true }];
+    L.runOp(F.shellOp, { t: 4 });
+    const circ = (z, r) => { const e = O().brep.edges.find(e => e.closed && Math.abs(e.pts[0][2] - z) < 1e-6 && Math.abs(Math.hypot(e.pts[0][0] + 400, e.pts[0][1]) - r) < 0.01); return { obj: id, p: K.polyMid(e.pts), a: e.pts[0], b: e.pts.at(-1), len: e.len, type: e.type }; };
+    for (const [z, r, f] of [[95, 40, 1], [95, 36, 1], [0, 40, 3], [4, 36, 2]]) { L.S.ed.edges = [circ(z, r)]; L.runOp(F.edgeBlendOp, { kind: 'fillet', size: f }); }
+    L.runOp(F.sketchOp('radius', skId, sk => { sk.ents.find(e => e.t === 'circle').r = 42; }));
+    const errs = L.H.hist().filter(r => r.err).map(r => r.err), tor = O().shape.faces.filter(f => f.geomType === 'TORUS').length;
+    return { errs, tor };
+  });
+  check(!mug.errs.length && mug.tor === 4, `Fillets on round rims follow a sketch radius change (outer and inner rims kept apart; ${mug.tor} toroidal fillets${mug.errs.length ? ' · ' + mug.errs.join('; ') : ''})`);
+  const shrink = await st(() => {
+    const L = StreamLine, F = L.F, XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    L.runOp(F.sketchOpNew('thin', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: -600, y: 0, w: 200, h: 1 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [-500, 0.5] }], distance: 200, mode: 'new', target: null });
+    const o = L.S.doc.objects.at(-1), e = o.brep.edges.find(e => e.type === 'LINE' && Math.abs(e.pts[0][2] - 200) < 1e-6 && Math.abs(e.pts[0][1] - e.pts.at(-1)[1]) < 1e-9 && e.len > 100);
+    L.S.ed.edges = [{ obj: o.id, p: L.K.polyMid(e.pts), a: e.pts[0], b: e.pts.at(-1), len: e.len, type: e.type }];
+    const ok = L.runOp(F.edgeBlendOp, { kind: 'fillet' });
+    return { ok, size: L.getLast()?.params.size };
+  });
+  check(shrink.ok && shrink.size < 1, `A default fillet too big for a 1 mm plate shrinks to fit (radius ${shrink.size})`);
   // assemblies: insert a saved project as a linked component, change its source, sync
   const asm = await p.evaluate(async () => {
     const L = StreamLine, PJ = await import('./js/projects.js'), ops = await import('./js/ops.js');

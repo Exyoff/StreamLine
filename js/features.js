@@ -76,6 +76,8 @@ export function addEntity(sk, ent) { sk.nextEnt = (sk.nextEnt || 1) + 1; const e
 
 // face of a body -> plane
 export function facePlane(obj, fi, camRight) {
+  // exact solids: only flat faces carry a sketch plane (a curved face has no single plane)
+  if (obj.brep && obj.faceOf) { const bf = obj.brep.faces[obj.faceOf[fi]]; if (!bf || bf.type !== 'PLANE') return null; }
   const xf = xfFor(obj), P = obj.mesh.f[fi].map(i => xf.toW(obj.mesh.v[i]));
   const n = M.faceNormal(P);
   if (M.len(n) < 0.5) return null;
@@ -292,17 +294,17 @@ function findEdges(o, list) {
   const xf = xfFor(o), out = [];
   for (const e of list) {
     const p = e.p || M.mul(M.add(e.a, e.b), 0.5);
-    const hit = K.edgeAt(o.shape, { p: xf.toL(p), len: e.len, type: e.type });
+    const hit = K.edgeAt(o.shape, { p: xf.toL(p), len: e.len, type: e.type, closed: e.closed, sig: e.sig });
     if (!hit) return null;
     const pts = hit.info.pts, mid = K.polyMid(pts);
-    Object.assign(e, { p: xf.toW(mid), a: xf.toW(pts[0]), b: xf.toW(pts[pts.length - 1]), len: hit.info.len, type: hit.info.type });
+    Object.assign(e, { p: xf.toW(mid), a: xf.toW(pts[0]), b: xf.toW(pts[pts.length - 1]), len: hit.info.len, type: hit.info.type, closed: !!hit.info.closed, sig: K.edgeSig(o.shape, hit.info) });
     out.push(hit.edge);
   }
   return out;
 }
 export const edgeBlendOp = {
   label: p => (p.kind === 'fillet' ? 'Fillet' : 'Chamfer') + ` · ${p.edges.length} edge${p.edges.length === 1 ? '' : 's'}`,
-  defaults: () => ({ kind: 'fillet', size: defSize() / 10 }),
+  defaults: () => ({ kind: 'fillet', size: defSize() / 10 }), shrink: 'size',
   prepare(p) {
     p.edges ??= JSON.parse(JSON.stringify((S.ed.edges || []).map(({ pts, circle, ...r }) => r))); // a point on each edge is enough to find it again
     if (!p.edges.length) return 'Pick body edges first (Edge mode)';
@@ -342,7 +344,7 @@ export const edgeBlendOp = {
       // the drag handle: from the first edge, into the corner
       if (id === p._objs[0]) {
         const e = p.edges.find(x => x.obj === id), xf = xfFor(o), mid = xf.toL(e.p);
-        const ns = o.shape.faces.filter(f => f.edges.some(x => x.isSame(edges[0]))).map(f => { try { return vec3(f.normalAt(mid)); } catch (err) { return null; } }).filter(Boolean);
+        const ns = o.shape.faces.filter(f => f.edges.some(x => x.isSame(edges[0]))).map(f => { try { return M.norm(vec3(f.normalAt(mid))); } catch (err) { return null; } }).filter(Boolean);
         if (ns.length === 2) { const d = M.norm(M.add(ns[0], ns[1])); if (M.len(d) > 0.5) op.handle = { origin: e.p, dir: M.mul(locDir(xf, mid, d), -1), key: 'size', min: 1e-6 }; }
       }
       K.setShape(o, res);
@@ -399,7 +401,7 @@ export const pushPullOp = {
 };
 export const shellOp = {
   label: () => 'Shell',
-  defaults: () => ({ t: defSize() / 20 }),
+  defaults: () => ({ t: defSize() / 20 }), shrink: 't',
   prepare(p) {
     p.faces ??= JSON.parse(JSON.stringify(S.ed.faces || []));
     p.obj ??= p.faces[0]?.obj ?? selectedObjs()[0]?.id;

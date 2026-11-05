@@ -456,9 +456,12 @@ export function cardContent() {
   const t = tool();
   const title = (txt, hint) => h('div', { class: 'head' }, h('div', { class: 'title' }, txt, hint ? h('small', {}, hint) : null),
     (st.start || st.arc || st.dimA) ? h('button', { class: 'ib', 'aria-label': 'Cancel', html: I.close, onclick: () => resetTool() }) : null);
+  // name the sketch axes after the world axes they run along (on the XZ plane the second one is Z)
+  const axN = (d, f) => { const k = d.findIndex(c => Math.abs(Math.abs(c) - 1) < 1e-9); return k < 0 ? f : (d[k] < 0 ? '−' : '') + 'XYZ'[k]; };
+  const [AU, AV] = [axN(s.plane.u, 'U'), axN(s.plane.v, 'V')], axCls = a => 'ax-' + (a.replace('−', '').toLowerCase() === 'z' ? 'z' : a.replace('−', '').toLowerCase() === 'y' ? 'y' : 'x');
   const xyFields = (lab, cb) => h('div', { class: 'fields' },
-    field({ label: lab + ' X', kind: 'len', value: pv() ? pv()[0] : 0, cls: 'ax-x', onCommit: v => cb([v, pv() ? pv()[1] : 0], 0) }),
-    field({ label: lab + ' Y', kind: 'len', value: pv() ? pv()[1] : 0, cls: 'ax-y', onCommit: v => cb([st.typed.x ?? (pv() ? pv()[0] : 0), v], 1) }));
+    field({ label: lab + ' ' + AU, kind: 'len', value: pv() ? pv()[0] : 0, cls: axCls(AU), onCommit: v => cb([v, pv() ? pv()[1] : 0], 0) }),
+    field({ label: lab + ' ' + AV, kind: 'len', value: pv() ? pv()[1] : 0, cls: axCls(AV), onCommit: v => cb([st.typed.x ?? (pv() ? pv()[0] : 0), v], 1) }));
   const setStart = (p, k) => { typedTarget(); if (k === 0) { st.typed.x = p[0]; st.preview = p; emit('drawcard'); view.render(); return; } st.start = p; st.preview = p; st.typed = {}; emit('drawcard'); view.render(); };
   if (t === 'select') {
     const ents = [...S.ed.drawSel].map(id => SK.entById(s, id)).filter(Boolean);
