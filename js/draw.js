@@ -309,17 +309,30 @@ function gripUp() { commit(); st.grip = null; st.preview = null; st.snap = null;
 
 // ---------- taps (select / trim / dim) ----------
 // tapping a dimension label edits it; tapping a constraint glyph removes it
-export function tapLabel(x, y) {
+// a constraint glyph needs two taps to go: the first names it, the second (within 3 s) removes it
+let armed = null;
+function glyphTap(s, x, y) {
+  const G = (st.consLabels || []).filter(G => Math.hypot(G.x - x, G.y - y) < 12).sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y))[0];
+  if (!G) return false;
+  const cid = G.c.id, name = SK.CONS_LABEL[G.c.t];
+  if (armed && armed.cid === cid && performance.now() - armed.t < 3000) {
+    armed = null;
+    runOp(F.sketchOp('Remove constraint', s.id, k => { k.cons = (k.cons || []).filter(c => c.id !== cid); }));
+    toast(`Removed ${name} constraint`); return true;
+  }
+  armed = { cid, t: performance.now() };
+  toast(`${name} constraint — tap it again to remove it`); return true;
+}
+export function tapLabel(x, y, glyphs = true) {
   const s = sk(); if (!s || s.pending) return false;
   for (const L of st.dimLabels || []) if (Math.hypot(L.x - x, L.y - y) < 28) { editDim(L.dim); return true; }
-  for (const G of st.consLabels || []) if (Math.hypot(G.x - x, G.y - y) < 16) {
-    const cid = G.c.id;
-    runOp(F.sketchOp('Remove constraint', s.id, k => { k.cons = (k.cons || []).filter(c => c.id !== cid); }));
-    toast(`Removed ${SK.CONS_LABEL[G.c.t]} constraint`); return true;
-  }
-  return false;
+  return glyphs && glyphTap(s, x, y);
 }
+// the app supplies a picker for round edges of exact solids (Inquiry → Radius on a hole rim)
+let solidCircleAt = null, tapXY = null;
+export function setSolidCirclePicker(fn) { solidCircleAt = fn; }
 export function tap(x, y) {
+  tapXY = [x, y];
   const s = sk(); if (!s) return;
   const t = tool();
   const raw = planePt(x, y);
@@ -327,11 +340,7 @@ export function tap(x, y) {
   if (t === 'select') {
     // dimension labels, then constraint glyphs
     for (const L of st.dimLabels || []) if (Math.hypot(L.x - x, L.y - y) < 28) { editDim(L.dim); return; }
-    for (const G of st.consLabels || []) if (Math.hypot(G.x - x, G.y - y) < 16) {
-      const cid = G.c.id;
-      runOp(F.sketchOp('Remove constraint', s.id, k => { k.cons = (k.cons || []).filter(c => c.id !== cid); }));
-      toast(`Removed ${SK.CONS_LABEL[G.c.t]} constraint`); return;
-    }
+    if (glyphTap(s, x, y)) return;
     const e = SK.pickEntity(s, raw, 16 * wpp);
     if (e) { if (S.ed.multi) { S.ed.drawSel.has(e.id) ? S.ed.drawSel.delete(e.id) : S.ed.drawSel.add(e.id); } else S.ed.drawSel = new Set([e.id]); }
     else if (!S.ed.multi) S.ed.drawSel = new Set();
@@ -456,9 +465,7 @@ export function cardContent() {
   const t = tool();
   const title = (txt, hint) => h('div', { class: 'head' }, h('div', { class: 'title' }, txt, hint ? h('small', {}, hint) : null),
     (st.start || st.arc || st.dimA) ? h('button', { class: 'ib', 'aria-label': 'Cancel', html: I.close, onclick: () => resetTool() }) : null);
-  // name the sketch axes after the world axes they run along (on the XZ plane the second one is Z)
-  const axN = (d, f) => { const k = d.findIndex(c => Math.abs(Math.abs(c) - 1) < 1e-9); return k < 0 ? f : (d[k] < 0 ? '−' : '') + 'XYZ'[k]; };
-  const [AU, AV] = [axN(s.plane.u, 'U'), axN(s.plane.v, 'V')], axCls = a => 'ax-' + (a.replace('−', '').toLowerCase() === 'z' ? 'z' : a.replace('−', '').toLowerCase() === 'y' ? 'y' : 'x');
+  const [AU, AV] = axisNames(s.plane);
   const xyFields = (lab, cb) => h('div', { class: 'fields' },
     field({ label: lab + ' ' + AU, kind: 'len', value: pv() ? pv()[0] : 0, cls: axCls(AU), onCommit: v => cb([v, pv() ? pv()[1] : 0], 0) }),
     field({ label: lab + ' ' + AV, kind: 'len', value: pv() ? pv()[1] : 0, cls: axCls(AV), onCommit: v => cb([st.typed.x ?? (pv() ? pv()[0] : 0), v], 1) }));
@@ -587,8 +594,13 @@ function modeBar(t) {
   const list = MODES[t]; if (!list) return null;
   return h('div', { class: 'seg modebar' }, ...list.map(([k, , short]) => h('button', { class: mode(t) === k ? 'on' : '', onclick: () => { setDrawMode(t, k); emit('drawcard'); view.render(); } }, short)));
 }
+// name the sketch axes after the world axes they run along (on the XZ plane the second one is Z)
+const axN = (d, f) => { const k = d.findIndex(c => Math.abs(Math.abs(c) - 1) < 1e-9); return k < 0 ? f : (d[k] < 0 ? '−' : '') + 'XYZ'[k]; };
+const axisNames = pl => [axN(pl.u, 'U'), axN(pl.v, 'V')];
+const axCls = a => 'ax-' + ({ x: 'x', y: 'y', z: 'z' }[a.replace('−', '').toLowerCase()] || 'x');
 function entTitle(e) { return { line: 'Line', rect: 'Rectangle', circle: 'Circle', arc: 'Arc', dim: 'Dimension' }[e.t] || e.t; }
 function entFields(s, e) {
+  const [AU, AV] = axisNames(s.plane);
   const skId = s.id, id = e.id;
   const edit = (label, fn) => v => runOp(F.sketchOp(label, skId, sk2 => editAndSolve(sk2, k => { const ee = SK.entById(k, id); if (!ee) return 'Gone'; return fn(k, ee, v); })));
   const fs = [];
@@ -597,20 +609,20 @@ function entFields(s, e) {
     fs.push(
       field({ label: 'Length', kind: 'len', value: L, min: 1e-9, onCommit: edit('Line length', (k, ee, v) => { const L0 = SK.d2(ee.a, ee.b); ee.b = [ee.a[0] + (ee.b[0] - ee.a[0]) * v / L0, ee.a[1] + (ee.b[1] - ee.a[1]) * v / L0]; }) }),
       field({ label: 'Angle', kind: 'ang', value: A, onCommit: edit('Line angle', (k, ee, v) => { const l = SK.d2(ee.a, ee.b); ee.b = [ee.a[0] + l * ecos(v), ee.a[1] + l * esin(v)]; }) }),
-      field({ label: 'Start X', kind: 'len', value: e.a[0], cls: 'ax-x', onCommit: edit('Line start', (k, ee, v) => { ee.a = [v, ee.a[1]]; }) }),
-      field({ label: 'Start Y', kind: 'len', value: e.a[1], cls: 'ax-y', onCommit: edit('Line start', (k, ee, v) => { ee.a = [ee.a[0], v]; }) }),
-      field({ label: 'End X', kind: 'len', value: e.b[0], cls: 'ax-x', onCommit: edit('Line end', (k, ee, v) => { ee.b = [v, ee.b[1]]; }) }),
-      field({ label: 'End Y', kind: 'len', value: e.b[1], cls: 'ax-y', onCommit: edit('Line end', (k, ee, v) => { ee.b = [ee.b[0], v]; }) }));
+      field({ label: 'Start ' + AU, kind: 'len', value: e.a[0], cls: axCls(AU), onCommit: edit('Line start', (k, ee, v) => { ee.a = [v, ee.a[1]]; }) }),
+      field({ label: 'Start ' + AV, kind: 'len', value: e.a[1], cls: axCls(AV), onCommit: edit('Line start', (k, ee, v) => { ee.a = [ee.a[0], v]; }) }),
+      field({ label: 'End ' + AU, kind: 'len', value: e.b[0], cls: axCls(AU), onCommit: edit('Line end', (k, ee, v) => { ee.b = [v, ee.b[1]]; }) }),
+      field({ label: 'End ' + AV, kind: 'len', value: e.b[1], cls: axCls(AV), onCommit: edit('Line end', (k, ee, v) => { ee.b = [ee.b[0], v]; }) }));
   } else if (e.t === 'rect') {
     fs.push(
-      field({ label: 'X', kind: 'len', value: e.x, cls: 'ax-x', onCommit: edit('Rect X', (k, ee, v) => { ee.x = v; }) }),
-      field({ label: 'Y', kind: 'len', value: e.y, cls: 'ax-y', onCommit: edit('Rect Y', (k, ee, v) => { ee.y = v; }) }),
+      field({ label: AU, kind: 'len', value: e.x, cls: axCls(AU), onCommit: edit('Rect X', (k, ee, v) => { ee.x = v; }) }),
+      field({ label: AV, kind: 'len', value: e.y, cls: axCls(AV), onCommit: edit('Rect Y', (k, ee, v) => { ee.y = v; }) }),
       field({ label: 'Width', kind: 'len', value: e.w, min: 1e-9, onCommit: edit('Rect width', (k, ee, v) => { ee.w = v; }) }),
       field({ label: 'Height', kind: 'len', value: e.h, min: 1e-9, onCommit: edit('Rect height', (k, ee, v) => { ee.h = v; }) }));
   } else if (e.t === 'circle' || e.t === 'arc') {
     fs.push(
-      field({ label: 'Centre X', kind: 'len', value: e.c[0], cls: 'ax-x', onCommit: edit('Centre', (k, ee, v) => { ee.c = [v, ee.c[1]]; }) }),
-      field({ label: 'Centre Y', kind: 'len', value: e.c[1], cls: 'ax-y', onCommit: edit('Centre', (k, ee, v) => { ee.c = [ee.c[0], v]; }) }),
+      field({ label: 'Centre ' + AU, kind: 'len', value: e.c[0], cls: axCls(AU), onCommit: edit('Centre', (k, ee, v) => { ee.c = [v, ee.c[1]]; }) }),
+      field({ label: 'Centre ' + AV, kind: 'len', value: e.c[1], cls: axCls(AV), onCommit: edit('Centre', (k, ee, v) => { ee.c = [ee.c[0], v]; }) }),
       field({ label: 'Radius', kind: 'len', value: e.r, min: 1e-9, onCommit: edit('Radius', (k, ee, v) => { ee.r = v; }) }),
       field({ label: 'Diameter', kind: 'len', value: 2 * e.r, min: 1e-9, onCommit: edit('Diameter', (k, ee, v) => { ee.r = v / 2; }) }));
     if (e.t === 'arc') fs.push(
@@ -744,7 +756,7 @@ function renderSketches() {
   sketchGroup.traverse(o => { if (o.userData.dashed && Math.abs(o.material.dashSize - dash) > dash * 0.05) { o.material.dashSize = dash; o.material.gapSize = dash * 0.6; } });
   // per-frame labels for dims + preview
   st.dimLabels = [];
-  if ((ws === 'draw' || stu) && act && !act.pending) {
+  if ((ws === 'draw' || stu) && act && !act.pending && isShown(act)) {
     for (const d of act.ents) if (d.t === 'dim') {
       const g = dimGeom(act, d); if (!g) continue;
       const w = SK.toW(act.plane, g.mid); view.label(w, g.text, 'dim');
@@ -752,7 +764,9 @@ function renderSketches() {
     }
     st.consLabels = [];
     const seen = new Map();
-    for (const c of act.cons || []) {
+    // constraint glyphs only while the sketch is still being worked on (not once a feature consumed it)
+    const showCons = !stu || S.ed.editingSketch === act.id || H.firstUsing([act.id]) < 0;
+    for (const c of showCons ? act.cons || [] : []) {
       const e = SK.entById(act, c.a); if (!e) continue;
       const kp = SK.keyPoints(e), anchor = (kp.find(q => q.k === 'mid' || q.k === 'c' || q.k === 'ctr') || kp[0]).p;
       const n = seen.get(e.id) || 0; seen.set(e.id, n + 1);
@@ -1171,7 +1185,15 @@ function reportArea(pts) {
 function inquiryTap(c, s, raw, wpp) {
   if (c.tool === 'radius') {
     const e = SK.pickEntity(s, raw, 16 * wpp);
-    if (!e || (e.t !== 'circle' && e.t !== 'arc')) return toast('Tap a circle or arc');
+    if ((!e || (e.t !== 'circle' && e.t !== 'arc')) && solidCircleAt && tapXY) {
+      const sc = solidCircleAt(...tapXY);
+      if (sc) {
+        log(`MEASUREGEOM  Radius = ${fmtLen(sc.r)},  Diameter = ${fmtLen(2 * sc.r)}${sc.closed ? `,  Circumference = ${fmtLen(2 * Math.PI * sc.r)}` : `,  Arc length = ${fmtLen(sc.len)}`}  (body edge)`);
+        result = { type: 'pt', pts: [SK.toP(s.plane, sc.c)], text: `R ${fmtLen(sc.r)}` };
+        return endInquiry();
+      }
+    }
+    if (!e || (e.t !== 'circle' && e.t !== 'arc')) return toast('Tap a circle or arc (a sketch curve or a round body edge)');
     log(`MEASUREGEOM  Radius = ${fmtLen(e.r)},  Diameter = ${fmtLen(2 * e.r)}${e.t === 'arc' ? `,  Arc length = ${fmtLen(e.r * SK.sweep(e))}` : `,  Circumference = ${fmtLen(2 * Math.PI * e.r)}`}`);
     result = { type: 'pt', pts: [e.c], text: `R ${fmtLen(e.r)}` };
     return endInquiry();

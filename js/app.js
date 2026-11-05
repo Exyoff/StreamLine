@@ -60,8 +60,8 @@ async function boot() {
   };
   PJ.initProjects({
     view, refresh: () => refresh(), renderSheet: () => { if (sheetOpen) renderSheet(); },
-    newScene: () => newScene(),
-    afterLoad: () => { Draw.resetTool(); S.ed.workspace = 'model'; S.ed.tool = 'select'; view.markSelDirty(); refresh(); view.cam.lock2D = false; view.frame(S.doc.objects.flatMap(worldVerts).concat(allSketchPoints())); if (sheetOpen) renderSheet(); scheduleSave(); },
+    newScene: () => newScene(), closeSheet: () => toggleSheet(false),
+    afterLoad: () => { S.ed.drawSel = new Set(); S.ed.edges = []; S.ed.faces = []; S.ed.profiles = []; Draw.resetTool(); S.ed.workspace = 'model'; S.ed.tool = 'select'; view.markSelDirty(); refresh(); view.cam.lock2D = false; view.frame(S.doc.objects.flatMap(worldVerts).concat(allSketchPoints())); if (sheetOpen) renderSheet(); scheduleSave(); },
   });
   PJ.ensureProject();
   on('library', () => refreshSoon());
@@ -221,7 +221,7 @@ function growEdges(all) {
   }
   const before = S.ed.edges.length;
   S.ed.edges = pick.map(e => solidEdgeItem(o, e));
-  toast(all ? `All ${S.ed.edges.length} edges of the body` : S.ed.edges.length > before ? `Chain: ${S.ed.edges.length} edges` : 'No smooth continuation from these edges');
+  toast(all ? `All ${S.ed.edges.length} edges of the body` : S.ed.edges.length > before ? `Chain: ${S.ed.edges.length} edges` : 'No smooth continuation — Chain follows edges that meet tangentially (e.g. around a fillet)');
   selectionChanged();
 }
 function edgeTap(x, y, probe = false) { // probe: only report how close the nearest body edge is (px)
@@ -270,7 +270,7 @@ function edgeTap(x, y, probe = false) { // probe: only report how close the near
     const sameS = q => q.obj === best.o.id && q.p && K.polyDist(q.p, P) < 1e-6 * Math.max(1, e.len);
     const i = S.ed.edges.findIndex(sameS);
     if (i >= 0) { if (S.ed.multi) S.ed.edges.splice(i, 1); } // a second tap keeps the pick (multi-select toggles)
-    else if (S.ed.multi || (S.ed.edges.length && S.ed.edges.every(q => q.obj === best.o.id))) S.ed.edges.push(item);
+    else if (S.ed.multi) S.ed.edges.push(item); // without Multi a tap replaces the pick
     else S.ed.edges = [item];
     return selectionChanged();
   }
@@ -281,7 +281,7 @@ function edgeTap(x, y, probe = false) { // probe: only report how close the near
   const item = circ ? { obj: best.o.id, a, b, circle: circ } : { obj: best.o.id, a, b };
   const i = S.ed.edges.findIndex(same);
   if (i >= 0) { if (S.ed.multi) S.ed.edges.splice(i, 1); } // a second tap keeps the pick (multi-select toggles)
-  else if (S.ed.multi || (S.ed.edges.length && S.ed.edges.every(q => q.obj === best.o.id))) S.ed.edges.push(item);
+  else if (S.ed.multi) S.ed.edges.push(item);
   else S.ed.edges = [item];
   selectionChanged();
 }
@@ -429,7 +429,7 @@ function onTap(x, y) {
   if (S.ed.workspace === 'draw') return Draw.tap(x, y);
   if (S.ed.workspace === 'cad') return cadTap(x, y);
   if (S.ed.mode === 'object' && (Draw.EDIT_TOOLS.has(S.ed.tool) || ['trim', 'dim', 'corner', 'extend'].includes(S.ed.tool))) return Draw.tap(x, y);
-  if (S.ed.mode === 'object' && Draw.tapLabel(x, y)) return;
+  if (S.ed.mode === 'object' && Draw.tapLabel(x, y, S.ed.pick !== 'face' || S.ed.editingSketch != null)) return; // Face mode taps go to regions
   if (S.ed.mode === 'object' && S.ed.pick === 'edge') return curveOrEdgeTap(x, y);
   if (S.ed.mode === 'object' && S.ed.pick === 'face') return regionOrFaceTap(x, y);
   if (S.ed.mode === 'object') {
@@ -483,6 +483,11 @@ function selectAllToggle() {
     S.ed.drawSel = S.ed.drawSel.size >= all.length && all.length ? new Set() : new Set(all);
     return selectionChanged();
   }
+  if (S.ed.mode === 'object' && (S.ed.edges.length || S.ed.faces.length || S.ed.profiles.length || S.ed.drawSel.size)) {
+    // sub-picks (edges, faces, regions, curves) clear first
+    S.ed.edges = []; S.ed.faces = []; S.ed.profiles = []; S.ed.drawSel = new Set(); clearLast();
+    return selectionChanged();
+  }
   if (S.ed.mode === 'object') {
     const all = S.doc.objects.filter(isShown);
     if (S.ed.selected.size >= all.length && all.length) S.ed.selected = new Set();
@@ -532,9 +537,55 @@ function initMeasureOverlay() {
   faceGroup = new THREE.Group(); view.scene.add(faceGroup);
   view.renderHooks.push(drawOverlays);
 }
+// snap points of exact solids: edge ends, edge midpoints and circle centres (never tessellation vertices)
+function brepSnap(x, y, tol = 26) {
+  const hit = view.pickObject(x, y); let best = null;
+  for (const o of S.doc.objects) {
+    if (!isShown(o) || !o.brep) continue;
+    const xf = xfFor(o);
+    for (const e of o.brep.edges) {
+      if (e.seam || e.i < 0) continue;
+      const pts = [e.pts[0], e.pts.at(-1), K.polyMid(e.pts)];
+      if (e.closed && e.type === 'CIRCLE') { const q = e.pts.slice(0, -1); pts.push([0, 1, 2].map(k => q.reduce((s, v) => s + v[k], 0) / q.length)); }
+      for (const L of pts) {
+        const w = xf.toW(L), sp = view.project(w); if (!sp.front) continue;
+        const d = Math.hypot(sp.x - x, sp.y - y); if (d > tol) continue;
+        if (hit && hit.id !== o.id && view.project(hit.point).depth < sp.depth - view.worldPerPixel(w) * 3) continue;
+        if (!best || d < best.d) best = { d, world: w };
+      }
+    }
+  }
+  return best;
+}
+// a round body edge under the finger: { r, c (world), closed, len }
+Draw.setSolidCirclePicker((x, y) => {
+  let best = null;
+  for (const o of S.doc.objects) {
+    if (!isShown(o) || !o.brep) continue;
+    const xf = xfFor(o);
+    for (const e of o.brep.edges) {
+      if (e.seam || e.i < 0 || e.type !== 'CIRCLE') continue;
+      const P = e.pts.map(xf.toW);
+      for (let k = 1; k < P.length; k++) {
+        const A = view.project(P[k - 1]), B = view.project(P[k]); if (!A.front || !B.front) continue;
+        const dx = B.x - A.x, dy = B.y - A.y, L2 = dx * dx + dy * dy; let t = L2 ? ((x - A.x) * dx + (y - A.y) * dy) / L2 : 0; t = Math.max(0, Math.min(1, t));
+        const d = Math.hypot(A.x + dx * t - x, A.y + dy * t - y); if (d < 24 && (!best || d < best.d)) best = { d, e, P };
+      }
+    }
+  }
+  if (!best) return null;
+  const { e, P } = best, a = P[0], m = K.polyMid(P), b = P[P.length - 1];
+  let c;
+  if (e.closed) { const q = P.slice(0, -1); c = [0, 1, 2].map(k => q.reduce((s, v) => s + v[k], 0) / q.length); }
+  else { // circumcentre of the start, middle and end points
+    const ab = M.sub(b, a), am = M.sub(m, a), n = M.cross(ab, am), n2 = M.dot(n, n);
+    c = M.add(a, M.mul(M.add(M.mul(M.cross(n, ab), M.dot(am, am)), M.mul(M.cross(am, n), M.dot(ab, ab))), 1 / (2 * n2)));
+  }
+  return { r: M.dist(a, c), c, closed: !!e.closed, len: e.len };
+});
 function measureTap(x, y) {
   let p = null;
-  const v = view.pickVertex(x, y, { tol: 30 });
+  const v = brepSnap(x, y) || view.pickVertex(x, y, { tol: 30, objs: S.doc.objects.filter(o => isShown(o) && !o.brep) });
   if (v) p = v.world;
   else {
     const hit = view.pickObject(x, y);
@@ -642,7 +693,12 @@ function bindEvents() {
   $('#sheet-tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { sheetTab = b.dataset.tab; $('#sheet-body').scrollTop = 0; renderSheet(); } });
   $('#btn-menu').onclick = () => openMainMenu();
   $('#btn-persp').onclick = () => view.toggleOrtho();
-  $('#btn-frame').onclick = () => { const p = OPS.selectedWorldPoints(); view.frame(p.length ? (S.ed.mode === 'object' ? selectedObjs().flatMap(worldVerts) : p) : S.doc.objects.flatMap(worldVerts)); };
+  $('#btn-frame').onclick = () => {
+    const p = OPS.selectedWorldPoints();
+    if (p.length) return view.frame(S.ed.mode === 'object' ? selectedObjs().flatMap(worldVerts) : p);
+    // nothing selected: every shown body and sketch
+    view.frame(S.doc.objects.filter(isShown).flatMap(worldVerts).concat(allSketchPoints()));
+  };
   $('#btn-snap').onclick = () => { S.settings.snap = !S.settings.snap; saveSettings(); toast(S.settings.snap ? `Snap on · ${fmtLen(S.settings.snapStep)} · ${S.settings.angleStep}°` : 'Snap off'); refresh(); };
   $('#btn-xray').onclick = () => { S.settings.xray = !S.settings.xray; saveSettings(); view.applyXray(); refresh(); };
   $('#btn-multi').onclick = () => { S.ed.multi = !S.ed.multi; toast(S.ed.multi ? 'Multi-select: taps add / remove' : 'Multi-select off'); refresh(); };
@@ -682,6 +738,8 @@ function refresh() {
   if ([...S.ed.selected].some(id => !isShown(objById(id)))) { S.ed.selected = new Set([...S.ed.selected].filter(id => isShown(objById(id)))); if (!S.ed.selected.has(S.ed.active) && S.ed.mode !== 'edit') S.ed.active = [...S.ed.selected].pop() ?? null; }
   if (S.ed.faces.some(f => !isShown(objById(f.obj)))) S.ed.faces = S.ed.faces.filter(f => isShown(objById(f.obj)));
   if (S.ed.edges.some(e => !isShown(objById(e.obj)))) S.ed.edges = S.ed.edges.filter(e => isShown(objById(e.obj)));
+  // picked curves only count while their sketch is there and shown
+  if (S.ed.drawSel.size) { const k = SK.sketchById(S.ed.sketch); if (!k || !isShown(k)) S.ed.drawSel = new Set(); else if ([...S.ed.drawSel].some(id => !SK.entById(k, id))) S.ed.drawSel = new Set([...S.ed.drawSel].filter(id => SK.entById(k, id))); }
   document.body.classList.toggle('editing-sketch', S.ed.editingSketch != null);
   if (view.xrayFor !== (S.ed.editingSketch != null)) { view.xrayFor = S.ed.editingSketch != null; view.applyXray(); }
   document.body.classList.toggle('ws-model', S.ed.workspace === 'model');
@@ -783,7 +841,8 @@ function renderActions() {
     if (curves) c.push(act(I.move, 'Move', () => acadTool('move')), act(I.dup, 'Copy', () => acadTool('copy')), act(I.rotate, 'Rotate', () => acadTool('rotate')), act(I.flip, 'Mirror', () => acadTool('mirror')), act(I.scale, 'Scale', () => acadTool('scale')), act(I.inset, 'Offset', () => acadTool('offset')), act(I.array, 'Array', () => acadTool('arrayrect')), act(I.constrain, 'Constrain', e => openConstrainMenu(e.currentTarget)), act(I.line, 'Construction', () => Draw.toggleConstruction()), act(I.trash, 'Delete', () => Draw.deleteSelected(), 'danger'));
     const linked = solids === 1 ? selectedObjs().find(o => o.link) : null;
     if (linked) c.push(act(I.history, PJ.outOfDate(linked.link.pid) ? 'Sync ●' : 'Sync', () => PJ.syncComponent(linked.link.pid), PJ.outOfDate(linked.link.pid) ? 'primary' : ''), act(I.folder, 'Open source', () => PJ.openSource(linked.link.pid)));
-    if (solids) c.push(act(I.union, 'Boolean', e => openBoolMenu(e.currentTarget), c.length ? '' : 'primary'), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.inset, 'Shell', () => runOp(F.shellOp)), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)), act(I.revolve, 'Pattern', () => runOp(F.polarPattern)), act(I.plane, 'Thicken', () => runOp(F.thickenOp)),
+    if (linked) c.push(act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; refresh(); } }), act(I.array, 'Array', () => runOp(OPS.arrayOp)), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'));
+    else if (solids) c.push(act(I.union, 'Boolean', e => openBoolMenu(e.currentTarget), c.length ? '' : 'primary'), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.inset, 'Shell', () => runOp(F.shellOp)), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)), act(I.revolve, 'Pattern', () => runOp(F.polarPattern)), act(I.plane, 'Thicken', () => runOp(F.thickenOp)),
       act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; toast('Duplicated — drag the gizmo or type an offset'); refresh(); } }), act(I.array, 'Array', () => runOp(OPS.arrayOp)), act(I.join, 'Join', () => runOp(OPS.joinObjs)), act(I.apply, 'Apply', () => runOp(OPS.applyXf)), act(I.origin, 'Origin', () => runOp(OPS.setOrigin)), act(I.subdiv, 'Edit mesh', () => setPick('mesh')), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'));
     if (!c.length) c.push(act(I.plus, 'Add solid', e => openAddMenu(e.currentTarget), 'primary'), act(I.line, 'Line', () => setTool('line')), act(I.rect, 'Rectangle', () => setTool('rect')), act(I.circle, 'Circle', () => setTool('circle')), act(I.plane, `Plane ${planeLabel()}`, e => openPlaneMenu(e.currentTarget)), act(I.measure, 'Inquiry', e => openInquiryMenu(e.currentTarget)));
     row.replaceChildren(...c);

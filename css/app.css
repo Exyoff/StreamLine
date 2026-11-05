@@ -521,7 +521,7 @@ body.has-tl #toast { bottom: calc(var(--botH) + var(--sab) + var(--tlh) + 14px);
 .projcard:active { transform: scale(.97); }
 .projcard.cur { box-shadow: inset 0 0 0 1.5px var(--accent); }
 .projcard img, .projcard .nothumb { width: 100%; aspect-ratio: 3 / 2; border-radius: 13px; object-fit: cover; background: #1d1e22; display: grid; place-items: center; color: var(--faint); }
-.projcard .pname { font-weight: 600; font-size: 14px; padding: 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.projcard .pname { font-weight: 600; font-size: 14px; padding: 0 4px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; line-height: 1.25; }
 .projcard .pmeta { font-size: 11.5px; color: var(--muted); padding: 0 4px 2px; }
 /* while a drag arrow is on screen the hint moves to the top, off the arrow */
 body.has-handle #toast { bottom: auto; top: calc(var(--topH) + 10px); transform: translate(-50%, -10px) scale(.96); }
