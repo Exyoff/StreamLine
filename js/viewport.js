@@ -14,8 +14,31 @@ import { defSize } from './operators.js';
 
 const D2R = Math.PI / 180;
 const COL = {
-  sel: new THREE.Color('#ff9a1f'), active: new THREE.Color('#ffd27a'),
-  vert: new THREE.Color('#111214'), edge: new THREE.Color('#15161a'), faceSel: new THREE.Color('#ff9a1f'),
+  sel: new THREE.Color('#ffb547'), active: new THREE.Color('#ffe08a'),
+  vert: new THREE.Color('#111214'), edge: new THREE.Color('#15161a'), faceSel: new THREE.Color('#ffb547'),
+};
+
+// ---------- look: theme colours, lighting, surface finish, edge width ----------
+// (lights ride with the camera unless noted, so a part is lit the same from every side as you orbit)
+export const LIGHTING = {
+  studio: { name: 'Studio', note: 'Key, fill and sky', key: [1.9, [0.4, 0.6, 1.8], '#fffaf2'], fill: [0.35, [-0.9, -0.1, 0.4], '#cfe0ff'], rim: [0.45, [-0.2, 0.9, -0.8], '#ffffff'], hemi: [0.75, '#dfe6f0', '#3a3d44'], amb: 0, env: 0 },
+  soft: { name: 'Soft', note: 'Even, low contrast', key: [0.7, [0.2, 0.5, 1], '#ffffff'], fill: [0.55, [-0.7, 0.1, 0.6], '#ffffff'], rim: [0, [0, 0, -1], '#ffffff'], hemi: [0.6, '#ffffff', '#8a909c'], amb: 0.45, env: 0.2 },
+  daylight: { name: 'Daylight', note: 'Sun from above, sky fill', sun: [1.25, [0.45, -0.35, 1], '#fff1d6'], key: [0.45, [0.3, 0.4, 1], '#ffffff'], fill: [0, [0, 0, 1], '#ffffff'], rim: [0, [0, 0, -1], '#ffffff'], hemi: [0.6, '#b8d4ff', '#6e5d48'], amb: 0, env: 0.08 },
+  dramatic: { name: 'Dramatic', note: 'Hard side light, cool rim', key: [2.4, [1, 0.25, 0.15], '#fff3e0'], fill: [0.08, [-1, -0.2, 0.3], '#8fb0ff'], rim: [1.8, [-0.6, 0.7, -1], '#bcd3ff'], hemi: [0.12, '#ffffff', '#000000'], amb: 0, env: 0 },
+  flat: { name: 'Flat', note: 'Technical, true colours', key: [0.45, [0, 0, 1], '#ffffff'], fill: [0, [0, 0, 1], '#ffffff'], rim: [0, [0, 0, -1], '#ffffff'], hemi: [0, '#ffffff', '#ffffff'], amb: 2.6, env: 0 },
+  showroom: { name: 'Showroom', note: 'Soft boxes and reflections', key: [0.9, [0.3, 0.6, 1], '#ffffff'], fill: [0.2, [-0.8, 0, 0.5], '#ffffff'], rim: [0.9, [-0.3, 0.8, -1], '#ffffff'], hemi: [0.2, '#ffffff', '#30343c'], amb: 0, env: 0.5 },
+};
+export const FINISH = {
+  matte: { name: 'Matte', r: 0.88, m: 0 },
+  satin: { name: 'Satin', r: 0.55, m: 0.05 },
+  gloss: { name: 'Gloss', r: 0.18, m: 0, env: 0.35 },
+  metal: { name: 'Metal', r: 0.3, m: 0.85, env: 2.2 },
+};
+export const THEMES = {
+  midnight: { name: 'Midnight', note: 'Indigo glass', bg: ['#1b2235', '#0a0d14'], glow: 'rgba(120,140,255,0.13)', edge: 0x141925, soft: 0x3c4660, sel: '#ffb547', act: '#ffe08a', grid: [0.78, 0.84, 1], gridA: 1, sketch: '#eef1f8', meta: '#0a0d13', nav: 'rgba(255,255,255,0.06)', chip: ['#1b2235', '#8b93ff', '#5ec8ff'] },
+  graphite: { name: 'Graphite', note: 'Neutral grey, mint', bg: ['#2e3034', '#141517'], glow: 'rgba(255,255,255,0.05)', edge: 0x17181b, soft: 0x4f535b, sel: '#ffcf3a', act: '#fff0a8', grid: [1, 1, 1], gridA: 1, sketch: '#f2f2f2', meta: '#111213', nav: 'rgba(255,255,255,0.06)', chip: ['#2e3034', '#3fe0c0', '#8af2a8'] },
+  ember: { name: 'Ember', note: 'The original orange', bg: ['#2f3034', '#25262a'], glow: 'rgba(255,255,255,0.03)', edge: 0x3a4250, soft: 0x55606f, sel: '#ff9a1f', act: '#ffd27a', grid: [1, 1, 1], gridA: 1, sketch: '#f2f2f2', meta: '#16171a', nav: 'rgba(255,255,255,0.06)', chip: ['#2b2c30', '#ff9f0a', '#ffc44d'] },
+  daylight: { name: 'Daylight', note: 'Light studio', bg: ['#f8fafd', '#d2d8e3'], glow: 'rgba(255,255,255,0.6)', edge: 0x283042, soft: 0x707a8e, sel: '#ff7a1a', act: '#ffb066', grid: [0.12, 0.16, 0.28], gridA: 1.7, sketch: '#1a2030', meta: '#e9edf3', nav: 'rgba(12,18,32,0.07)', chip: ['#eef1f6', '#3d63ff', '#19a7ff'] },
 };
 
 export const view = {
@@ -26,12 +49,82 @@ export const view = {
 };
 
 view.fatMat = fatMat;
+view.THEMES = THEMES; view.LIGHTING = LIGHTING; view.FINISH = FINISH;
+view.theme = THEMES.midnight;
+// the selection colour as a number (overlays in app.js / draw.js use it)
+view.selHex = () => new THREE.Color(view.theme.sel).getHex();
 let renderer, scene, overlay, persp, ortho, container, canvas, labelsEl;
 let gridLines, gridKey = '';
 let needsRender = true, tween = null;
 const visuals = new Map(); // id -> { group, mesh, edges, points, meshRef }
 let selDirty = true;
 let matMesh, matMeshX, matEdgeObj, matEdgeSoft, matEdgeSel, matEdgeAct, matEdgeEdit, matPoints;
+const camLights = []; let hemi, amb, sun, envTex = null, bgTex = null, lookKey = '';
+
+// a soft-box studio, blurred into an environment map: reflections for Gloss / Metal and the Soft / Showroom light
+function studioEnv() {
+  if (envTex) return envTex;
+  const env = new THREE.Scene();
+  const room = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0x3a3f4a, side: THREE.BackSide }));
+  room.scale.set(30, 30, 20); env.add(room);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.MeshBasicMaterial({ color: 0x454a54 })); floor.position.z = -9.9; env.add(floor);
+  const panel = (w, h, pos, look, k) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: new THREE.Color(k, k, k), side: THREE.DoubleSide })); m.position.set(...pos); m.lookAt(...look); env.add(m); };
+  panel(14, 8, [0, 0, 9.8], [0, 0, 0], 1.6);       // overhead soft box
+  panel(4, 14, [-14.8, 2, 2], [0, 0, 0], 2);     // left strip
+  panel(4, 14, [14.8, -2, 2], [0, 0, 0], 1.5);     // right strip
+  panel(10, 5, [6, 14.8, 4], [0, 0, 0], 1.2);    // back panel
+  panel(8, 4, [-5, -14.8, 3], [0, 0, 0], 0.9);   // front fill
+  const pm = new THREE.PMREMGenerator(renderer);
+  envTex = pm.fromScene(env, 0.035).texture; pm.dispose();
+  env.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); });
+  return envTex;
+}
+// the viewport backdrop: a vertical gradient with a soft glow behind the model
+function backdrop(t) {
+  const c = document.createElement('canvas'); c.width = 16; c.height = 256;
+  const g = c.getContext('2d'), lg = g.createLinearGradient(0, 0, 0, 256);
+  lg.addColorStop(0, t.bg[0]); lg.addColorStop(1, t.bg[1]); g.fillStyle = lg; g.fillRect(0, 0, 16, 256);
+  const rg = g.createLinearGradient(0, 40, 0, 200); rg.addColorStop(0, 'rgba(0,0,0,0)'); rg.addColorStop(0.5, t.glow); rg.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = rg; g.fillRect(0, 0, 16, 256);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.magFilter = THREE.LinearFilter;
+  return tex;
+}
+// apply the theme / lighting / finish settings (cheap when nothing changed)
+view.setLook = () => {
+  const st = S.settings, t = THEMES[st.theme] || THEMES.midnight, L = LIGHTING[st.lighting] || LIGHTING.studio, F = FINISH[st.finish] || FINISH.satin;
+  const key = [st.theme, st.lighting, st.finish].join('|');
+  if (key === lookKey || !renderer) return;
+  const themeChanged = view.theme !== t || !bgTex;
+  lookKey = key; view.theme = t;
+  if (themeChanged) {
+    COL.sel.set(t.sel); COL.faceSel.set(t.sel); COL.active.set(t.act);
+    matEdgeObj.color.set(t.edge); matEdgeSoft.color.set(t.soft); matEdgeSel.color.set(t.sel); matEdgeAct.color.set(t.act);
+    bgTex?.dispose(); bgTex = backdrop(t); scene.background = bgTex;
+    gridKey = ''; // grid lines take the theme's ink
+    for (const v of visuals.values()) disposeVisual(v); visuals.clear(); // (selection tints are baked into the mesh colours)
+  }
+  for (const set of camLights) for (const k of ['key', 'fill', 'rim']) { const [i, p, c] = L[k]; set[k].intensity = i; set[k].color.set(c); set[k].position.set(...p); }
+  const [hi, sky, gnd] = L.hemi; hemi.intensity = hi; hemi.color.set(sky); hemi.groundColor.set(gnd);
+  amb.intensity = L.amb || 0;
+  if (L.sun) { sun.intensity = L.sun[0]; sun.color.set(L.sun[2]); sun.position.set(...L.sun[1]).multiplyScalar(1000); } else sun.intensity = 0;
+  const envI = Math.max(L.env || 0, F.env ? F.env * (L.env > 0 ? 1 : 0.6) : 0);
+  scene.environment = envI > 0 ? studioEnv() : null;
+  matMesh.envMapIntensity = envI; matMesh.roughness = F.r; matMesh.metalness = F.m; matMesh.needsUpdate = true;
+  view.render();
+};
+// edge width: a multiple of the CSS pixel width, either fixed on screen or growing as you zoom in
+const EDGE_W = { thin: 0.65, normal: 1, bold: 1.7 };
+function edgeScale() {
+  const st = S.settings, w = EDGE_W[st.edgeWidth] || 1;
+  if (st.edgeScale !== 'zoom') return w;
+  // the size the visible parts would fill the view at; zooming in past it thickens the lines, out thins them
+  let R = 0; const c = new THREE.Vector3(), box = new THREE.Box3();
+  for (const v of visuals.values()) { if (!v.group.visible) continue; const g = v.mesh.geometry; if (!g.boundingBox) g.computeBoundingBox(); box.union(g.boundingBox.clone().applyMatrix4(v.group.matrix)); }
+  if (box.isEmpty()) return w;
+  box.getCenter(c); R = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 1e-6);
+  const fit = fitDist(R); // (framed with Frame all: the normal width)
+  return w * Math.min(5, Math.max(0.3, fit / Math.max(view.cam.dist, 1e-9)));
+}
 
 export function camera() { return view.cam.ortho ? ortho : persp; }
 
@@ -51,11 +144,13 @@ view.init = function (el) {
   ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1e6);
   for (const c of [persp, ortho]) {
     c.up.set(0, 0, 1);
-    const l = new THREE.DirectionalLight(0xffffff, 2.2);
-    l.position.set(0.4, 0.6, 1); l.target.position.set(0, 0, -1);
-    c.add(l, l.target); scene.add(c);
+    const set = {};
+    for (const k of ['key', 'fill', 'rim']) { const l = new THREE.DirectionalLight(0xffffff, 0); l.target.position.set(0, 0, 0); c.add(l, l.target); set[k] = l; } // (position = direction toward the light, in view space: +z is toward the viewer)
+    camLights.push(set); scene.add(c);
   }
-  scene.add(new THREE.HemisphereLight(0xdfe6f0, 0x3a3d44, 1.4));
+  hemi = new THREE.HemisphereLight(0xdfe6f0, 0x3a3d44, 1.4); hemi.position.set(0, 0, 1); scene.add(hemi);
+  amb = new THREE.AmbientLight(0xffffff, 0); scene.add(amb);
+  sun = new THREE.DirectionalLight(0xffffff, 0); scene.add(sun, sun.target);
 
   matMesh = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.05, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
   // opaque (overlapping joints of a translucent line darken unevenly) and pulled toward the camera so the
@@ -66,8 +161,10 @@ view.init = function (el) {
   matEdgeAct = fatMat({ color: COL.active, width: 2.2 });
   for (const m of [matEdgeObj, matEdgeSel, matEdgeAct]) { m.polygonOffset = true; m.polygonOffsetFactor = -2; m.polygonOffsetUnits = -6; }
   matEdgeEdit = fatMat({ vertexColors: true, width: 1.6 });
+  for (const m of [matEdgeObj, matEdgeSoft, matEdgeSel, matEdgeAct, matEdgeEdit]) m.userData.model = true; // (width follows the Edges setting)
   matPoints = new THREE.PointsMaterial({ vertexColors: true, size: 7, sizeAttenuation: false });
   applyXray();
+  view.setLook();
 
   bindPointer();
   new ResizeObserver(resize).observe(container);
@@ -200,6 +297,13 @@ view.restoreCam = s => { const c = view.cam; c.ortho = s.ortho; c.autoOrtho = s.
 view.toggleOrtho = () => { view.cam.ortho = !view.cam.ortho; view.cam.autoOrtho = false; view.render(); emit('viewchange'); };
 // screen space the floating controls cover ({ l, r, t, b } in px); set by the app
 view.insets = () => ({ l: 0, r: 0, t: 0, b: 0 });
+// how far back the camera sits to fit a sphere of radius rad in the part of the screen the controls leave free
+function fitDist(rad) {
+  const { w, h } = view.size();
+  let ins = { l: 0, r: 0, t: 0, b: 0 }; try { ins = view.insets() || ins; } catch (e) {}
+  const fw = Math.max(w * 0.4, w - ins.l - ins.r), fh = Math.max(h * 0.4, h - ins.t - ins.b);
+  return rad / Math.sin(persp.fov * D2R / 2) * h / Math.min(fw, fh) * 1.15;
+}
 view.frame = (points) => {
   const c = view.cam;
   if (!points.length) { animateTo(c.yaw, c.pitch, new THREE.Vector3(0, 0, 0), 7 * defSize()); return; }
@@ -207,11 +311,9 @@ view.frame = (points) => {
   const ctr = b.getCenter(new THREE.Vector3());
   const rad = Math.max(b.getSize(new THREE.Vector3()).length() / 2, 1 * unitFactor());
   const { w, h } = view.size();
-  // fit into the part of the screen the controls leave free, and centre the model there
   let ins = { l: 0, r: 0, t: 0, b: 0 }; try { ins = view.insets() || ins; } catch (e) {}
-  const fw = Math.max(w * 0.4, w - ins.l - ins.r), fh = Math.max(h * 0.4, h - ins.t - ins.b);
   const fov = persp.fov * D2R / 2;
-  const dist = rad / Math.sin(fov) * h / Math.min(fw, fh) * 1.15;
+  const dist = fitDist(rad);
   const wpp = 2 * dist * Math.tan(fov) / h;
   const cp = Math.cos(c.pitch), dir = new THREE.Vector3(cp * Math.cos(c.yaw), cp * Math.sin(c.yaw), Math.sin(c.pitch));
   const r = new THREE.Vector3(-Math.sin(c.yaw), Math.cos(c.yaw), 0), u = new THREE.Vector3().crossVectors(dir, r);
@@ -267,11 +369,12 @@ function updateGrid() {
   const pos = [], col = [];
   const ext = N * step;
   const line = (a, b, r, g, bl, al) => { pos.push(...a, ...b); col.push(r, g, bl, al, r, g, bl, al); };
+  const gc = view.theme.grid, ga = view.theme.gridA;
   for (let i = -N; i <= N; i++) {
     const x = cx + i * step, y = cy + i * step;
     const mx = Math.abs(Math.round(x / major) * major - x) < step * 1e-3, my = Math.abs(Math.round(y / major) * major - y) < step * 1e-3;
-    if (Math.abs(x) > step * 1e-3) line([x, cy - ext, 0], [x, cy + ext, 0], 1, 1, 1, mx ? 0.13 : 0.05);
-    if (Math.abs(y) > step * 1e-3) line([cx - ext, y, 0], [cx + ext, y, 0], 1, 1, 1, my ? 0.13 : 0.05);
+    if (Math.abs(x) > step * 1e-3) line([x, cy - ext, 0], [x, cy + ext, 0], ...gc, (mx ? 0.13 : 0.05) * ga);
+    if (Math.abs(y) > step * 1e-3) line([cx - ext, y, 0], [cx + ext, y, 0], ...gc, (my ? 0.13 : 0.05) * ga);
   }
   if (Math.abs(cy) <= ext) line([cx - ext, 0, 0], [cx + ext, 0, 0], 0.95, 0.3, 0.33, 0.85);
   if (Math.abs(cx) <= ext) line([0, cy - ext, 0], [0, cy + ext, 0], 0.48, 0.75, 0.2, 0.85);
@@ -510,9 +613,14 @@ function renderFrame() {
   for (let i = labelIdx; i < labelPool.length; i++) labelPool[i].style.display = 'none';
   // fat-line materials need the drawing-buffer size
   const res = renderer.getDrawingBufferSize(new THREE.Vector2());
-  const fix = o => { const m = o.material; if (m && m.isLineMaterial && (m.resolution.x !== res.x || m.resolution.y !== res.y)) { m.resolution.copy(res); m.userData.css ??= m.linewidth; m.linewidth = m.userData.css * renderer.getPixelRatio(); } };
+  // (model edges also take the Edges width setting, fixed on screen or scaled with zoom)
+  const pr = renderer.getPixelRatio(), ek = edgeScale();
+  const fix = o => { const m = o.material; if (!m || !m.isLineMaterial) return;
+    if (m.resolution.x !== res.x || m.resolution.y !== res.y) m.resolution.copy(res);
+    m.userData.css ??= m.linewidth; const want = m.userData.css * pr * (m.userData.model ? ek : 1);
+    if (Math.abs(m.linewidth - want) > 1e-3) m.linewidth = want; };
   scene.traverse(fix); overlay.traverse(fix);
-  renderer.setClearColor(view.bg ?? 0x2a2b2f, 1);
+  renderer.setClearColor(new THREE.Color(view.theme.bg[1]), 1);
   renderer.clear();
   renderer.render(scene, camera());
   renderer.clearDepth();
@@ -604,7 +712,7 @@ view.initNav = (cv) => {
       const v = new THREE.Vector3(a === 'x' ? s : 0, a === 'y' ? s : 0, a === 'z' ? s : 0).transformDirection(inv);
       return { a, s, col, lab, x: c + v.x * R, y: c - v.y * R, z: v.z };
     }).sort((p, q) => p.z - q.z);
-    ctx.fillStyle = 'rgba(255,255,255,0.06)'; ctx.beginPath(); ctx.arc(c, c, R + 12, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = view.theme.nav; ctx.beginPath(); ctx.arc(c, c, R + 12, 0, Math.PI * 2); ctx.fill();
     for (const b of bubbles) {
       if (b.s > 0) { ctx.strokeStyle = b.col; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(c, c); ctx.lineTo(b.x, b.y); ctx.stroke(); }
       ctx.beginPath(); ctx.arc(b.x, b.y, b.s > 0 ? 10 : 8, 0, Math.PI * 2);

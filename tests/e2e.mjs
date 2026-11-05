@@ -875,6 +875,23 @@ try {
   await p.waitForFunction(n => StreamLine.S.doc.objects.length >= n + 3, n16, { timeout: 120000 });
   const names16 = await p.evaluate(() => StreamLine.S.doc.objects.slice(-3).map(o => o.name).join(', '));
   check(names16 === 'Halves, Halves (2), Trigger', `STEP: a part made of two solids keeps its name, and so do the others (${names16})`);
+  // Look: theme, lighting, surface and edge width from the top bar's Look button
+  await p.tap('#btn-look'); await p.waitForTimeout(400);
+  const lookBtn = async txt => { await p.locator('#popover .swatch', { hasText: txt }).first().tap(); await p.waitForTimeout(250); };
+  await lookBtn('Daylight'); // (the theme swatch comes first)
+  await lookBtn('Showroom');
+  await p.locator('#popover .seg button', { hasText: 'Metal' }).tap(); await p.waitForTimeout(250);
+  const look = await p.evaluate(() => { const L = StreamLine; let mesh = null; L.view.scene.traverse(o => { if (!mesh && o.isMesh && o.userData.objId != null) mesh = o; });
+    return { theme: document.documentElement.dataset.theme, bg: getComputedStyle(document.body).backgroundColor, set: [L.S.settings.theme, L.S.settings.lighting, L.S.settings.finish].join(), env: !!L.view.scene.environment, metal: mesh?.material.metalness, sel: L.view.theme.sel }; });
+  check(look.theme === 'daylight' && look.bg === 'rgb(233, 237, 243)' && look.set === 'daylight,showroom,metal' && look.env && look.metal > 0.8, `Look: Daylight theme, Showroom lighting and Metal surface apply (${JSON.stringify(look)})`);
+  // edges: the same pixel width at any zoom, or scaled with zoom
+  const edgeW = async (scale, k) => p.evaluate(async ([scale, k]) => { const L = StreamLine; L.S.settings.edgeScale = scale; L.S.settings.edgeWidth = 'normal';
+    const d0 = L.view.cam.dist; L.view.cam.dist = d0 * k; L.view.render(); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    let w = null; L.view.scene.traverse(o => { if (w == null && o.material?.isLineMaterial && o.material.userData.model && o.visible) w = o.material.linewidth; }); L.view.cam.dist = d0; L.view.render(); return w; }, [scale, k]);
+  const ws = [await edgeW('screen', 0.5), await edgeW('screen', 2), await edgeW('zoom', 0.5), await edgeW('zoom', 2)];
+  check(ws[0] === ws[1] && ws[2] > ws[3] * 3, `Edges stay the same width on screen, or scale with zoom when asked (${ws.map(v => v?.toFixed(2)).join(', ')})`);
+  await p.evaluate(() => document.querySelector('#scrim')?.click());
+  await p.evaluate(() => { const L = StreamLine; Object.assign(L.S.settings, { theme: 'midnight', lighting: 'studio', finish: 'satin', edgeScale: 'screen' }); delete document.documentElement.dataset.theme; L.view.setLook(); L.refresh(); });
   await shot('5-timeline');
 } catch (e) {
   await p.screenshot({ path: OUT + 'crash.png' }).catch(() => {});

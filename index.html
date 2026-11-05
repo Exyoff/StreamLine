@@ -7,7 +7,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="StreamLine">
-<meta name="theme-color" content="#16171a">
+<meta name="theme-color" content="#0a0d13">
 <meta name="format-detection" content="telephone=no">
 <meta name="color-scheme" content="dark">
 <meta name="description" content="StreamLine — precise polygon modelling in the browser, built for iPhone and iPad.">
@@ -16,6 +16,8 @@
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="stylesheet" href="css/app.css">
+<script>/* the saved theme before first paint (no flash of the default colours) */
+try { var t = JSON.parse(localStorage.getItem('streamline.settings.v1') || '{}').theme; if (t && t !== 'midnight') document.documentElement.dataset.theme = t; } catch (e) {}</script>
 <script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
 </head>
 <body>
@@ -62,6 +64,7 @@
     <button class="ib glass circ" id="btn-menu" aria-label="Menu"></button>
     <div class="spacer"></div>
     <button id="layerpill" class="glass" aria-label="Layers and items"></button>
+    <button class="ib glass circ" id="btn-look" aria-label="Look: theme, lighting, edges"></button>
     <button class="ib glass circ" id="btn-history" aria-label="History"></button>
     <button class="ib glass circ" id="btn-props" aria-label="Settings"></button>
   </header>

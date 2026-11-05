@@ -58,7 +58,7 @@ const AXC = ['ax-x', 'ax-y', 'ax-z'];
 // boot
 // =====================================================================
 async function boot() {
-  loadSettings();
+  loadSettings(); applyTheme();
   // the exact-geometry kernel (OpenCascade, WebAssembly) loads first; it is cached for offline use
   try { await K.initKernel(); K.setMatrixFn(objMatrix); }
   catch (err) { console.error(err); $('#boot').querySelector('p').textContent = 'Could not load the CAD kernel — check your connection and reload.'; return; }
@@ -605,7 +605,7 @@ function setTool(t, m) {
 // =====================================================================
 let measureGroup, measureKey = '', edgeGroup, faceGroup, faceKey = '';
 function drawFaceHighlights() {
-  const key = S.ed.workspace === 'model' ? JSON.stringify(S.ed.faces) + '|' + S.doc.objects.map(o => o.mesh.f.length).join() : '';
+  const key = S.ed.workspace === 'model' ? JSON.stringify(S.ed.faces) + '|' + S.doc.objects.map(o => o.mesh.f.length).join() + view.theme.sel : '';
   if (key === faceKey && faceGroup.userData.objs === S.doc.objects) return;
   faceKey = key; faceGroup.userData.objs = S.doc.objects;
   faceGroup.traverse(o => o.geometry && o.geometry.dispose()); faceGroup.clear();
@@ -616,7 +616,7 @@ function drawFaceHighlights() {
     const pos = [];
     for (const fi of reg.faces) { const P = o.mesh.f[fi].map(i => M.add(W[i], M.mul(f.n, 0.004))); for (const t of M.triangulateFace(P)) for (const k of t) pos.push(...P[k]); }
     const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    faceGroup.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0xffa230, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 })));
+    faceGroup.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: view.selHex(), transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 })));
   }
 }
 function initMeasureOverlay() {
@@ -791,12 +791,12 @@ function drawOverlays() {
   edgeGroup.clear();
   // while a fillet / chamfer dialog is open, keep showing the edges it works on
   const lop = getLast(), opEdges = !S.ed.edges.length && lop && lop.committed && lop.def === F.edgeBlendOp && !$('#lastop').hidden ? (lop.sel?.edges || []).filter(e => e.pts) : [];
-  for (const e of opEdges) edgeGroup.add(Draw.fatLine(e.pts, 0xff9a1f, 1.8, false));
+  for (const e of opEdges) edgeGroup.add(Draw.fatLine(e.pts, view.selHex(), 1.8, false));
   if ((S.ed.workspace === 'cad' || S.ed.workspace === 'model') && S.ed.edges.length) {
     for (const e of S.ed.edges) {
       const pts = e.pts || (e.circle ? e.circle.loop : [e.a, e.b]);
-      edgeGroup.add(Draw.fatLine(pts, 0xff9a1f, 2.6, !e.pts && !!e.circle));
-      const mk = new THREE.Mesh(new THREE.RingGeometry(0.5, 1, 16), new THREE.MeshBasicMaterial({ color: 0xff9a1f, depthTest: false }));
+      edgeGroup.add(Draw.fatLine(pts, view.selHex(), 2.6, !e.pts && !!e.circle));
+      const mk = new THREE.Mesh(new THREE.RingGeometry(0.5, 1, 16), new THREE.MeshBasicMaterial({ color: view.selHex(), depthTest: false }));
       const mid = e.p || (e.circle ? e.circle.loop[0] : M.mul(M.add(e.a, e.b), 0.5));
       mk.position.set(...mid); mk.quaternion.copy(camera().quaternion); mk.scale.setScalar(view.worldPerPixel(mid) * 6); edgeGroup.add(mk);
       view.label(mid, e.circle ? `Ø ${fmtLen(2 * e.circle.R)}` : fmtLen(e.len ?? M.dist(e.a, e.b)), 'edge');
@@ -835,7 +835,7 @@ function renderTools() {
 }
 function buildStatic() {
   $('#btn-cmd').innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></svg>';
-  $('#btn-menu').innerHTML = I.menu; $('#btn-undo').innerHTML = I.undo; $('#btn-redo').innerHTML = I.redo; $('#btn-props').innerHTML = I.gear; $('#btn-history').innerHTML = I.history;
+  $('#btn-menu').innerHTML = I.menu; $('#btn-undo').innerHTML = I.undo; $('#btn-redo').innerHTML = I.redo; $('#btn-props').innerHTML = I.gear; $('#btn-history').innerHTML = I.history; $('#btn-look').innerHTML = I.look;
   $('#sheet-close').innerHTML = I.close;
   $('#btn-frame').innerHTML = I.frame; $('#btn-snap').innerHTML = I.magnet; $('#btn-xray').innerHTML = I.xray;
   $('#btn-multi').innerHTML = I.multi; $('#btn-all').innerHTML = I.all;
@@ -850,6 +850,7 @@ function bindEvents() {
   // right-hand slide-over: History · Items (layers, sketches, bodies) · Info · Settings
   const openPanel = tab => { if (sheetOpen && sheetTab === tab) return toggleSheet(false); if (sheetTab !== tab) $('#sheet-body').scrollTop = 0; sheetTab = tab; toggleSheet(true); renderSheet(); };
   $('#btn-props').onclick = () => openPanel('settings');
+  $('#btn-look').onclick = () => openLook();
   $('#btn-history').onclick = () => openPanel('history');
   $('#layerpill').onclick = () => openPanel('objects');
   $('#sheet-close').onclick = () => toggleSheet(false);
@@ -874,7 +875,7 @@ function bindEvents() {
   let sheetClosedAt = 0;
   document.addEventListener('pointerdown', e => {
     if (!sheetOpen || document.body.classList.contains('sheet-docked') || !e.target.closest) return;
-    if (e.target.closest('#sheet, #popover, #scrim, #keypad, #btn-history, #btn-props, #layerpill')) return;
+    if (e.target.closest('#sheet, #popover, #scrim, #keypad, #btn-history, #btn-props, #btn-look, #layerpill')) return;
     toggleSheet(false); sheetClosedAt = performance.now(); e.stopPropagation(); e.preventDefault();
   }, true);
   document.addEventListener('click', e => { if (performance.now() - sheetClosedAt < 500) { e.stopPropagation(); e.preventDefault(); } }, true);
@@ -910,7 +911,6 @@ function refresh() {
   document.body.classList.toggle('ws-model', S.ed.workspace === 'model');
   document.body.classList.toggle('ws-draw', S.ed.workspace === 'draw');
   document.body.classList.toggle('ws-cad', S.ed.workspace === 'cad');
-  view.bg = S.ed.workspace === 'model' ? 0x2b2c30 : 0x212830; // Plasticity-grey studio vs AutoCAD model space
   Cmd.render();
   renderTop(); renderTools(); renderActions(); renderHud(); renderDrawCard(); renderLastOp(); renderMeasureCard(); renderViewButtons(); BR.renderTimeline(); BR.renderLayerPill(); BR.renderHistoryBadge();
   if (sheetOpen && !gizmoActive()) renderSheet();
@@ -1149,6 +1149,11 @@ function commands() {
     C('Toggle construction curves', '', () => Draw.toggleConstruction()), C('Toggle snapping', '', () => $('#btn-snap').click(), 'snap'), C('Toggle X-ray', '', () => $('#btn-xray').click()), C('Toggle perspective / ortho', '5', () => view.toggleOrtho()),
     C('View: Top', '7', () => view.setView('top')), C('View: Front', '1', () => view.setView('front')), C('View: Right', '3', () => view.setView('right')), C('View: Isometric', '0', () => view.setView('iso')), C('Frame all', 'Home', () => view.frame(S.doc.objects.flatMap(worldVerts).concat(allSketchPoints()))),
     C('AutoCAD command line', '', () => { S.settings.cmdline = !S.settings.cmdline; saveSettings(); refresh(); }, 'acad typed coordinates'),
+    C('Look: theme, lighting, edges…', '', () => openLook(), 'appearance colours colors dark light'),
+    ...Object.entries(view.LIGHTING).map(([k, L]) => C(`Lighting: ${L.name}`, '', () => setLook('lighting', k), 'light render shade')),
+    ...Object.entries(view.THEMES).map(([k, t]) => C(`Theme: ${t.name}`, '', () => setLook('theme', k), 'appearance colours colors dark light')),
+    ...Object.entries(view.FINISH).map(([k, f]) => C(`Surface: ${f.name}`, '', () => setLook('finish', k), 'material finish shiny')),
+    C('Edges: scale with zoom', '', () => setLook('edgeScale', 'zoom'), 'line width thickness'), C('Edges: same width at any zoom', '', () => setLook('edgeScale', 'screen'), 'line width thickness pixel'),
     C('Undo', '⌘Z', () => undo()), C('Redo', '⇧⌘Z', () => redo()), C('Save project', '⌘S', () => saveProject()), C('Open / import', '', () => $('#file-input').click(), 'step stl obj'), C('Thread', '', () => (S.ed.faces.length ? runOp(F.threadOp) : (setPick('face'), toast('Tap a shaft or hole face, then Thread'))), 'screw bolt nut helix tap'), C('Hole', '', () => (S.ed.faces.length ? runOp(F.holeOp) : (setPick('face'), toast('Tap a flat face where the hole goes, then Hole'))), 'drill counterbore countersink pattern bolt circle'), C('Recess', '', () => (S.ed.faces.length ? runOp(F.recessOp) : (setPick('face'), toast('Tap a flat face (a screw head), then Recess'))), 'drive socket hex allen phillips cross slot screwdriver'), C('Export STEP (exact)', '', () => exportAs('step'), 'step stp cad'), C('Export STL', '', () => exportAs('stl')), C('Export OBJ', '', () => exportAs('obj')), C('Export DXF', '', () => exportDXF()), C('New scene', '', () => { if (confirm('Start a new scene?')) newScene(); }),
   ];
 }
@@ -1381,9 +1386,51 @@ function editItemTab(o) {
   return out;
 }
 
+// ---------- look: theme, lighting, finish, edges ----------
+function applyTheme() {
+  const t = view.THEMES[S.settings.theme] ? S.settings.theme : 'midnight';
+  if (t === 'midnight') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', view.THEMES[t].meta);
+  document.querySelector('meta[name="color-scheme"]')?.setAttribute('content', t === 'daylight' ? 'light' : 'dark');
+}
+// a lit ball for each lighting preset (CSS only: how the part will read)
+const LIGHT_BALL = {
+  studio: 'radial-gradient(circle at 36% 30%, #ffffff 0%, #d5ddea 16%, #8592ab 52%, #2c3344 88%, #4a5670 100%)',
+  soft: 'radial-gradient(circle at 42% 36%, #f6f8fb 0%, #d3d9e3 40%, #a4adbd 80%, #8f99aa 100%)',
+  daylight: 'radial-gradient(circle at 62% 24%, #fff7e2 0%, #ecdcc0 20%, #9bb0cf 62%, #4a5874 100%)',
+  dramatic: 'radial-gradient(circle at 84% 46%, #ffffff 0%, #e2cfb3 10%, #3b404c 40%, #0c0e13 72%, #7d97c9 100%)',
+  flat: 'radial-gradient(circle at 50% 50%, #bdc6d5 0%, #b3bccb 70%, #a7b1c1 100%)',
+  showroom: 'radial-gradient(circle at 34% 28%, #ffffff 0%, #eef2f8 8%, #75829a 34%, #1f242e 62%, #9fb0cc 92%, #dfe6f2 100%)',
+};
+function lookGroups(rerender) {
+  const set = (k, v) => { S.settings[k] = v; saveSettings(); if (k === 'theme') applyTheme(); view.setLook(); refresh(); rerender(); };
+  const st = S.settings, cur = (k, d) => st[k] || d;
+  const sw = (on, label, note, pv, onClick) => h('button', { class: 'swatch' + (on ? ' on' : ''), onclick: onClick }, pv, h('span', {}, label), note ? h('small', {}, note) : null);
+  return [
+    group('Theme', h('div', { class: 'swatches' }, Object.entries(view.THEMES).map(([k, t]) => sw(cur('theme', 'midnight') === k, t.name, t.note,
+      h('div', { class: 'pv', style: `background: linear-gradient(180deg, ${t.bg[0]}, ${t.bg[1]})` }, h('b', {}), h('i', { style: `background: linear-gradient(135deg, ${t.chip[1]}, ${t.chip[2]})` })), () => set('theme', k))))),
+    group('Lighting', h('div', { class: 'swatches three' }, Object.entries(view.LIGHTING).map(([k, L]) => sw(cur('lighting', 'studio') === k, L.name, null,
+      h('div', { class: 'ball' }, h('span', { style: `background: ${LIGHT_BALL[k]}` })), () => set('lighting', k)))),
+      h('p', { class: 'note' }, view.LIGHTING[cur('lighting', 'studio')].note + '.')),
+    group('Surface',
+      choice({ options: Object.entries(view.FINISH).map(([k, f]) => [k, f.name]), value: cur('finish', 'satin'), onChange: v => set('finish', v), cls: 'wide row4' })),
+    group('Edges',
+      choice({ label: 'Width', options: [['thin', 'Thin'], ['normal', 'Normal'], ['bold', 'Bold']], value: cur('edgeWidth', 'normal'), onChange: v => set('edgeWidth', v), cls: 'wide' }),
+      choice({ label: 'When you zoom', options: [['screen', 'Stay the same'], ['zoom', 'Scale with zoom']], value: cur('edgeScale', 'screen'), onChange: v => set('edgeScale', v), cls: 'wide' }),
+      h('p', { class: 'note' }, cur('edgeScale', 'screen') === 'zoom' ? 'Edges thicken as you zoom in and thin out as you zoom out, like ink on the part.' : 'Edges stay the same number of pixels wide at any zoom.')),
+  ];
+}
+function setLook(k, v) { S.settings[k] = v; saveSettings(); if (k === 'theme') applyTheme(); view.setLook(); refresh(); }
+function openLook() {
+  const body = h('div', { class: 'lookpop' });
+  const fill = () => body.replaceChildren(h('div', { class: 'mtitle' }, 'Look'), ...lookGroups(fill));
+  fill();
+  popover($('#btn-look'), body, { align: 'right' });
+}
 function settingsTab() {
   const set = (k, v) => { S.settings[k] = v; saveSettings(); if (k === 'xray') view.applyXray(); refresh(); renderSheet(); };
   return [
+    ...lookGroups(() => renderSheet()),
     group('Units',
       choice({ options: [['mm', 'mm'], ['cm', 'cm'], ['m', 'm'], ['in', 'in'], ['ft', 'ft']], value: S.settings.unit, onChange: v => set('unit', v) }),
       stepper({ label: 'Decimal places', value: S.settings.precision, min: 0, max: 6, onChange: v => set('precision', v) }),
