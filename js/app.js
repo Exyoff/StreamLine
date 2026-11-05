@@ -81,7 +81,8 @@ async function boot() {
     const rail = vis($('#toolrail')), top = vis($('#topbar')), tl = vis($('#timeline')) || vis($('#skbar')), zb = vis($('#zoombar'));
     const l = rail && rail.left < vr.width / 2 ? rail.right - vr.left : 0;
     // (the top bar and the history timeline under it; the draw card shifts the picture itself, see renderLastOp)
-    const t = Math.max(top ? top.bottom - vr.top : 0, tl ? tl.bottom - vr.top : 0);
+    const hudEl = $('#hud'), hud = vis(hudEl), hb = hud && hudEl.textContent.trim() ? hud.bottom - vr.top : 0; // (and the HUD's lines under them)
+    const t = Math.max(top ? top.bottom - vr.top : 0, tl ? tl.bottom - vr.top : 0, hb);
     const r = zb && zb.left > vr.width / 2 ? vr.right - zb.left : 0; // the zoom bar on the right
     // (the cube and view tools ride up above the command line when it is open: they still keep the model clear)
     const bottoms = ['#stationbar', '#vtools-r', '#nav', '#lastop', '#cmdbar'].map(q => vis($(q))).filter(Boolean).map(r => r.top - vr.top).filter(y => y > vr.height * 0.3);
@@ -91,7 +92,7 @@ async function boot() {
   PJ.initProjects({
     view, refresh: () => refresh(), renderSheet: () => { if (sheetOpen) renderSheet(); },
     newScene: () => newScene(), closeSheet: () => toggleSheet(false), saveLocal: () => saveLocalNow(),
-    afterLoad: () => { S.ed.drawSel = new Set(); S.ed.edges = []; S.ed.faces = []; S.ed.profiles = []; S.ed.isolate = null; S.ed.mateFrom = null; S.ed.editingSketch = null; Draw.clearTarget(); Draw.resetTool(); S.ed.workspace = 'model'; S.ed.tool = 'select'; view.markSelDirty(); refresh(); view.cam.lock2D = false; view.frame(S.doc.objects.flatMap(worldVerts).concat(allSketchPoints())); if (sheetOpen) renderSheet(); scheduleSave(); },
+    afterLoad: () => { S.ed.cplane = null; S.ed.planePick = null; S.ed.drawSel = new Set(); S.ed.edges = []; S.ed.faces = []; S.ed.profiles = []; S.ed.isolate = null; S.ed.mateFrom = null; S.ed.editingSketch = null; Draw.clearTarget(); Draw.resetTool(); S.ed.workspace = 'model'; S.ed.tool = 'select'; view.markSelDirty(); refresh(); view.cam.lock2D = false; view.frame(S.doc.objects.flatMap(worldVerts).concat(allSketchPoints())); if (sheetOpen) renderSheet(); scheduleSave(); },
   });
   PJ.ensureProject();
   // in iOS Safari (not installed) its toolbar takes the bottom of the screen: say once how to get it full screen
@@ -698,7 +699,9 @@ function bodyTap(x, y) {
   return selectionChanged();
 }
 // (the pick as it stands: a tap counts as "the same spot again" only if nothing else changed the pick since)
-const pickSig = () => JSON.stringify([S.ed.pick, S.ed.faces.map(f => [f.obj, f.p]), S.ed.edges.map(e => [e.obj, e.p || e.a]), [...S.ed.selected], [...S.ed.drawSel], S.ed.profiles]);
+// (and the view as it stands: after a turn or a frame the same pixel is somewhere else on the model)
+const pickSig = () => JSON.stringify([S.ed.pick, S.ed.faces.map(f => [f.obj, f.p]), S.ed.edges.map(e => [e.obj, e.p || e.a]), [...S.ed.selected], [...S.ed.drawSel], S.ed.profiles,
+  ((c) => [c.yaw, c.pitch, c.dist, c.target.x, c.target.y, c.target.z].map(v => +v.toFixed(5)).concat(c.ortho))(view.cam)]);
 let lastTap = null;
 function smartTap(x, y) {
   smartTapInner(x, y);
@@ -860,7 +863,7 @@ function selectAllToggle() {
   if (S.ed.mode === 'object') {
     const all = S.doc.objects.filter(isShown);
     if (S.ed.selected.size >= all.length && all.length) S.ed.selected = new Set();
-    else { S.ed.selected = new Set(all.map(o => o.id)); if (!S.ed.selected.has(S.ed.active)) S.ed.active = all[0]?.id ?? null; }
+    else { setPickKind('solid'); S.ed.selected = new Set(all.map(o => o.id)); if (!S.ed.selected.has(S.ed.active)) S.ed.active = all[0]?.id ?? null; } // (bodies: Boolean, Pattern … offered)
   } else {
     const o = activeObj(); if (!o) return;
     if (S.ed.editSel.size >= o.mesh.v.length) S.ed.editSel = new Set(); else S.ed.editSel = new Set(o.mesh.v.map((_, i) => i));
@@ -1071,7 +1074,7 @@ async function checkInterference(objs) {
   if (!hits.length) { toast(`No interference between ${list.length} solids`); return; }
   S.ed.selected = new Set(hits.flatMap(x => [x.a.id, x.b.id])); S.ed.active = hits[0].a.id; S.ed.pick = 'solid';
   popover($('#btn-menu'), h('div', {}, h('div', { class: 'mtitle' }, `Interference · ${hits.length} pair${hits.length > 1 ? 's' : ''}`),
-    ...hits.map(x => { const small = x.v < 1 && x.v < 0.005 * Math.min(K.volume(x.a.shape), K.volume(x.b.shape)); /* e.g. mating threads, not a real clash */ return h('div', { class: 'mnote', style: 'padding:6px 12px' }, `${x.a.name} ↔ ${x.b.name}: ${fmtVol(x.v)} overlap${small ? ' (slight — mating threads or a press fit overlap a little by design)' : ''}`); }),
+    ...hits.map(x => { const small = x.v < 0.005 * Math.min(Math.abs(K.volume(x.a.shape)), Math.abs(K.volume(x.b.shape))); /* (under 0.5 % of the smaller part: mating threads, not a real clash — M8 threads overlap ~100 mm³) */ return h('div', { class: 'mnote', style: 'padding:6px 12px' }, `${x.a.name} ↔ ${x.b.name}: ${fmtVol(x.v)} overlap${small ? ' (slight — mating threads or a press fit overlap a little by design)' : ''}`); }),
     h('div', { class: 'mnote', style: 'padding:6px 12px;opacity:.75' }, 'The overlapping bodies are selected. Move one (or Mate it), or change its size in its own project.')));
   selectionChanged();
 }
@@ -1587,7 +1590,14 @@ function renderHud() {
   parts.push(`${view.cam.ortho ? 'Ortho' : 'Persp'} · Grid ${fmtLen(view.gridStep)} · ${step}`);
   $('#hud').innerHTML = parts.join('<br>');
 }
-function planeName(sk) { for (const [k, p] of Object.entries(SK.PLANES)) if (p.n.every((c, i) => Math.abs(c - sk.plane.n[i]) < 1e-9)) { const off = M.dot(sk.plane.o, p.n); return p.label + (Math.abs(off) > 1e-9 ? ` +${fmtLen(off)}` : ''); } return 'custom plane'; }
+function planeName(sk) {
+  for (const p of Object.values(SK.PLANES)) if (p.n.every((c, i) => Math.abs(Math.abs(c) - Math.abs(sk.plane.n[i])) < 1e-9)) {
+    // an offset plane is named by where it sits (Front (XZ) · Y 40 is y = 40), not by a distance along its normal
+    const k = p.n.findIndex(c => Math.abs(c) > 0.5), at = sk.plane.o[k];
+    return p.label + (Math.abs(at) > 1e-9 ? ` · ${'XYZ'[k]} ${fmtLen(at)}` : '');
+  }
+  return sk.plane.label || 'custom plane';
+}
 function renderDrawCard() {
   const el = $('#draw-card');
   const INQ = ['dist', 'id', 'angle', 'area', 'radius', 'list'];
@@ -1708,7 +1718,10 @@ function renderLastOp() {
     // a draw card across the top (phone) pushes the picture down by half its height instead
     const dc = $('#draw-card'), dcTop = !dc.hidden && S.ed.tool !== 'select' && matchMedia('(max-width: 500px)').matches && dc.getBoundingClientRect().top < innerHeight / 3;
     const dcOff = dcTop ? -Math.max(0, dc.getBoundingClientRect().bottom - $('#topbar').getBoundingClientRect().bottom) / 2 : 0;
-    const off = docked ? el.offsetHeight / 2 : dcOff, offX = side ? -(el.offsetWidth + 40) / 2 : 0; // move the model out from under the dialog
+    // move the model out from under the dialog: centred in the room left between the timeline and the card (half the
+    // card's height pushed it up under the timeline and the HUD)
+    const ins = view.insets?.() || { t: 0, b: 0 };
+    const off = docked ? Math.max(0, (ins.b - ins.t) / 2) : dcOff, offX = side ? -(el.offsetWidth + 40) / 2 : 0;
     if (Math.abs((view.offsetY || 0) - off) > 1 || Math.abs((view.offsetX || 0) - offX) > 1) { view.offsetY = off; view.offsetX = offX; view.render(); }
   });
   if (!show) return;
@@ -2003,7 +2016,7 @@ function openInstall() {
 function newScene() {
   S.doc.objects = []; S.doc.nextId = 1; S.doc.gonePres = {};
   S.ed.mode = 'object'; S.ed.selected = new Set(); S.ed.active = null; S.ed.editSel = new Set(); S.ed.measure = []; S.ed.profiles = []; S.ed.drawSel = new Set();
-  S.ed.isolate = null; S.ed.mateFrom = null; S.ed.editingSketch = null;
+  S.ed.isolate = null; S.ed.mateFrom = null; S.ed.editingSketch = null; S.ed.cplane = null; S.ed.planePick = null; // (a construction plane belongs to its project)
   defaultScene(); resetHistory(); Draw.clearTarget(); Draw.resetTool(); scheduleSave(); refresh();
   const sk0 = SK.activeSketch(); if (sk0) enterSketchView(sk0); else view.frameAll?.();
 }
@@ -2021,7 +2034,7 @@ async function exportAs(kind) {
     if (!solids.length) { toast('STEP needs exact solids (imported meshes have none)'); return; }
     // an assembly STEP: one named, coloured part per body (so CAD apps show the part names)
     // (a linked sub-assembly exports its own parts, named "Seat / Slat")
-    try { blob = K.R.exportSTEP(solids.flatMap(o => PJ.partsOf(o)).map(pt => ({ shape: pt.shape(), name: pt.name, color: K.stepColor(pt.color) })), { unit: 'MM' }); }
+    try { blob = K.exportSTEP(solids.flatMap(o => PJ.partsOf(o)).map(pt => ({ shape: pt.shape(), name: pt.name, color: pt.color })), { unit: 'MM' }); }
     catch (err) {
       console.warn('assembly STEP failed, writing a plain compound', err);
       try { const shapes = solids.map(o => K.worldShape(o).clone()); blob = (shapes.length === 1 ? shapes[0] : K.R.makeCompound(shapes)).blobSTEP(); }
@@ -2270,7 +2283,9 @@ function openPlaneMenu(anchor) {
     h('div', { class: 'msep' }),
     menuItem(I.plane, 'Offset this plane…', () => setTimeout(() => BR.askText(anchor, 'Offset distance (mm, − goes the other way)', '10', v => {
       let d; try { d = evalExpr(v, 'len'); } catch (e) { return toast(e.message || 'Type a distance'); }
-      const c = S.ed.cplane || SK.PLANES.XY, pl = planeAt(M.add(c.o, M.mul(c.n, d)), c.n, `${planeLabel()} ${d >= 0 ? '+' : ''}${+d.toFixed(4)}`);
+      // (named by where it sits — "XZ · Y 40" is the plane y = 40 — since the Front plane's normal runs along −Y)
+      const c = S.ed.cplane || SK.PLANES.XY, o2 = M.add(c.o, M.mul(c.n, d)), k = [0, 1, 2].find(i => Math.abs(Math.abs(c.n[i]) - 1) < 1e-9);
+      const pl = planeAt(o2, c.n, k != null ? `${['YZ', 'XZ', 'XY'][k]} · ${'XYZ'[k]} ${+o2[k].toFixed(4)}` : `${planeLabel()} ${d >= 0 ? '+' : ''}${+d.toFixed(4)}`);
       pl.u = c.u.slice(); pl.v = c.v.slice();
       setDrawPlane(pl, `Drawing plane offset ${fmtLen(d)}`);
     }), 0)),

@@ -28,7 +28,7 @@ On iPhone, open the page in Safari, then Share → **Add to Home Screen**. It th
 ## Precision model
 - Geometry is stored in **millimetres as float64**. Only the GPU copy is float32.
 - Every operation has typed parameters. After you drag, the **Adjust Last Operation** card lets you replace the value with an exact one, and the operation is re-run from its original state.
-- Values are entered on a built-in **calculator keypad** (the iOS decimal pad has no minus key). It accepts expressions and units: `3/8 in`, `25.4*2`, `10mm + 1in`, `2*pi*5`, `45deg`, `0.5 rad`.
+- Values are entered on a built-in **calculator keypad** (the iOS decimal pad has no minus key). It accepts expressions and units: `3/8 in`, `25.4*2`, `10mm + 1in`, `2*pi*5`, `45deg`, `0.5 rad`. On a fresh value **−** starts a negative number; **+ × ÷** go on from the value shown (`12 + 5`).
 - Snapping: increment or absolute grid, angle steps, and vertex snapping. Constrained axis moves project the snap target onto the axis.
 - Exact numeric panels: object location, rotation, scale and dimensions; the median of the selection in global coordinates; and the length between two vertices (the last-selected vertex moves).
 - Rotations by multiples of 90° use exact matrices (no 6e-17 drift).
@@ -53,7 +53,7 @@ Solids are exact boundary representations computed by **OpenCascade** (the kerne
 - **Array:** the default spacing comes from the selection's width.
 
 ## Drawing planes
-- The **Plane** button picks Top / Front / Right, **Offset this plane…** by a typed distance (a sketch 70 mm up for a loft; units and expressions work), or **Tilt this plane…** by a typed angle about its X direction (a 15° phone slot).
+- The **Plane** button picks Top / Front / Right, **Offset this plane…** by a typed distance (a sketch 70 mm up for a loft; units and expressions work — an offset plane is named by where it sits: "XZ · Y 40" is the plane y = 40), or **Tilt this plane…** by a typed angle about its X direction (a 15° phone slot).
 - Select a face and tap **Plane here**: the drawing plane goes through the tapped point, touching the face — on a curved wall it is the tangent plane, so a spout or handle can be sketched where it attaches. Typed coordinates on it are the model's own (its origin sits where the plane passes nearest the world origin) — except that a face you look at from below or behind has one axis running against the model's; the toast says which (on a bottom face, the sketch's Y is the model's −Y). Hole patterns always run their rows toward the model's +Y (+Z on a wall), on any face.
 
 ## Projects and assemblies
@@ -211,7 +211,8 @@ An extrude from a face sketch targets that body automatically (Join, or Cut into
   - **Push/Pull** (`O`): move a face along its normal, adding or removing material.
   - **Shell** (`H`): hollow the body, with the selected faces left open. The wall offsets are solved exactly from the face planes.
   - **Mirror** (`M`): across YZ, XZ, XY or a selected face, optionally fused with the original.
-  - **Boolean:** union, subtract or intersect.
+  - **Boolean:** union, subtract or intersect. The volumes are checked, so a result the kernel got wrong is reported instead of silently replacing the part, and no boolean ever changes the bodies it started from.
+  - **Rotate / Scale:** besides the axis and angle (or factors), the card takes the **pivot** — turn a clip about the fan's axis rather than about its own middle.
   - **Slice** (`SL`): cut by a plane through the body, a world plane or a selected face. Both halves are kept.
   - **Pattern** (`3A`): a polar pattern of bodies around X, Y or Z.
   - **Thicken:** turn a surface, such as an added Plane, into a solid.

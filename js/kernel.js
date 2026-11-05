@@ -16,6 +16,48 @@ export async function initKernel() {
   const url = new URL('../vendor/occ/replicad_single.wasm', import.meta.url).href;
   oc = await initOC({ locateFile: () => url });
   R.setOC(oc);
+  patchBooleans();
+}
+// OCCT's booleans may change their input shapes in place (tolerances, split edges) unless told not to. Shapes here are
+// shared values (undo snapshots, history checkpoints, duplicates), so a union that touched a torus once could leave
+// it broken for the next one: every boolean runs non-destructively.
+function patchBooleans() {
+  let proto = R.Solid.prototype;
+  while (proto && !Object.prototype.hasOwnProperty.call(proto, 'fuse')) proto = Object.getPrototypeOf(proto);
+  if (!proto || proto._nonDestructive) return;
+  const run = (Kind, verb, a, b, { optimisation = 'none', simplify = true } = {}) => {
+    const bl = new oc[Kind](), la = new oc.NCollection_List_TopoDS_Shape(), lb = new oc.NCollection_List_TopoDS_Shape();
+    try {
+      la.Append(a.wrapped); lb.Append(b.wrapped); bl.SetArguments(la); bl.SetTools(lb);
+      bl.SetNonDestructive(true);
+      if (optimisation === 'commonFace') bl.SetGlue(oc.BOPAlgo_GlueEnum.BOPAlgo_GlueShift);
+      if (optimisation === 'sameFace') bl.SetGlue(oc.BOPAlgo_GlueEnum.BOPAlgo_GlueFull);
+      bl.Build(new oc.Message_ProgressRange());
+      if (bl.HasErrors()) throw new Error(`Could not ${verb}`);
+      const r = R.cast(bl.Shape());
+      if (!R.isShape3D(r)) throw new Error(`Could not ${verb} as a 3d shape`);
+      return simplify ? unifyFaces(r) : r;
+    } finally { for (const x of [bl, la, lb]) try { x.delete(); } catch (e) { /* freed */ } }
+  };
+  // merge the faces and edges a boolean split on one surface (a box on a box: one top face). OCCT's own SimplifyResult
+  // edits the result in place, and the result shares faces with the inputs: on a torus it turned the result and the
+  // stored body inside out. Here the inputs are kept safe, and the merge is used only if the volume stays the same.
+  const unifyFaces = sh => {
+    let u = null;
+    try {
+      u = new oc.ShapeUpgrade_UnifySameDomain(sh.wrapped, true, true, false);
+      u.SetSafeInputMode(true); u.SetAngularTolerance(1e-3);
+      u.Build();
+      const r = R.cast(u.Shape()), v0 = volume(sh), v1 = volume(r);
+      if (Math.abs(v1 - v0) <= 1e-6 * Math.max(1, Math.abs(v0))) return r;
+    } catch (e) { /* keep the result as built */ } finally { try { u && u.delete(); } catch (e) { /* freed */ } }
+    return sh;
+  };
+  proto._occ = { fuse: proto.fuse, cut: proto.cut, intersect: proto.intersect }; // (replicad's own, for comparison)
+  proto.fuse = function (other, opts) { return run('BRepAlgoAPI_Fuse', 'fuse', this, other, opts); };
+  proto.cut = function (tool, opts) { return run('BRepAlgoAPI_Cut', 'cut', this, tool, opts); };
+  proto.intersect = function (tool, opts) { return run('BRepAlgoAPI_Common', 'intersect', this, tool, opts); };
+  proto._nonDestructive = true;
 }
 export const getOC = () => oc;
 
@@ -103,7 +145,16 @@ export function deserialize(str) { const s = R.deserializeShape(str); serCache.s
 
 // ---------- measures ----------
 export const volume = s => R.measureVolume(s);
-// an sRGB colour as the linear-RGB hex OpenCascade's STEP writer expects (it converts back to sRGB in the file)
+// STEP export with exact colours. OpenCascade's writer takes linear RGB (it writes sRGB in the file), but replicad
+// hands it the 8-bit sRGB values as they are (the file came out lighter); an 8-bit linear hex rounded dark colours
+// off instead (#6f7782 came back #707782). For the length of the export the colour gets its exact linear values.
+const linear = c => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+export function exportSTEP(parts, opts) {
+  const Orig = oc.Quantity_ColorRGBA;
+  oc.Quantity_ColorRGBA = function (...a) { return a.length === 4 ? new Orig(linear(a[0]), linear(a[1]), linear(a[2]), a[3]) : new Orig(...a); };
+  try { return R.exportSTEP(parts, opts); } finally { oc.Quantity_ColorRGBA = Orig; }
+}
+// an sRGB colour as the linear-RGB hex OpenCascade's STEP writer expects (8-bit: K.exportSTEP is exact)
 export function stepColor(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex || ''); if (!m) return hex;
   const lin = c => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
@@ -248,7 +299,21 @@ export const vec = v => new R.Vector(v);
 export function prism(face, v) { return R.basicFaceExtrusion(face, vec(v)); }
 export function revolve(face, c, dir, deg) { return R.revolution(face, c, dir, deg); }
 export function fuseAll(shapes) { let s = shapes[0]; for (let i = 1; i < shapes.length; i++) s = s.fuse(shapes[i]); return s; }
-export function boolean(kind, a, b) { return kind === 'union' || kind === 'join' ? a.fuse(b) : kind === 'subtract' || kind === 'cut' ? a.cut(b) : a.intersect(b); }
+// Union / Subtract / Intersect, with the volumes checked: a result that lost material (OCCT can hand back just one of
+// the bodies) is an error, not a silent wrong part
+export function boolean(kind, a, b) {
+  const op = kind === 'union' || kind === 'join' ? 'fuse' : kind === 'subtract' || kind === 'cut' ? 'cut' : 'intersect';
+  const r = a[op](b);
+  checkBoolean(op, a, b, r);
+  return r;
+}
+export function checkBoolean(op, a, b, r) {
+  let va, vb, v;
+  try { va = Math.abs(volume(a)); vb = Math.abs(volume(b)); v = volume(r); } catch (e) { return; }
+  const tol = 1e-6 * Math.max(1, va + vb);
+  const ok = op === 'fuse' ? v >= Math.max(va, vb) - tol && v <= va + vb + tol : op === 'cut' ? v >= Math.max(0, va - vb) - tol && v <= va + tol : v >= -tol && v <= Math.min(va, vb) + tol;
+  if (!ok) throw new Error(`${op === 'fuse' ? 'Union' : op === 'cut' ? 'Subtract' : 'Intersect'} failed — the kernel gave a broken result (${v.toFixed(3)} mm³)`);
+}
 export const isEmpty = s => !s || s.isNull || (typeof s.isNull === 'function' && s.isNull()) || !s.faces.length;
 
 // ---------- finding faces / edges again (for picks and history replay) ----------

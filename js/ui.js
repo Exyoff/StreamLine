@@ -95,6 +95,8 @@ function press(k) {
     kp.expr = kp.expr.startsWith('-(') && kp.expr.endsWith(')') ? kp.expr.slice(2, -1) : kp.expr.startsWith('-') && /^-[\d.]+$/.test(kp.expr) ? kp.expr.slice(1) : /^[\d.]+$/.test(kp.expr) ? '-' + kp.expr : `-(${kp.expr || '0'})`;
     return renderKp();
   }
+  // − first on a fresh field starts a negative number (+ × ÷ go on from the value shown: "12 + 5")
+  if (kp.fresh && k === '−') { kp.fresh = false; kp.expr = '-'; return renderKp(); }
   const isOp = '÷×−+'.includes(k) || (k.startsWith(' ') && k !== ' pi');
   if (kp.fresh) { kp.fresh = false; if (!isOp) kp.expr = ''; }
   const map = { '÷': ' ÷ ', '×': ' × ', '−': ' − ', '+': ' + ', 'π': 'π', '°': '°' };
