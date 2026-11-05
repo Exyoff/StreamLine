@@ -1790,7 +1790,9 @@ function renderLastOp() {
     const ins = view.insets?.({ hud: false }) || { t: 0, b: 0 };
     // (with the Look panel open the model moves down into the room under it, so themes and lights can be judged)
     const look = !!document.querySelector('#popover:not([hidden]) .lookpop') && $('#popover').getBoundingClientRect(), vtop = $('#viewport').getBoundingClientRect().top;
-    const off = look ? -Math.max(0, (look.bottom - vtop - ins.t) / 2) : docked ? Math.max(0, (ins.b - ins.t) / 2) : dcOff, offX = side ? -(el.offsetWidth + 40) / 2 : 0;
+    // (phone landscape: a card beside the rail moves the picture right by half its width)
+    const dcSide = !dc.hidden && S.ed.tool !== 'select' && matchMedia('(orientation: landscape) and (max-height: 500px)').matches;
+    const off = look ? -Math.max(0, (look.bottom - vtop - ins.t) / 2) : docked ? Math.max(0, (ins.b - ins.t) / 2) : dcOff, offX = side ? -(el.offsetWidth + 40) / 2 : dcSide ? -(dc.offsetWidth + 40) / 2 : 0;
     if (Math.abs((view.offsetY || 0) - off) > 1 || Math.abs((view.offsetX || 0) - offX) > 1) { view.offsetY = off; view.offsetX = offX; view.render(); }
     placeViewTools();
   });
