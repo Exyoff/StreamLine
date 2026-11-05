@@ -55,7 +55,7 @@ export function cloneObj(o, shareMesh = false) {
 export function serialize(light = false) {
   return {
     format: 'streamline', version: 1, unit: 'mm',
-    doc: { nextId: S.doc.nextId, objects: S.doc.objects.map(o => objToJSON(o, light)), sketches: S.doc.sketches || [], history: S.doc.history || [], marker: S.doc.marker ?? null, layers: S.doc.layers || defaultLayers(), layer: S.doc.layer ?? 1 },
+    doc: { nextId: S.doc.nextId, objects: S.doc.objects.map(o => objToJSON(o, light)), sketches: S.doc.sketches || [], history: S.doc.history || [], marker: S.doc.marker ?? null, layers: S.doc.layers || defaultLayers(), layer: S.doc.layer ?? 1, project: S.doc.project || null, components: S.doc.components || {} },
     ed: { workspace: S.ed.workspace, sketch: S.ed.sketch, drawSel: [...S.ed.drawSel], profiles: S.ed.profiles, mode: S.ed.mode, selectMode: S.ed.selectMode, selected: [...S.ed.selected], active: S.ed.active, editSel: [...S.ed.editSel], selOrder: S.ed.selOrder.slice() },
   };
 }
@@ -68,6 +68,8 @@ export function deserialize(data) {
   S.doc.layers = JSON.parse(JSON.stringify(d.doc.layers || defaultLayers()));
   S.doc.layer = d.doc.layer ?? S.doc.layers[0].id;
   S.doc.marker = d.doc.marker ?? null;
+  S.doc.project = d.doc.project || null;
+  S.doc.components = JSON.parse(JSON.stringify(d.doc.components || {}));
   S.doc.history = JSON.parse(JSON.stringify(d.doc.history || []));
   // projects saved before the timeline existed: their bodies become one baked first step
   if (!d.doc.history && S.doc.objects.length) S.doc.history = [{ id: 'r0', op: '_bake', label: 'Imported geometry', t: Date.now(), params: { add: JSON.parse(JSON.stringify(d.doc.objects)) } }];
@@ -103,14 +105,14 @@ export function objFromJSON(j) {
 // undo snapshots: structural copies that share solids (no serialization)
 export function snapshot() {
   return {
-    doc: { objects: S.doc.objects.map(o => cloneObj(o)), sketches: JSON.stringify(S.doc.sketches || []), nextId: S.doc.nextId, history: JSON.stringify(S.doc.history || []), marker: S.doc.marker ?? null, layers: JSON.stringify(S.doc.layers || defaultLayers()), layer: S.doc.layer ?? 1 },
+    doc: { objects: S.doc.objects.map(o => cloneObj(o)), sketches: JSON.stringify(S.doc.sketches || []), nextId: S.doc.nextId, history: JSON.stringify(S.doc.history || []), marker: S.doc.marker ?? null, layers: JSON.stringify(S.doc.layers || defaultLayers()), layer: S.doc.layer ?? 1, components: S.doc.components || {}, project: S.doc.project || null },
     ed: { workspace: S.ed.workspace, sketch: S.ed.sketch, drawSel: [...S.ed.drawSel], profiles: JSON.stringify(S.ed.profiles), mode: S.ed.mode, selectMode: S.ed.selectMode, selected: [...S.ed.selected], active: S.ed.active, editSel: [...S.ed.editSel], selOrder: S.ed.selOrder.slice() },
   };
 }
 export function restoreSnapshot(s) {
   const d = s.doc;
   S.doc.objects = d.objects.map(o => cloneObj(o)); S.doc.sketches = JSON.parse(d.sketches); S.doc.nextId = d.nextId;
-  S.doc.history = JSON.parse(d.history); S.doc.marker = d.marker; S.doc.layers = JSON.parse(d.layers); S.doc.layer = d.layer;
+  S.doc.history = JSON.parse(d.history); S.doc.marker = d.marker; S.doc.layers = JSON.parse(d.layers); S.doc.layer = d.layer; S.doc.components = d.components || {}; S.doc.project = d.project || S.doc.project;
   const e = s.ed;
   S.ed.workspace = e.workspace || 'model'; S.ed.sketch = e.sketch ?? null; S.ed.drawSel = new Set(e.drawSel); S.ed.profiles = JSON.parse(e.profiles);
   S.ed.mode = e.mode; S.ed.selectMode = e.selectMode; S.ed.selected = new Set(e.selected); S.ed.active = e.active; S.ed.editSel = new Set(e.editSel); S.ed.selOrder = e.selOrder.slice();
