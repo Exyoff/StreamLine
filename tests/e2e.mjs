@@ -1076,6 +1076,46 @@ try {
   for (const k of ['−', '5', 'ok']) { await p.tap(`#keypad [data-k="${k}"]`); await p.waitForTimeout(150); }
   const kpv = await p.evaluate(() => window.__kpv);
   check(kpv === -5, `On the keypad, − first on a fresh value starts a negative number (12 → ${kpv})`);
+  // layout: the view tools sit in the zoom column and beside the cube (nothing over the middle of the model); the
+  // Browser leaves the rail in view; a Distance result stays in the HUD; a thread's default length is at most 16
+  // turns and follows the pitch until a length is typed
+  const lay = await p.evaluate(() => {
+    const r = q => document.querySelector(q)?.getBoundingClientRect(), vw = innerWidth;
+    const snap = r('#zoombar #btn-snap'), xr = r('#zoombar #btn-xray'), home = r('#vtools-c #btn-home'), fr = r('#vtools-c #btn-frame'), pp = r('#vtools-c #btn-persp'), cube = r('#nav');
+    return { inCol: !!(snap && xr), side: !!(home && fr && pp) && pp.right <= cube.left + 2 && [home, fr, pp].every(b => b.left > vw * 0.55), noMid: !document.querySelector('#vtools-r') };
+  });
+  check(lay.inCol && lay.side && lay.noMid, `View tools: Snap and X-ray under the zoom bar, Home / Frame / Persp beside the cube, nothing over the middle (${JSON.stringify(lay)})`);
+  await p.tap('#btn-browser'); await p.waitForTimeout(450);
+  const brl = await p.evaluate(() => ({ br: document.querySelector('#browser').getBoundingClientRect().left, rail: document.querySelector('#toolrail').getBoundingClientRect().right }));
+  await p.tap('#btn-browser'); await p.waitForTimeout(400);
+  check(brl.br >= brl.rail - 1, `The Browser opens beside the tool rail, leaving it in view (${Math.round(brl.br)} ≥ ${Math.round(brl.rail)})`);
+  await p.tap('#toolsets .tset[data-set=inspect]'); await p.waitForTimeout(250);
+  await p.tap('#tools .tool[data-id=dist]'); await p.waitForTimeout(250);
+  await p.evaluate(() => { StreamLine.Draw.typed('0,0'); StreamLine.Draw.typed('30,40'); }); await p.waitForTimeout(3500);
+  const hudD = await p.textContent('#hud');
+  check(/Distance 50\.00/.test(hudD) && /ΔX 30\.00/.test(hudD), `A Distance result stays in the HUD after its toast (${hudD.slice(0, 70)})`);
+  await p.tap('#toolsets .tset[data-set=solid]'); await p.waitForTimeout(250);
+  const thr = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, m = await import('./js/ops.js');
+    L.runOp(F.sketchOpNew('rod', { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }, null, k => { F.addEntity(k, { t: 'circle', c: [74000, 0], r: 10 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [74000, 0] }], distance: 60, mode: 'new', target: null }); m.commit(); const id = L.S.doc.objects.at(-1).id;
+    L.S.ed.faces = [{ obj: id, n: [1, 0, 0], w: 74010, p: [74010, 0, 50], planar: false }];
+    L.runOp(F.threadOp, {}); const a = [L.getLast().params.pitch, L.getLast().params.length];
+    m.updateOp({ pitch: 1.5 }); const b = [L.getLast().params.pitch, L.getLast().params.length, L.H.hist().at(-1).err || '']; m.commit(); L.S.ed.faces = [];
+    return { a: a.join(), b: b.join() };
+  });
+  check(thr.a === '2.5,40' && thr.b === '1.5,24,', `A thread's default length is at most 16 turns and follows the pitch until typed (M20: ${thr.a} → ${thr.b})`);
+  // the Line card switches the next segment to a tangent arc
+  await p.evaluate(() => { const L = StreamLine; L.sketchOn({ plane: 'XY' }); L.refresh(); }); await p.waitForTimeout(600);
+  await p.tap('#tools .tool[data-tool=line]'); await p.waitForTimeout(300);
+  await p.tap('#draw-card .field.ax-x .val'); await keypad('75000');
+  await p.tap('#draw-card .field.ax-y .val'); await keypad('0');
+  await p.tap('#draw-card .field .val'); await keypad('20');
+  await p.locator('#draw-card .seg.modebar button', { hasText: 'Tangent arc' }).tap(); await p.waitForTimeout(200);
+  await (await p.$$('#draw-card .field button.val'))[1].tap(); await keypad('90');
+  await (await p.$$('#draw-card .field button.val'))[0].tap(); await keypad('10');
+  const arcEnts = await p.evaluate(() => { const L = StreamLine, r = L.SK.sketchById(L.S.ed.editingSketch).ents.map(e => e.t + (e.r ? ':' + (+e.r.toFixed(6)) : '')).join(); L.Draw.resetTool(); L.finishSketchEdit(); return r; });
+  check(arcEnts === 'line,arc:5', `The Line card's Tangent arc makes the next segment an arc tangent to the line (${arcEnts})`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
@@ -1159,7 +1199,7 @@ try {
     let cs = await p.evaluate(() => StreamLine.Draw.consSelected()), retried = false;
     if (glyph && !cs) { // (diagnose a miss, then try once more — the check says so)
       retried = true;
-      const dg = await p.evaluate(() => { const L = StreamLine, g = document.querySelector('#gl').getBoundingClientRect(); return { cons: (L.Draw.st?.consLabels || []).map(c => [Math.round(c.x + g.left), Math.round(c.y + g.top)]), ed: L.S.ed.editingSketch, sk: L.S.ed.sketch, tool: L.S.ed.tool, pick: L.S.ed.pick, lock: L.S.ed.pickLock, cons: L.S.ed.consTool, sel: [...L.S.ed.drawSel], kp: !!document.querySelector('#keypad.open'), pop: !!document.querySelector('#popover:not([hidden])'), card: !document.querySelector('#lastop').hidden, top: document.elementFromPoint(0, 0) && 0 }; });
+      const dg = await p.evaluate(() => { const L = StreamLine, g = document.querySelector('#gl').getBoundingClientRect(); return { glyphs: (L.Draw.st?.consLabels || []).map(c => [Math.round(c.x + g.left), Math.round(c.y + g.top)]), offY: L.view.offsetY, hud: document.querySelector('#hud').textContent.slice(0, 40), lastop: document.querySelector('#lastop').textContent.slice(0, 40), ed: L.S.ed.editingSketch, sk: L.S.ed.sketch, tool: L.S.ed.tool, pick: L.S.ed.pick, lock: L.S.ed.pickLock, consTool: L.S.ed.consTool, sel: [...L.S.ed.drawSel], kp: !!document.querySelector('#keypad.open'), pop: !!document.querySelector('#popover:not([hidden])'), card: !document.querySelector('#lastop').hidden, top: document.elementFromPoint(0, 0) && 0 }; });
       console.log('glyph miss', JSON.stringify(glyph), JSON.stringify(dg), await p.evaluate(g => document.elementFromPoint(g.x, g.y)?.id || document.elementFromPoint(g.x, g.y)?.className, glyph));
       await shot('glyph-miss');
       await p.waitForTimeout(500); await tapT(glyph); cs = await p.evaluate(() => StreamLine.Draw.consSelected());

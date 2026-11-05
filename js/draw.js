@@ -533,7 +533,9 @@ export function cardContent() {
     if (!st.start) return h('div', {}, title('Line', 'tap or drag · or type the start'), xyFields('Start', (p, k) => setStart(p, k)));
     const L = pv() ? SK.d2(st.start, pv()) : 0, A = st.typed.ang ?? (pv() && L > 1e-9 ? ang(st.start, pv()) / D : 0);
     const placeTyped = (len, a) => placeLine(st.start, [st.start[0] + len * ecos(a), st.start[1] + len * esin(a)]);
-    return h('div', {}, title('Line', st.chain.length ? `${st.chain.length - 1} segment${st.chain.length > 2 ? 's' : ''}` : 'next point'),
+    // after the first segment the next one can be a tangent arc (PLINE's Arc option, on the card)
+    const segBar = st.chain.length >= 2 ? h('div', { class: 'seg modebar' }, ...[['line', 'Line'], ['arc', 'Tangent arc']].map(([k, l]) => h('button', { class: (st.arcMode ? 'arc' : 'line') === k ? 'on' : '', onclick: () => { st.arcMode = k === 'arc'; emit('drawcard'); view.render(); } }, l))) : null;
+    return h('div', {}, title(st.arcMode ? 'Tangent arc' : 'Line', st.chain.length ? `${st.chain.length - 1} segment${st.chain.length > 2 ? 's' : ''}` : 'next point'), segBar,
       h('div', { class: 'fields' },
         field({ label: 'Length', kind: 'len', value: L, min: 0, onCommit: v => { placeTyped(v, st.typed.ang ?? A); emit('drawcard'); view.render(); } }),
         field({ label: 'Angle', kind: 'ang', value: A, onCommit: v => { st.typed.ang = v; emit('drawcard'); } })),
@@ -1275,6 +1277,7 @@ const f4 = v => fmtLen(v, false);
 function endInquiry() {
   // without the command line the result would go unseen: show it as a toast too
   if (document.querySelector('#cmdbar')?.hidden !== false && lastLog) toast(lastLog.replace(/\s{2,}/g, '  '));
+  S.ed.inquiry = lastLog || null; // (and it stays in the HUD until the next tap or tool)
   st.cmd = null; S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); }
 function inquiryPoint(c, p) {
   const t = c.tool, s = sk();
