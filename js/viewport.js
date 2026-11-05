@@ -35,10 +35,10 @@ export const FINISH = {
   metal: { name: 'Metal', r: 0.3, m: 0.85, env: 2.2 },
 };
 export const THEMES = {
-  midnight: { name: 'Midnight', note: 'Navy, blue', bg: ['#1a2130', '#0b0e14'], glow: 'rgba(120,150,220,0.10)', edge: 0x141925, soft: 0x3c4660, sel: '#2f8bff', act: '#8cc4ff', grid: [0.78, 0.84, 1], gridA: 1, sketch: '#eef1f8', meta: '#0a0d13', nav: 'rgba(255,255,255,0.06)', chip: ['#1a2130', '#3d8bfd'] },
-  graphite: { name: 'Graphite', note: 'Neutral grey, blue', bg: ['#2e3034', '#141517'], glow: 'rgba(255,255,255,0.05)', edge: 0x17181b, soft: 0x4f535b, sel: '#3a8dff', act: '#9cc8ff', grid: [1, 1, 1], gridA: 1, sketch: '#f2f2f2', meta: '#111213', nav: 'rgba(255,255,255,0.06)', chip: ['#2e3034', '#4a90f2'] },
-  ember: { name: 'Ember', note: 'The original orange', bg: ['#2f3034', '#25262a'], glow: 'rgba(255,255,255,0.03)', edge: 0x3a4250, soft: 0x55606f, sel: '#ff9a1f', act: '#ffd27a', grid: [1, 1, 1], gridA: 1, sketch: '#f2f2f2', meta: '#16171a', nav: 'rgba(255,255,255,0.06)', chip: ['#2b2c30', '#ff9f0a'] },
-  daylight: { name: 'Daylight', note: 'Light studio', bg: ['#f8fafd', '#d2d8e3'], glow: 'rgba(255,255,255,0.6)', edge: 0x283042, soft: 0x707a8e, sel: '#1f6feb', act: '#5ea0ff', grid: [0.12, 0.16, 0.28], gridA: 1.7, sketch: '#1a2030', meta: '#e9edf3', nav: 'rgba(12,18,32,0.07)', chip: ['#eef1f6', '#1f6feb'] },
+  midnight: { name: 'Midnight', note: 'Navy, blue', bg: ['#1a2130', '#0b0e14'], glow: 'rgba(120,150,220,0.10)', edge: 0x141925, soft: 0x3c4660, sel: '#2f8bff', act: '#8cc4ff', grid: [0.78, 0.84, 1], gridA: 1, sketch: '#4ea1ff', skFixed: '#f3f6fb', profile: '#ff9a2e', profA: 0.3, halo: '#101828', meta: '#0a0d13', nav: 'rgba(255,255,255,0.06)', chip: ['#1a2130', '#3d8bfd'] },
+  graphite: { name: 'Graphite', note: 'Neutral grey, blue', bg: ['#2e3034', '#141517'], glow: 'rgba(255,255,255,0.05)', edge: 0x17181b, soft: 0x4f535b, sel: '#3a8dff', act: '#9cc8ff', grid: [1, 1, 1], gridA: 1, sketch: '#4ea1ff', skFixed: '#f3f3f3', profile: '#ff9a2e', profA: 0.3, halo: '#141619', meta: '#111213', nav: 'rgba(255,255,255,0.06)', chip: ['#2e3034', '#4a90f2'] },
+  ember: { name: 'Ember', note: 'The original orange', bg: ['#2f3034', '#25262a'], glow: 'rgba(255,255,255,0.03)', edge: 0x3a4250, soft: 0x55606f, sel: '#ff9a1f', act: '#ffd27a', grid: [1, 1, 1], gridA: 1, sketch: '#5aa9ff', skFixed: '#f2f2f2', profile: '#ff9a2e', profA: 0.3, halo: '#18191c', meta: '#16171a', nav: 'rgba(255,255,255,0.06)', chip: ['#2b2c30', '#ff9f0a'] },
+  daylight: { name: 'Daylight', note: 'Light studio', bg: ['#f8fafd', '#d2d8e3'], glow: 'rgba(255,255,255,0.6)', edge: 0x283042, soft: 0x707a8e, sel: '#1f6feb', act: '#5ea0ff', grid: [0.12, 0.16, 0.28], gridA: 1.7, sketch: '#1662e0', skFixed: '#121722', profile: '#ff8a1f', profA: 0.32, halo: null, meta: '#e9edf3', nav: 'rgba(12,18,32,0.07)', chip: ['#eef1f6', '#1f6feb'] },
 };
 
 export const view = {
@@ -346,30 +346,44 @@ view.worldPerPixel = (p) => {
 const gridMat = new THREE.ShaderMaterial({
   transparent: true, depthWrite: false,
   uniforms: { uCenter: { value: new THREE.Vector3() }, uRadius: { value: 100 } },
-  vertexShader: `attribute vec4 color4; varying vec4 vC; varying vec3 vW;
-    void main(){ vC = color4; vec4 w = modelMatrix*vec4(position,1.0); vW = w.xyz; gl_Position = projectionMatrix*viewMatrix*w; }`,
-  fragmentShader: `uniform vec3 uCenter; uniform float uRadius; varying vec4 vC; varying vec3 vW;
-    void main(){ float d = length(vW.xy-uCenter.xy)/uRadius; float a = vC.a*(1.0-smoothstep(0.45,1.0,d)); if(a<0.003) discard; gl_FragColor = vec4(vC.rgb,a); }`,
+  // (faded by the distance in the grid's own plane, so the same grid can lie on a sketch plane)
+  vertexShader: `attribute vec4 color4; varying vec4 vC; varying vec2 vL;
+    void main(){ vC = color4; vL = position.xy; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+  fragmentShader: `uniform vec3 uCenter; uniform float uRadius; varying vec4 vC; varying vec2 vL;
+    void main(){ float d = length(vL-uCenter.xy)/uRadius; float a = vC.a*(1.0-smoothstep(0.45,1.0,d)); if(a<0.003) discard; gl_FragColor = vec4(vC.rgb,a); }`,
 });
+// the grid lies on view.gridPlane ({ o, u, v, n }: the sketch being edited, like Fusion's sketch grid, or the
+// drawing plane) — else on the ground (XY)
 function updateGrid() {
   const c = view.cam;
   if (!S.settings.grid) { if (gridLines) gridLines.visible = false; return; }
-  const f = unitFactor();
+  const f = unitFactor(), pl = view.gridPlane || null;
+  const T = c.target.toArray(), rel = pl ? [T[0] - pl.o[0], T[1] - pl.o[1], T[2] - pl.o[2]] : T;
+  const dt = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const tx = pl ? dt(rel, pl.u) : T[0], ty = pl ? dt(rel, pl.v) : T[1], tz = pl ? dt(rel, pl.n) : T[2];
   let H = 2 * c.dist * Math.tan(persp.fov * D2R / 2);
-  // when looking at the grid edge-on, base the size on the target height too
-  H = Math.max(H, Math.abs(c.target.z) * 0.5);
+  // when looking at the grid edge-on, base the size on the target's height above it too
+  H = Math.max(H, Math.abs(tz) * 0.5);
   const step = f * Math.pow(10, Math.floor(Math.log10(H / f / 25)));
   const major = step * 10, N = 120;
-  const cx = Math.round(c.target.x / major) * major, cy = Math.round(c.target.y / major) * major;
-  const key = `${step}|${cx}|${cy}`;
-  gridMat.uniforms.uCenter.value.copy(c.target); gridMat.uniforms.uRadius.value = N * step * 0.95;
-  if (gridLines) gridLines.visible = true;
+  const cx = Math.round(tx / major) * major, cy = Math.round(ty / major) * major;
+  const key = `${step}|${cx}|${cy}|${pl ? [...pl.o, ...pl.u, ...pl.n].map(v => (+v).toFixed(6)).join() : 'xy'}|${view.gridDark ? 'd' : ''}`;
+  gridMat.uniforms.uCenter.value.set(tx, ty, 0); gridMat.uniforms.uRadius.value = N * step * 0.95;
+  if (gridLines) {
+    gridLines.visible = true;
+    // on a face the grid floats a fraction of a pixel above it (lines get no polygon offset)
+    gridLines.matrixAutoUpdate = false;
+    if (pl) { const lift = view.worldPerPixel(c.target) * 0.4; gridLines.matrix.makeBasis(new THREE.Vector3(...pl.u), new THREE.Vector3(...pl.v), new THREE.Vector3(...pl.n)).setPosition(pl.o[0] + pl.n[0] * lift, pl.o[1] + pl.n[1] * lift, pl.o[2] + pl.n[2] * lift); }
+    else gridLines.matrix.identity();
+    gridLines.matrixWorldNeedsUpdate = true;
+  }
   if (key === gridKey) return;
   gridKey = key;
   const pos = [], col = [];
   const ext = N * step;
   const line = (a, b, r, g, bl, al) => { pos.push(...a, ...b); col.push(r, g, bl, al, r, g, bl, al); };
-  const gc = view.theme.grid, ga = view.theme.gridA;
+  // (on a face — a sketch being edited there — the grid is drawn in dark ink so it shows on the light part)
+  const gc = view.gridDark ? [0.05, 0.07, 0.12] : view.theme.grid, ga = view.gridDark ? 2.2 : view.theme.gridA;
   for (let i = -N; i <= N; i++) {
     const x = cx + i * step, y = cy + i * step;
     const mx = Math.abs(Math.round(x / major) * major - x) < step * 1e-3, my = Math.abs(Math.round(y / major) * major - y) < step * 1e-3;

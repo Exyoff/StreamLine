@@ -86,6 +86,20 @@ A mix of Fusion 360 and Plasticity. The 3D view fills the whole screen and every
   - **Layers.**
 - **Bottom right:** the view controls and the axis navigator.
 
+### Sketches on faces (Fusion-style)
+- **Curve colours:**
+  - Blue while a curve is free to move; white (black on the Daylight theme) once it is fully constrained.
+  - Construction lines are dashed orange; projected geometry is purple.
+  - A picked curve turns brighter and thicker.
+  - A thin dark outline keeps curves readable on light faces.
+- **Profiles:** closed profiles are shaded light orange, and the picked profile is blue.
+- **While you edit a sketch on a face:**
+  - The part stays solid with the sketch drawn on it.
+  - The grid lies on the sketch's plane, in dark ink on the face.
+  - Every curve end shows a small square point.
+- A sketch on a free plane (XY, XZ, YZ or an offset plane) still ghosts the bodies, so it shows through them.
+- Curves sit a couple of pixels above their face, so a tilted face never cuts into them.
+
 ### Picking
 There is no Edge / Face / Solid switch: a tap picks what is under your finger.
 - Sketch curves and sketch regions not used yet come first.
