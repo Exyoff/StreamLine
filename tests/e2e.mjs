@@ -888,6 +888,9 @@ try {
   const edgeW = async (scale, k) => p.evaluate(async ([scale, k]) => { const L = StreamLine; L.S.settings.edgeScale = scale; L.S.settings.edgeWidth = 'normal';
     const d0 = L.view.cam.dist; L.view.cam.dist = d0 * k; L.view.render(); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     let w = null; L.view.scene.traverse(o => { if (w == null && o.material?.isLineMaterial && o.material.userData.model && o.visible) w = o.material.linewidth; }); L.view.cam.dist = d0; L.view.render(); return w; }, [scale, k]);
+  // (framed on everything shown: the zoom factor is 1 there)
+  await p.evaluate(() => { const L = StreamLine, W = L.S.doc.objects.filter(L.isShown).flatMap(o => { let b = null; try { b = o.shape && L.K.worldShape(o).boundingBox.bounds; } catch (e) {} return b ? [b[0], b[1]] : [o.loc]; }); L.view.frame(W); });
+  await p.waitForTimeout(1000);
   const ws = [await edgeW('screen', 0.5), await edgeW('screen', 2), await edgeW('zoom', 0.5), await edgeW('zoom', 2)];
   check(ws[0] === ws[1] && ws[2] > ws[3] * 3, `Edges stay the same width on screen, or scale with zoom when asked (${ws.map(v => v?.toFixed(2)).join(', ')})`);
   await p.evaluate(() => document.querySelector('#scrim')?.click());
