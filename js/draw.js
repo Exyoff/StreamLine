@@ -1152,9 +1152,13 @@ export function prompt() {
 
 
 // ---------- inquiry commands: DIST, ID, MEASUREGEOM (angle, area, radius), LIST ----------
-const log = t => emit('cmdlog', t);
+let lastLog = '';
+const log = t => { lastLog = t; emit('cmdlog', t); };
 const f4 = v => fmtLen(v, false);
-function endInquiry() { st.cmd = null; S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); }
+function endInquiry() {
+  // without the command line the result would go unseen: show it as a toast too
+  if (document.querySelector('#cmdbar')?.hidden !== false && lastLog) toast(lastLog.replace(/\s{2,}/g, '  '));
+  st.cmd = null; S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); }
 function inquiryPoint(c, p) {
   const t = c.tool, s = sk();
   // on a body, ID and DIST use the 3D point on it (not the drawing plane under it)

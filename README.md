@@ -44,9 +44,9 @@ Solids are exact boundary representations computed by **OpenCascade** (the kerne
 - The kernel (about 7 MB compressed) loads once and is then cached for offline use. Licences: OpenCascade LGPL-2.1 and replicad MIT, both in `vendor/occ/`.
 
 ## Fasteners: threads, holes, recesses
-- **Thread:** in Face mode, tap a shaft or a round hole, then tap **Thread**. It cuts a true helical ISO thread (60°), exact geometry that exports to STEP. The ISO coarse pitch is suggested from the diameter (M8 gets 1.25). Pitch, length, the end it starts from and left-hand are all editable. A hole gets an internal thread.
+- **Thread:** in Face mode, tap a shaft or a round hole, then tap **Thread**. It cuts a true helical ISO thread (60°), exact geometry that exports to STEP. The ISO coarse pitch is suggested from the diameter (M8 gets 1.25). Pitch, length, the end it starts from and left-hand are all editable. A hole gets an internal thread; a hole drilled at the ISO tap-drill size (Ø6.8 for M8) is threaded as that nominal size (the thread zone opens to the major diameter). Threads find their cylinder again by its axis when an earlier hole or shaft changes size.
 - **Hole:** tap a flat face, then **Hole**. Choose simple, counterbore or countersink; the depth is through all, or a set depth. The centre snaps to the grid and can be typed. **Pattern** turns one hole into a row, a grid or a bolt circle in a single step, which you can still edit from the timeline.
-- **Recess:** tap a screw head's flat top, then **Recess**. Choose a slot, a cross (Phillips-style), a hex socket or a square drive. Set the size, depth and rotation; sockets get a 118° drill-point cone at the bottom. Recesses can be patterned like holes.
+- **Recess:** tap a screw head's flat top, then **Recess**. Choose a slot, a cross (Phillips-style), a hex socket or a square drive. Set the size, depth and rotation; sockets get a 118° drill-point cone at the bottom. Recesses can be patterned like holes. A tap near the middle of a face (a screw head, a nut) centres the hole or recess exactly; both follow their face when an earlier step moves it.
 - **Polygon:** size it **across flats** (13 mm for an M8 nut and head) or to a corner, and set its rotation.
 - **Array:** the default spacing comes from the selection's width.
 
@@ -54,7 +54,7 @@ Solids are exact boundary representations computed by **OpenCascade** (the kerne
 - Every project saves on this device automatically (IndexedDB) and stays there offline. Open **Menu → Projects & assemblies** to open, rename, duplicate or delete projects, or to start a new one.
 - **Insert into this project** places another project's solids as a linked component (🔗). Move or rotate it, and measure, sketch on or snap to its faces like any body. Its shape is read-only here.
 - When the source project changes, the component shows **Sync ●**. Select it and tap **Sync** to bring in the latest version; its placement is kept and later steps rebuild. **Open source** jumps to the project it came from. A part is only marked out of date when its solids really changed.
-- **Mate:** in Face mode tap a face on the part to move, tap **Mate**, then tap a face on the part it goes against. Flat faces become coplanar; round faces become coaxial (a pin drops onto its hole's axis). It is recorded as an ordinary Move step.
+- **Mate:** in Face mode tap a face on the part to move, tap **Mate**, then tap a face on the part it goes against. Flat faces become coplanar; round faces (cylinders, cones, or threads via their nearest round edge) become coaxial (a pin drops onto its hole's axis). It is recorded as an ordinary Move step.
 - **Check interference** (Menu, or the **Interference** button with two or more bodies selected) reports the exact overlap volume of every pair of parts that collide, and selects them. **Isolate** shows only the selected bodies until **Show all**.
 - **Measuring parts:** Inquiry DIST and ID use the 3D point on a body (snapped to its exact corners, edge midpoints and circle centres); Radius works on round body edges such as hole rims.
 - STEP export writes an assembly: one named, coloured part per body.

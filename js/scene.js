@@ -52,10 +52,11 @@ export function cloneObj(o, shareMesh = false) {
 }
 
 // light: solids are left out (they are rebuilt from the history on load) — keeps autosave small
-export function serialize(light = false) {
+// noComp: leave the linked components' solids out (localStorage is small; they live in the device library)
+export function serialize(light = false, noComp = false) {
   return {
     format: 'streamline', version: 1, unit: 'mm',
-    doc: { nextId: S.doc.nextId, objects: S.doc.objects.map(o => objToJSON(o, light)), sketches: S.doc.sketches || [], history: S.doc.history || [], marker: S.doc.marker ?? null, layers: S.doc.layers || defaultLayers(), layer: S.doc.layer ?? 1, project: S.doc.project || null, components: S.doc.components || {} },
+    doc: { nextId: S.doc.nextId, objects: S.doc.objects.map(o => objToJSON(o, light)), sketches: S.doc.sketches || [], history: S.doc.history || [], marker: S.doc.marker ?? null, layers: S.doc.layers || defaultLayers(), layer: S.doc.layer ?? 1, project: S.doc.project || null, components: noComp ? Object.fromEntries(Object.entries(S.doc.components || {}).map(([k, c]) => [k, { name: c.name, version: c.version, inLibrary: true }])) : S.doc.components || {} },
     ed: { workspace: S.ed.workspace, sketch: S.ed.sketch, drawSel: [...S.ed.drawSel], profiles: S.ed.profiles, mode: S.ed.mode, selectMode: S.ed.selectMode, selected: [...S.ed.selected], active: S.ed.active, editSel: [...S.ed.editSel], selOrder: S.ed.selOrder.slice() },
   };
 }

@@ -356,6 +356,28 @@ try {
     return { ok, size: L.getLast()?.params.size };
   });
   check(shrink.ok && shrink.size < 1, `A default fillet too big for a 1 mm plate shrinks to fit (radius ${shrink.size})`);
+  // fasteners follow their faces: a hex socket moves up with the head; a tap-drill hole is threaded at its nominal size and survives a hole edit
+  const fol = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, K = L.K, ops = await import('./js/ops.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    L.runOp(F.sketchOpNew('h', XY(0), null, k => { F.addEntity(k, { t: 'circle', c: [3000, 0], r: 6 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [3000, 0] }], distance: 5, mode: 'new', target: null });
+    const hid = L.S.doc.objects.at(-1).id, hv = () => K.volume(L.S.doc.objects.find(x => x.id === hid).shape);
+    L.S.ed.faces = [{ obj: hid, n: [0, 0, 1], w: 5, p: [3000.5, 0.4, 5], planar: true }];
+    L.runOp(F.recessOp, { kind: 'hex', size: 4, depth: 2, tip: false });
+    const er = L.H.hist().filter(r => r.op === 'F.extrude').at(-1); L.BR.editStep(er.id); ops.updateOp({ distance: 8 }); ops.commit();
+    const removed = Math.PI * 36 * 8 - hv(), rec = L.H.hist().find(r => r.op === 'F.recessOp' && r.params.obj === hid).params;
+    L.runOp(F.sketchOpNew('n', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 3020, y: -7, w: 14, h: 14 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [3021, 0] }], distance: 6.5, mode: 'new', target: null });
+    const nid = L.S.doc.objects.at(-1).id, nv = () => K.volume(L.S.doc.objects.find(x => x.id === nid).shape);
+    L.S.ed.faces = [{ obj: nid, n: [0, 0, 1], w: 6.5, p: [3027.4, 0.3, 6.5], planar: true }];
+    L.runOp(F.holeOp, { dia: 6.8 }); const v0 = nv();
+    L.S.ed.faces = [{ obj: nid, n: [-1, 0, 0], w: -3030.4, p: [3030.4, 0, 3], planar: false }];
+    L.runOp(F.threadOp, {}); const label = L.H.hist().at(-1).label, v1 = nv();
+    const hr = L.H.hist().filter(r => r.op === 'F.holeOp').at(-1); L.BR.editStep(hr.id); ops.updateOp({ dia: 6.9 }); ops.commit();
+    return { removed, cz: rec.z, cx: rec.x, label, cut: v0 - v1, errs: L.H.hist().filter(r => r.err).map(r => r.err) };
+  });
+  check(Math.abs(fol.removed - Math.sqrt(3) / 2 * 16 * 2) < 1e-6 && fol.cz === 8 && fol.cx === 3000, `A hex socket snaps to the head's centre and follows its face when the head grows (centre z ${fol.cz})`);
+  check(/internal M8×1\.25/.test(fol.label) && fol.cut > 10 && !fol.errs.length, `A Ø6.8 tap-drill hole is threaded as M8 (opens to the major Ø, ${fol.cut.toFixed(1)} mm³ removed) and survives a hole edit${fol.errs.length ? ' · ' + fol.errs.join('; ') : ''}`);
   // Mate: a pin's round face onto a hole's round face (same axis), by touch
   {
     const ids = await st(() => {

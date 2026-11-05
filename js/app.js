@@ -44,7 +44,7 @@ async function boot() {
   Cmd.initCmdline({ setTool, setWorkspace, runOp, undo, redo, F, refresh: () => refresh(), zoomAll: () => view.frame(S.doc.objects.flatMap(worldVerts).concat(sketchPoints())), exportDXF: () => exportDXF() });
   initMeasureOverlay();
   buildStatic();
-  if (!loadAutosave()) defaultScene();
+  if (!(await loadAutosave())) defaultScene();
   S.ed.workspace = 'model'; // the studio: one 3D space for curves, regions and solids
   resetHistory();
   bindEvents();
@@ -61,7 +61,7 @@ async function boot() {
   PJ.initProjects({
     view, refresh: () => refresh(), renderSheet: () => { if (sheetOpen) renderSheet(); },
     newScene: () => newScene(), closeSheet: () => toggleSheet(false),
-    afterLoad: () => { S.ed.drawSel = new Set(); S.ed.edges = []; S.ed.faces = []; S.ed.profiles = []; Draw.resetTool(); S.ed.workspace = 'model'; S.ed.tool = 'select'; view.markSelDirty(); refresh(); view.cam.lock2D = false; view.frame(S.doc.objects.flatMap(worldVerts).concat(allSketchPoints())); if (sheetOpen) renderSheet(); scheduleSave(); },
+    afterLoad: () => { S.ed.drawSel = new Set(); S.ed.edges = []; S.ed.faces = []; S.ed.profiles = []; S.ed.isolate = null; S.ed.mateFrom = null; S.ed.editingSketch = null; Draw.clearTarget(); Draw.resetTool(); S.ed.workspace = 'model'; S.ed.tool = 'select'; view.markSelDirty(); refresh(); view.cam.lock2D = false; view.frame(S.doc.objects.flatMap(worldVerts).concat(allSketchPoints())); if (sheetOpen) renderSheet(); scheduleSave(); },
   });
   PJ.ensureProject();
   on('library', () => refreshSoon());
@@ -206,7 +206,17 @@ function growEdges(all) {
   const o = objById(S.ed.edges[0]?.obj); if (!o || !o.brep) return;
   const E = o.brep.edges.filter(e => !e.seam && e.i >= 0);
   let pick;
-  if (all) pick = E;
+  if (all === 'loop') {
+    // the closed boundary of the flat face along the picked edge (a hex head's six edges)
+    const e0 = edgeOfItem(o, S.ed.edges[0]); if (!e0) return;
+    const hc = o.shape.edges[e0.i].hashCode;
+    const faces = o.shape.faces.filter(f => f.edges.some(x => x.hashCode === hc));
+    const f = faces.find(x => x.geomType === 'PLANE') || faces[0]; if (!f) return;
+    let wire; try { wire = f.outerWire(); } catch (e) { wire = null; }
+    let hs = new Set((wire ? wire.edges : f.edges).map(x => x.hashCode));
+    if (!hs.has(hc)) hs = new Set(f.edges.map(x => x.hashCode)); // the edge is on an inner loop (a hole rim)
+    pick = E.filter(e => hs.has(o.shape.edges[e.i].hashCode));
+  } else if (all) pick = E;
   else {
     const tol = Math.max(o.brep.tol * 4, 1e-6), d = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
     const ends = e => { const p = e.pts, n = p.length; return [{ q: p[0], t: M.norm(M.sub(p[1], p[0])) }, { q: p[n - 1], t: M.norm(M.sub(p[n - 1], p[n - 2])) }]; };
@@ -221,7 +231,7 @@ function growEdges(all) {
   }
   const before = S.ed.edges.length;
   S.ed.edges = pick.map(e => solidEdgeItem(o, e));
-  toast(all ? `All ${S.ed.edges.length} edges of the body` : S.ed.edges.length > before ? `Chain: ${S.ed.edges.length} edges` : 'No smooth continuation — Chain follows edges that meet tangentially (e.g. around a fillet)');
+  toast(all === 'loop' ? `Loop: ${S.ed.edges.length} edges` : all ? `All ${S.ed.edges.length} edges of the body` : S.ed.edges.length > before ? `Chain: ${S.ed.edges.length} edges` : 'No smooth continuation — Chain follows edges that meet tangentially (e.g. around a fillet)');
   selectionChanged();
 }
 function edgeTap(x, y, probe = false) { // probe: only report how close the nearest body edge is (px)
@@ -343,15 +353,25 @@ function cadTap(x, y) {
   } else if (!S.ed.multi) { S.ed.profiles = []; S.ed.selected = new Set(); }
   selectionChanged();
 }
-function loadAutosave() {
+async function loadAutosave() {
   try {
     const s = localStorage.getItem(DOC_KEY); if (!s) return false; deserialize(s);
+    // linked components' solids are kept in the device library, not in localStorage
+    const miss = Object.entries(S.doc.components || {}).filter(([, c]) => !c.brep);
+    if (miss.length) {
+      let saved = {}; try { const rec = S.doc.project && await LIB.get(S.doc.project.id); saved = rec ? JSON.parse(rec.data).doc.components || {} : {}; } catch (e) {}
+      for (const [pid, c] of miss) {
+        let brep = saved[pid]?.version === c.version ? saved[pid].brep : null;
+        if (!brep) { try { const src = await LIB.get(pid); if (src && src.version === c.version) brep = src.exportBrep; } catch (e) {} }
+        if (brep) S.doc.components[pid] = { name: c.name, version: c.version, brep };
+      }
+    }
     if (S.doc.objects.some(o => o.regen)) { H.resetCache(); H.regenerate(0); for (const o of S.doc.objects) delete o.regen; }
     return true;
   } catch (e) { console.warn(e); return false; }
 }
 let saveT = 0;
-function saveLocalNow() { clearTimeout(saveT); try { localStorage.setItem(DOC_KEY, JSON.stringify(serialize(true))); } catch (e) { toast('Autosave failed (storage full?)'); } }
+function saveLocalNow() { clearTimeout(saveT); try { localStorage.setItem(DOC_KEY, JSON.stringify(serialize(true, true))); } catch (e) { toast('Autosave failed (storage full?)'); } }
 function scheduleSave() {
   clearTimeout(saveT);
   PJ.scheduleLibrarySave();
@@ -595,9 +615,23 @@ function faceGeom(f) {
   const xf = xfFor(o), pl = xf.toL(f.p), nl = M.norm(M.sub(xf.toL(M.add(f.p, f.n)), xf.toL(f.p)));
   const hit = K.faceAt(o.shape, pl, f.planar === false ? null : nl); if (!hit) return null;
   const toWd = d => M.norm(M.sub(xf.toW(M.add(pl, d)), xf.toW(pl)));
-  if (hit.f.geomType === 'PLANE') { const fn = hit.f.normalAt(); return { kind: 'plane', o, n: toWd(M.norm([fn.x, fn.y, fn.z])), p: f.p }; }
-  const cy = K.cylinderOf(hit.f);
-  if (cy) return { kind: 'axis', o, c: xf.toW(cy.c), d: toWd(cy.d), R: cy.R };
+  if (hit.f.geomType === 'PLANE') { // the exact plane (not the float32 tap point)
+    const fn = hit.f.normalAt(), c0 = hit.f.center, c = typeof c0 === 'function' ? c0() : c0;
+    return { kind: 'plane', o, n: toWd(M.norm([fn.x, fn.y, fn.z])), p: xf.toW([c.x, c.y, c.z]) };
+  }
+  const cy = K.cylinderOf(hit.f) || K.coneAxis(hit.f);
+  if (cy) return { kind: 'axis', o, c: xf.toW(cy.c), d: toWd(cy.d) };
+  // a thread or other free-form round face: use the nearest round edge of the body for the axis
+  let best = null;
+  for (const e of o.brep.edges) {
+    if (e.type !== 'CIRCLE' || !e.closed || e.seam) continue;
+    const d = K.polyDist(pl, e.pts); if (!best || d < best.d) best = { d, e };
+  }
+  if (best) {
+    const q = best.e.pts.slice(0, -1), c = [0, 1, 2].map(k => q.reduce((s, v) => s + v[k], 0) / q.length);
+    const n = M.norm(M.cross(M.sub(q[0], c), M.sub(q[Math.floor(q.length / 4)], c)));
+    return { kind: 'axis', o, c: xf.toW(c), d: toWd(n) };
+  }
   return null;
 }
 function startMate() {
@@ -610,18 +644,20 @@ function mateTap(x, y) {
   const from = S.ed.mateFrom; S.ed.mateFrom = null;
   const prev = S.ed.faces; S.ed.faces = []; faceTap(x, y);
   const to = S.ed.faces[0];
-  if (!to || to.obj === from.obj) { S.ed.faces = prev; toast(to ? 'Pick a face on another body' : 'Mate cancelled'); return refresh(); }
+  if (!to) { S.ed.faces = prev; toast('Mate cancelled'); return refresh(); }
+  if (to.obj === from.obj) { S.ed.faces = prev; S.ed.mateFrom = from; toast('Pick a face on the other body'); return refresh(); }
   const A = faceGeom(from), B = faceGeom(to);
-  if (!A || !B) return toast('Mate works with flat and round (cylindrical) faces');
+  const retry = m => { S.ed.mateFrom = from; S.ed.faces = prev; toast(m + ' — tap another face, or Cancel mate'); refresh(); };
+  if (!A || !B) return retry('Mate works with flat and round faces');
   let v;
   if (A.kind === 'plane' && B.kind === 'plane') {
     const k = M.dot(A.n, B.n);
-    if (Math.abs(k) < 0.9999) return toast('Those faces are not parallel — rotate the part first');
+    if (Math.abs(k) < 0.9999) return retry('Those faces are not parallel (rotate the part first)');
     v = M.mul(B.n, M.dot(B.n, M.sub(B.p, A.p))); // slide along the normal onto the other face's plane
   } else if (A.kind === 'axis' && B.kind === 'axis') {
-    if (Math.abs(M.dot(A.d, B.d)) < 0.9999) return toast('Those axes are not parallel — rotate the part first');
+    if (Math.abs(M.dot(A.d, B.d)) < 0.9999) return retry('Those axes are not parallel (rotate the part first)');
     const dc = M.sub(B.c, A.c); v = M.sub(dc, M.mul(B.d, M.dot(dc, B.d))); // onto the same axis, keeping its height
-  } else return toast('Mate a flat face to a flat face, or a round face to a round face');
+  } else return retry('Mate a flat face to a flat face, or a round face to a round face');
   S.ed.faces = []; S.ed.pick = 'solid'; S.ed.selected = new Set([A.o.id]); S.ed.active = A.o.id;
   if (M.len(v) < 1e-9) { toast('Already in place'); return selectionChanged(); }
   runOp(OPS.transform, { mode: 'move', x: v[0], y: v[1], z: v[2] });
@@ -649,8 +685,8 @@ function checkInterference(objs) {
   if (!hits.length) { toast(`No interference between ${list.length} solids`); return; }
   S.ed.selected = new Set(hits.flatMap(x => [x.a.id, x.b.id])); S.ed.active = hits[0].a.id; S.ed.pick = 'solid';
   popover($('#btn-menu'), h('div', {}, h('div', { class: 'mtitle' }, `Interference · ${hits.length} pair${hits.length > 1 ? 's' : ''}`),
-    ...hits.map(x => h('div', { class: 'mnote', style: 'padding:6px 12px' }, `${x.a.name} ↔ ${x.b.name}: ${fmtVol(x.v)} overlap`)),
-    h('div', { class: 'mnote', style: 'padding:6px 12px;opacity:.75' }, 'The overlapping bodies are selected. Isolate them, or Subtract one from the other to make room.')));
+    ...hits.map(x => { const small = x.v < 0.01 * Math.min(K.volume(x.a.shape), K.volume(x.b.shape)); return h('div', { class: 'mnote', style: 'padding:6px 12px' }, `${x.a.name} ↔ ${x.b.name}: ${fmtVol(x.v)} overlap${small ? ' (slight — mating threads or a press fit overlap a little by design)' : ''}`); }),
+    h('div', { class: 'mnote', style: 'padding:6px 12px;opacity:.75' }, 'The overlapping bodies are selected. Move one (or Mate it), or change its size in its own project.')));
   selectionChanged();
 }
 function measureTap(x, y) {
@@ -907,9 +943,11 @@ function renderActions() {
     const flat = S.ed.faces.every(f => f.planar !== false); // push/pull and draft work on flat faces
     if (S.ed.mateFrom) { row.replaceChildren(act(I.close, 'Cancel mate', () => { S.ed.mateFrom = null; refresh(); }, 'primary')); return; }
     if (faces === 1 && S.doc.objects.filter(o => o.shape && isShown(o)).length > 1) c.push(act(I.join, 'Mate', () => startMate()));
-    if (faces) c.push(...(flat ? [] : [act(I.thread, 'Thread', () => runOp(F.threadOp), 'primary')]), ...(flat ? [act(I.extrude, 'Push/Pull', () => modifier('pushpull'), prof ? '' : 'primary'), act(I.hole, 'Hole', () => runOp(F.holeOp)), act(I.recess, 'Recess', () => runOp(F.recessOp))] : []), act(I.inset, 'Shell', () => modifier('shell'), flat || prof ? '' : 'primary'), ...(flat ? [act(I.cone, 'Draft', () => runOp(F.draftOp))] : []), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)));
+    const faceLinked = faces && S.ed.faces.some(f => objById(f.obj)?.link);
+    if (faces && faceLinked) { if (!c.length) c.push(act(I.measure, 'Inquiry', e => openInquiryMenu(e.currentTarget))); }
+    else if (faces) c.push(...(flat ? [] : [act(I.thread, 'Thread', () => runOp(F.threadOp), 'primary')]), ...(flat ? [act(I.extrude, 'Push/Pull', () => modifier('pushpull'), prof ? '' : 'primary'), act(I.hole, 'Hole', () => runOp(F.holeOp)), act(I.recess, 'Recess', () => runOp(F.recessOp))] : []), act(I.inset, 'Shell', () => modifier('shell'), flat || prof ? '' : 'primary'), ...(flat ? [act(I.cone, 'Draft', () => runOp(F.draftOp))] : []), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)));
     if (edges) c.push(act(I.fillet, 'Fillet', () => modifier('fillet'), 'primary'), act(I.chamfer, 'Chamfer', () => modifier('chamfer')),
-      ...(S.ed.edges.some(q => q.pts) ? [act(I.next, 'Chain', () => growEdges(false)), act(I.all, 'All edges', () => growEdges(true))] : []));
+      ...(S.ed.edges.some(q => q.pts) ? [act(I.next, 'Chain', () => growEdges(false)), act(I.select, 'Loop', () => growEdges('loop')), act(I.all, 'All edges', () => growEdges(true))] : []));
     if (curves) c.push(act(I.move, 'Move', () => acadTool('move')), act(I.dup, 'Copy', () => acadTool('copy')), act(I.rotate, 'Rotate', () => acadTool('rotate')), act(I.flip, 'Mirror', () => acadTool('mirror')), act(I.scale, 'Scale', () => acadTool('scale')), act(I.inset, 'Offset', () => acadTool('offset')), act(I.array, 'Array', () => acadTool('arrayrect')), act(I.constrain, 'Constrain', e => openConstrainMenu(e.currentTarget)), act(I.line, 'Construction', () => Draw.toggleConstruction()), act(I.trash, 'Delete', () => Draw.deleteSelected(), 'danger'));
     if (S.ed.isolate) c.push(act(I.eye, 'Show all', () => isolate(false), 'primary'));
     if (solids >= 2) c.push(act(I.intersect, 'Interference', () => checkInterference(selectedObjs())));
@@ -919,7 +957,7 @@ function renderActions() {
     if (linked) c.push(act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; refresh(); } }), act(I.array, 'Array', () => runOp(OPS.arrayOp)), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'));
     else if (solids) c.push(act(I.union, 'Boolean', e => openBoolMenu(e.currentTarget), c.length ? '' : 'primary'), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.inset, 'Shell', () => runOp(F.shellOp)), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)), act(I.revolve, 'Pattern', () => runOp(F.polarPattern)), act(I.plane, 'Thicken', () => runOp(F.thickenOp)),
       act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; toast('Duplicated — drag the gizmo or type an offset'); refresh(); } }), act(I.array, 'Array', () => runOp(OPS.arrayOp)), act(I.join, 'Join', () => runOp(OPS.joinObjs)), act(I.apply, 'Apply', () => runOp(OPS.applyXf)), act(I.origin, 'Origin', () => runOp(OPS.setOrigin)), act(I.subdiv, 'Edit mesh', () => setPick('mesh')), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'));
-    if (!c.length) c.push(act(I.plus, 'Add solid', e => openAddMenu(e.currentTarget), 'primary'), act(I.line, 'Line', () => setTool('line')), act(I.rect, 'Rectangle', () => setTool('rect')), act(I.circle, 'Circle', () => setTool('circle')), act(I.plane, `Plane ${planeLabel()}`, e => openPlaneMenu(e.currentTarget)), act(I.measure, 'Inquiry', e => openInquiryMenu(e.currentTarget)));
+    if (!c.length || (c.length === 1 && S.ed.isolate)) c.push(act(I.plus, 'Add solid', e => openAddMenu(e.currentTarget), 'primary'), act(I.line, 'Line', () => setTool('line')), act(I.rect, 'Rectangle', () => setTool('rect')), act(I.circle, 'Circle', () => setTool('circle')), act(I.plane, `Plane ${planeLabel()}`, e => openPlaneMenu(e.currentTarget)), act(I.measure, 'Inquiry', e => openInquiryMenu(e.currentTarget)));
     row.replaceChildren(...c);
   } else {
     row.replaceChildren(modeSeg,
@@ -1041,7 +1079,7 @@ function commands() {
     C('Move', 'G', tool('move'), 'grab translate'), C('Rotate', 'R', tool('rotate')), C('Scale', 'S', tool('scale')), C('Duplicate', '⇧D', () => runOp(OPS.duplicate), 'copy'), C('Delete', 'X', () => deleteSelection(), 'erase remove'),
     ...OPS.PRIM_TYPES.map(([t, l]) => C(`Add ${l}`, '', () => addSketchedPrim(t), 'primitive solid box')),
     C('Select: Edge mode', '2', () => setPick('edge'), 'curve'), C('Select: Face mode', '3', () => setPick('face'), 'region'), C('Select: Solid mode', '4', () => setPick('solid'), 'body'), C('Edit mesh (polygons)', 'Tab', () => setPick('mesh')),
-    C('Measure distance', '', () => acadTool('dist'), 'dist inquiry'), C('Check interference', '', () => checkInterference(), 'clash overlap collision assembly fit'), C('Isolate selection', '', () => isolate(true), 'hide others focus'), C('Show all', '', () => isolate(false), 'unhide isolate'), C('Measure angle', '', () => acadTool('angle')), C('Measure area', '', () => acadTool('area')), C('Measure (3D)', '', tool('measure')),
+    C('Measure distance', '', () => acadTool('dist'), 'dist inquiry'), C('Check interference', '', () => checkInterference(), 'clash overlap collision assembly fit'), C('Isolate selection', '', () => isolate(true), 'hide others focus'), C('Show all', '', () => isolate(false), 'unhide isolate'), C('Measure angle', '', () => acadTool('angle')), C('Measure radius', '', () => acadTool('radius'), 'diameter circle hole'), C('Point coordinates (ID)', '', () => acadTool('id'), 'id point xyz'), C('Measure area', '', () => acadTool('area')), C('Measure (3D)', '', tool('measure')),
     C('Construction plane: Top (XY)', '', () => { S.ed.cplane = null; toast('Drawing plane: XY'); }, 'cplane'), C('Construction plane: Front (XZ)', '', () => { S.ed.cplane = SK.PLANES.XZ; toast('Drawing plane: XZ'); }, 'cplane'), C('Construction plane: Right (YZ)', '', () => { S.ed.cplane = SK.PLANES.YZ; toast('Drawing plane: YZ'); }, 'cplane'),
     C('Toggle construction curves', '', () => Draw.toggleConstruction()), C('Toggle snapping', '', () => $('#btn-snap').click(), 'snap'), C('Toggle X-ray', '', () => $('#btn-xray').click()), C('Toggle perspective / ortho', '5', () => view.toggleOrtho()),
     C('View: Top', '7', () => view.setView('top')), C('View: Front', '1', () => view.setView('front')), C('View: Right', '3', () => view.setView('right')), C('View: Isometric', '0', () => view.setView('iso')), C('Frame all', 'Home', () => view.frame(S.doc.objects.flatMap(worldVerts).concat(allSketchPoints()))),
@@ -1361,7 +1399,8 @@ function openInstall() {
 function newScene() {
   S.doc.objects = []; S.doc.nextId = 1;
   S.ed.mode = 'object'; S.ed.selected = new Set(); S.ed.active = null; S.ed.editSel = new Set(); S.ed.measure = []; S.ed.profiles = []; S.ed.drawSel = new Set();
-  defaultScene(); resetHistory(); Draw.resetTool(); scheduleSave(); refresh();
+  S.ed.isolate = null; S.ed.mateFrom = null; S.ed.editingSketch = null;
+  defaultScene(); resetHistory(); Draw.clearTarget(); Draw.resetTool(); scheduleSave(); refresh();
   const sk0 = SK.activeSketch(); if (sk0) enterSketchView(sk0); else view.frameAll?.();
 }
 function exportTargets() {

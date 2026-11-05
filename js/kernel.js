@@ -271,6 +271,14 @@ export function cylinderOf(face) {
   for (let i = 0; i < m.vertices.length; i += 3) { const t = (m.vertices[i] - c[0]) * d[0] + (m.vertices[i + 1] - c[1]) * d[1] + (m.vertices[i + 2] - c[2]) * d[2]; t0 = Math.min(t0, t); t1 = Math.max(t1, t); }
   return { c, d, R: R0, t0, t1 };
 }
+// axis of a cone face (chamfered hole or boss): { c, d } in local coordinates, or null
+export function coneAxis(face) {
+  if (face.geomType !== 'CONE') return null;
+  const ad = new oc.BRepAdaptor_Surface(face.wrapped, true);
+  const ax = ad.Cone().Axis(), L = ax.Location(), D = ax.Direction();
+  const r = { c: [L.X(), L.Y(), L.Z()], d: [D.X(), D.Y(), D.Z()] };
+  ad.delete(); return r;
+}
 // a solid of revolution from a closed (radial, axial) profile around the axis through c along d
 export function revolveProfile(c, d, u, prof) {
   const P = prof.map(([r, t]) => [c[0] + u[0] * r + d[0] * t, c[1] + u[1] * r + d[1] * t, c[2] + u[2] * r + d[2] * t]);

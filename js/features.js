@@ -640,9 +640,22 @@ export const draftOp = {
 const ISO_PITCH = [[1.6, 0.35], [2, 0.4], [2.5, 0.45], [3, 0.5], [4, 0.7], [5, 0.8], [6, 1], [8, 1.25], [10, 1.5], [12, 1.75], [14, 2], [16, 2], [18, 2.5], [20, 2.5], [24, 3], [30, 3.5], [36, 4], [42, 4.5], [48, 5]];
 const isoPitch = d => ISO_PITCH.reduce((b, x) => (Math.abs(x[0] - d) < Math.abs(b[0] - d) ? x : b))[1];
 const fmtD = v => +v.toFixed(2);
+// a hole drilled at the ISO tap-drill size (D − P, e.g. Ø6.8 for M8) is threaded as that nominal size
+const tapNominal = hole => { const m = ISO_PITCH.find(([d, P]) => Math.abs(d - P - hole) < 0.051); return m ? m[0] : null; };
+// the cylinder a thread was cut on, found again after earlier steps changed it: the same axis line, nearest radius
+function coaxialCylinder(shape, ax) {
+  let best = null;
+  for (const f of shape.faces) {
+    const cy = K.cylinderOf(f); if (!cy || Math.abs(M.dot(cy.d, ax.d)) < 0.9999) continue;
+    const dc = M.sub(cy.c, ax.c), off = M.len(M.sub(dc, M.mul(ax.d, M.dot(dc, ax.d))));
+    if (off > 1e-5) continue;
+    const sc = Math.abs(cy.R - ax.R); if (!best || sc < best.sc) best = { sc, cy };
+  }
+  return best?.cy || null;
+}
 // Thread: a true helical thread on a cylindrical face — external (shaft) or internal (hole), detected from the face
 export const threadOp = {
-  label: p => `Thread ${p._internal ? 'internal ' : ''}M${fmtD(p._d || 0)}×${fmtD(p.pitch || 0)}`,
+  label: p => `Thread ${p._internal ? 'internal ' : ''}M${fmtD(p.size || p._d || 0)}×${fmtD(p.pitch || 0)}`,
   prepare(p) {
     p.faces ??= JSON.parse(JSON.stringify((S.ed.faces || []).slice(0, 1)));
     if (!p.faces.length) return 'Select a cylindrical face (Face mode), e.g. a shaft or a hole';
@@ -652,18 +665,26 @@ export const threadOp = {
     if (!cy) return 'Pick a cylindrical face (a shaft or a round hole)';
     const xf = xfFor(o), pl = xf.toL(p.faces[0].p), radial = M.sub(pl, M.add(cy.c, M.mul(cy.d, M.dot(M.sub(pl, cy.c), cy.d))));
     p._internal = M.dot(M.norm(radial), locDir(xf, p.faces[0].p, p.faces[0].n)) < 0;
-    p._d = 2 * cy.R; p.pitch ??= isoPitch(p._d); p.length ??= +(cy.t1 - cy.t0).toFixed(6); p.fromEnd ??= true; p.left ??= false;
+    p._d = 2 * cy.R; p._axis = { c: cy.c, d: cy.d, R: cy.R };
+    // nominal size: a shaft is threaded at its diameter; a hole at its tap-drill size becomes that thread (Ø6.8 → M8)
+    p.size ??= p._internal ? (tapNominal(p._d) ?? p._d) : p._d;
+    p.pitch ??= isoPitch(p.size); p.length ??= +(cy.t1 - cy.t0).toFixed(6); p.fromEnd ??= true; p.left ??= false;
   },
   touch: p => ({ ids: [p.obj], mesh: true }),
-  fields: () => [lenF('pitch', 'Pitch'), lenF('length', 'Length'), { key: 'fromEnd', label: 'Start from', kind: 'choice', options: [[true, 'Far end'], [false, 'Near end']], wide: true }, { key: 'left', label: 'Left-hand', kind: 'bool' }],
+  fields: p => [...(p._internal ? [lenF('size', 'Thread size (M)')] : []), lenF('pitch', 'Pitch'), lenF('length', 'Length'), { key: 'fromEnd', label: 'Starts at', kind: 'choice', options: [[true, 'Far end (from the tip)'], [false, 'Near end']], wide: true }, { key: 'left', label: 'Left-hand', kind: 'bool' }],
   apply(p) {
     if (!(p.pitch > 0.05)) return 'Pitch must be at least 0.05 mm';
     const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
-    const f = findFaces(o, p.faces)?.[0], cy = f && K.cylinderOf(f);
+    let cy = (() => { const f = findFaces(o, p.faces)?.[0]; return f && K.cylinderOf(f); })();
+    if (!cy && p._axis) cy = coaxialCylinder(o.shape, p._axis); // the hole or shaft changed size: same axis
     if (!cy) return 'The cylindrical face it used no longer exists';
+    p._axis = { c: cy.c, d: cy.d, R: cy.R };
     const span = cy.t1 - cy.t0, L = Math.min(Math.max(p.length, p.pitch * 2), span);
     if (L < p.pitch * 2) return 'The face is too short for this pitch';
-    const P = p.pitch, R0 = cy.R, internal = p._internal;
+    const internal = p._internal, P = p.pitch;
+    // internal: the hole opens up to the thread's major diameter in the thread zone, then the ridge goes in
+    const R0 = internal ? Math.max(cy.R, (p.size || 2 * cy.R) / 2) : cy.R;
+    if (internal && (p.size || 0) / 2 - cy.R > P) return `M${fmtD(p.size)} is too big for this Ø${fmtD(2 * cy.R)} hole`;
     if (!internal && P * 0.62 >= R0 * 0.8) return 'Pitch too coarse for this diameter';
     // thread zone along the axis
     const ta = p.fromEnd ? cy.t1 - L : cy.t0, tb = ta + L;
@@ -681,8 +702,10 @@ export const threadOp = {
       }
       const H = 0.5413 * P, rmin = R0 - H, flat = P / 8;
       const w = flat + (H + 0.25) * tan30;
+      let s = o.shape;
+      if (R0 > cy.R + 1e-9) { const u = M.norm(Math.abs(cy.d[2]) < 0.9 ? M.cross(cy.d, [0, 0, 1]) : M.cross(cy.d, [1, 0, 0])); s = s.cut(K.revolveProfile(cy.c, cy.d, u, [[0, ta], [R0, ta], [R0, tb], [0, tb]])); }
       const ridge = K.threadRidge(M.add(cy.c, M.mul(cy.d, ta + w + 0.01)), cy.d, R0, P, L - 2 * w - 0.02, [[R0 + 0.25, -w], [rmin, -flat], [rmin, flat], [R0 + 0.25, w]], !!p.left);
-      return o.shape.fuse(ridge);
+      return s.fuse(ridge);
     }, 'Could not cut this thread');
     if (typeof res === 'string') return res;
     if (K.isEmpty(res)) return 'Result is empty';
@@ -700,8 +723,24 @@ function faceFrame(o, f0) {
   const a = M.norm(M.sub(ref, M.mul(n, M.dot(n, ref)))), b = M.cross(a, n);
   return { xf, n, a, b };
 }
+// the face moved (an earlier step changed the part): the centre moves with it
+function followCentre(p, before) {
+  const d = M.sub(p.faces[0].p, before);
+  if (M.len(d) > 1e-9) [p.x, p.y, p.z] = M.add([p.x, p.y, p.z], d).map(v => +v.toFixed(9));
+}
 function snapCentre(p) {
   const f = p.faces[0], st = S.settings.snap ? S.settings.snapStep : 0;
+  // a tap near the middle of the face (a screw head, a nut, a boss) takes the face's exact centre
+  if (p.x == null) {
+    try {
+      const o = objById(p.obj), xf = xfFor(o), hit = K.faceAt(o.shape, xf.toL(f.p));
+      if (hit) {
+        const c0 = hit.f.center, c = typeof c0 === 'function' ? c0() : c0, cw = xf.toW([c.x, c.y, c.z]);
+        const b = hit.f.boundingBox.bounds, size = Math.hypot(b[1][0] - b[0][0], b[1][1] - b[0][1], b[1][2] - b[0][2]);
+        if (M.dist(cw, f.p) < size * 0.3) { [p.x, p.y, p.z] = cw.map(v => +v.toFixed(9)); return; }
+      }
+    } catch (e) { /* fall back to the snapped tap */ }
+  }
   if (p.x == null) { const q = st ? f.p.map(v => Math.round(v / st) * st) : f.p.slice(); const c = M.add(q, M.mul(f.n, f.w - M.dot(f.n, q))); [p.x, p.y, p.z] = c.map(v => +v.toFixed(6)); }
 }
 function flatFacePrep(p, what) {
@@ -769,7 +808,9 @@ export const holeOp = {
   apply(p) {
     if (!(p.dia > 0)) return 'Diameter must be > 0';
     const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
+    const before = p.faces[0].p.slice();
     const f = findFaces(o, p.faces)?.[0]; if (!f) return 'The face it was drilled into no longer exists';
+    followCentre(p, before);
     const pe = patternCheck(p); if (pe) return pe;
     const fr = faceFrame(o, p.faces[0]), n = fr.n, c = fr.xf.toL([p.x, p.y, p.z]);
     const bb = o.shape.boundingBox.bounds, through = Math.hypot(...[0, 1, 2].map(k => bb[1][k] - bb[0][k])) * 2 + 10;
@@ -802,7 +843,9 @@ export const recessOp = {
     if (!(p.size > 0) || !(p.depth > 0)) return 'Size and depth must be > 0';
     if ((p.kind === 'slot' || p.kind === 'cross') && !(p.width > 0 && p.width < p.size)) return 'Slot width must be > 0 and smaller than the length';
     const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
+    const before = p.faces[0].p.slice();
     const f = findFaces(o, p.faces)?.[0]; if (!f) return 'The face for the recess no longer exists';
+    followCentre(p, before);
     const pe = patternCheck(p); if (pe) return pe;
     const fr = faceFrame(o, p.faces[0]), n = fr.n, c0 = fr.xf.toL([p.x, p.y, p.z]);
     // the outline in face coordinates (x along a, y along b)
