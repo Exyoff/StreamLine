@@ -2,17 +2,19 @@
 
 A Plasticity-style 3D modeller in the browser, built for iPhone and iPad first, with CAD precision.
 
-**One 3D studio, no modes to manage:**
-- **Draw anywhere.** Pick Line, Rect, Circle, Arc, Spline or Polygon from the tool rail on the left, then draw on the grid, or press on any face of a body to draw on that face. Curves on the same plane share a sketch automatically, so their closed shapes become **regions**.
-- **Select like Plasticity.** The top bar switches between **Edge** (curves and edges, key `2`), **Face** (regions and faces, `3`) and **Solid** (bodies, `4`).
+**Sketches and parts, the Fusion 360 way:**
+- **Create Sketch** (Solid → Sketch, or `K`) asks for a plane: tap one of the origin planes (XY, XZ, YZ — their names are tappable too), a construction plane, or a flat face of a body. The sketch opens in **sketch mode**.
+- **Sketch mode** has its own tool sets — Create (Line, Rect, Circle, Arc, Spline, Polygon, Text, Ellipse, Dimension), Modify, Constrain and Inspect — and a sketch bar along the top with **Finish Sketch**.
+- **Finish Sketch** goes back to the part. Line, Arc and the other drawing tools only exist inside a sketch; outside one a sketch's curves can be picked but not changed (**Edit sketch** reopens it).
+- **Back in the part**, tap a closed profile and drag its arrow, or tap **Extrude** / **Revolve** / **Sweep**. Extrude picked inside an open sketch finishes the sketch first, as in Fusion.
 - **The command bar follows the selection.**
-  - Regions: Extrude, Revolve, Loft, Sweep.
+  - Profiles: Extrude, Revolve, Loft, Sweep.
   - Faces: Push/Pull, Shell, Draft, Mirror, Slice.
   - Edges: Fillet, Chamfer.
   - Curves: Move, Offset, Constrain, and so on.
   - Solids: Boolean, Mirror, Shell, Pattern, Thicken.
 - **Command palette.** Press `Space` or tap 🔍 to search every command, for example "fil" for Fillet.
-- **Keys:** `G`/`R`/`S` move, rotate and scale (on faces and edges too), `E` extrude, `F` fillet, `⇧C` chamfer, `O` push/pull, `H` shell, `M` mirror, `L` line, `C` circle, `⇧R` rectangle, `X` delete.
+- **Keys:** `K` create sketch, `G`/`R`/`S` move, rotate and scale (on faces and edges too), `E` extrude, `F` fillet, `⇧C` chamfer, `O` push/pull, `H` shell, `M` mirror, `L` line, `C` circle, `⇧R` rectangle (outside a sketch these ask for its plane first), `X` delete.
 - Every operation opens a compact dialog with exact values and a live drag handle. The AutoCAD command line (typed coordinates, DIST, etc.) is optional; switch it on from the palette.
 
 **No build step, no dependencies to install.** Serve the folder with any static server:
@@ -73,12 +75,13 @@ A mix of Fusion 360 and Plasticity. The 3D view fills the whole screen and every
   - Tap a step to edit it, roll back to it, suppress it or delete it.
   - The History list button opens the same steps as cards in a panel. That panel also has tabs for **Info** (properties of the selection) and **Settings**.
   - The History button shows an orange dot while you are rolled back and a red dot if a step failed.
-- **Bottom bar:** the **Browser** button, then the **tool sets**, then command search.
-  - The tool sets are **Sketch**, **Solid**, **Modify**, **Constrain**, **Assemble**, **Construct** and **Inspect**. Tapping one fills the **left rail** with its tools.
-  - Examples: Constrain lists Horizontal, Vertical, Parallel, Perpendicular, Equal, Tangent, Concentric and Fix. Solid lists Extrude, Revolve, Loft, Sweep, the primitives, Hole and Thread.
+- **Bottom bar:** the **Browser** button, then the **tool sets**, then command search. Tapping a tool set fills the **left rail** with its tools.
+  - In the part: **Solid** (Sketch, Extrude, Revolve, Loft, Sweep, the primitives, Hole, Thread, Pattern, Mirror, Thicken), **Modify**, **Assemble**, **Construct** and **Inspect**.
+  - In a sketch: **Create**, **Modify** (Fillet, Trim, Extend, Offset, Mirror, Move, Copy, Rotate, Scale, Pattern, Construction, Delete), **Constrain** (Horizontal, Vertical, Parallel, Perpendicular, Equal, Tangent, Concentric, Fix, Dimension) and **Inspect**.
+- **Sketch bar:** while a sketch is open it takes the timeline's place: the sketch's name and plane, and **Finish Sketch** at its right end.
 - **Above the bottom bar:** the commands for what is selected (Plasticity-style). Fillet and Chamfer appear for edges; Push/Pull, Shell, Hole and Mate for faces. The row is hidden when nothing is selected.
 - **Browser:** opens from the bottom bar as a tree, like Fusion's browser. It stays open while you work, and its folders are:
-  - **Origin:** the XY, XZ and YZ planes. Tap one to draw on it; the eye shows them in the view.
+  - **Origin:** the XY, XZ and YZ planes. Tap one to start a sketch on it; the eye shows them in the view.
   - **Bodies:** each with an eye, its colour and a ⋯ menu for rename, colour, isolate, layer and delete.
   - **Components:** inserted parts, with Sync and Open.
   - **Sketches:** tap one to edit it.
@@ -108,6 +111,14 @@ A mix of Fusion 360 and Plasticity. The 3D view fills the whole screen and every
 - **Number typing** (Plasticity):
   - An operation's handle shows its value in a bubble beside the arrow; tap it to type an exact value.
   - With a keyboard, just type: digits go to the handle's value, or after a gizmo move or turn, to the distance or angle just dragged.
+
+### Sketch mode (Fusion-style)
+- **Create Sketch** shows the three origin planes, named, around the origin; tap a plane, its name, a flat face of a body, or one of the plane buttons above the bottom bar (XY · Top, XZ · Front, YZ · Right, and the construction plane if you made one). **Cancel** or `Esc` stops.
+- The view turns to look straight at the new sketch, and the Create tools fill the rail. The HUD counts curves and profiles and says how many degrees of freedom are left.
+- Dimensions, constraint glyphs and the little square points on curve ends show only while the sketch is open.
+- **Finish Sketch** returns to the part and the view you had. Undoing the sketch's creation, or deleting it, finishes it too.
+- Reopen a sketch from the timeline, the Browser's Sketches folder, or **Edit sketch** on one of its picked curves.
+- On the AutoCAD command line a drawing command (`L`, `C`, `REC` …) typed outside a sketch opens one on the current construction plane, so typed coordinates keep working.
 
 ### Sketches on faces (Fusion-style)
 - **Curve colours:**
@@ -176,10 +187,10 @@ The pill in the top-right corner of the view shows the active layer (and how man
 Visibility, names, colours and layers are not history steps, so they survive rebuilds and never break them.
 
 ## Sketching on faces
-Use **On face** (Draw or CAD) or **Sketch on face** (Model), then tap a flat face. The new sketch:
+Use **Create Sketch**, then tap a flat face. The new sketch:
 - **projects the face's boundary**, outer edge and holes included, as purple reference geometry, the way Fusion does. Round holes come in as exact circles, and straight runs as single lines.
 - lets you snap to that geometry, dimension against it, and use it in profiles.
-- frames the camera straight onto the face and starts the Line tool.
+- frames the camera straight onto the face, with the Create tools ready.
 
 An extrude from a face sketch targets that body automatically (Join, or Cut into the face).
 

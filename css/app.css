@@ -648,7 +648,8 @@ body.has-handle #toast.show { transform: translate(-50%, 0) scale(1); }
 }
 @media (orientation: landscape) and (max-height: 500px) {
   #browser { bottom: calc(var(--sab) + 64px); height: calc(100% - var(--topH) - 70px); }
-  #timeline { top: calc(var(--sat) + 52px); height: 38px; }
+  #timeline, #skbar { top: calc(var(--sat) + 52px); height: 38px; }
+  #btn-finish { height: 32px; }
   #toolsets { height: 48px; }
   .tset { height: 40px; min-width: 56px; }
   .tset span:last-child { font-size: 9.5px; }
@@ -690,3 +691,17 @@ body.ws-model.has-lastop #zoombar, body.has-drawcard #zoombar, body.has-lastop #
 #loupe[hidden], #pcursor[hidden] { display: none !important; }
 .vlabel.readout.val { padding: 7px 11px; box-shadow: 0 4px 14px rgba(var(--accent-rgb),.35); }
 .vlabel.readout.val::after { content: ' ✎'; opacity: .8; }
+/* Finish Sketch (Fusion's sketch-mode button), in the bottom bar while a sketch is edited */
+/* sketch mode: the sketch bar takes the timeline's place, with Finish Sketch at its right end (as in Fusion) */
+#skbar { position: absolute; z-index: 5; left: calc(var(--sal) + 12px); right: calc(var(--sar) + 12px); top: calc(var(--sat) + 60px); height: 42px; display: flex;
+  align-items: center; gap: 8px; padding: 0 3px 0 14px; border-radius: 999px; }
+#skbar[hidden], body.sketching #timeline { display: none; }
+#skbar .sk-ic { display: grid; place-items: center; width: 18px; height: 18px; flex: none; color: var(--accent); }
+#skbar .sk-ic svg { width: 18px; height: 18px; }
+#skbar .sk-nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 650 13.5px var(--font); color: var(--text); }
+#skbar .sk-nm small { font-size: 12px; font-weight: 500; color: var(--muted); }
+#btn-finish { flex: none; display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 15px 0 11px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font: 700 13.5px var(--font); }
+#btn-finish svg { width: 17px; height: 17px; }
+#btn-finish:active { transform: scale(.96); }
+body.sketching #toolsets .tset.on { background: var(--accent-soft); }
+.vlabel.plane { background: rgba(20,24,34,.75); font: 700 11px var(--font); letter-spacing: .04em; }

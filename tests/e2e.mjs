@@ -49,26 +49,32 @@ const closeCard = async () => { if (await p.locator('#lastop .ib[aria-label=Done
 const frame = (lo, hi) => p.evaluate(([lo, hi]) => { StreamLine.view.frame([lo, hi]); }, [lo, hi]).then(() => p.waitForTimeout(450));
 
 try {
-  // --- one studio: tool sets along the bottom, their tools down the left rail, no pick-mode switch
-  check(await st(() => StreamLine.S.ed.workspace) === 'model' && await p.locator('#ws-seg').count() === 0 && await p.locator('#toolsets .tset').count() === 7, 'opens in the single 3D studio: tool sets along the bottom, no Edge / Face / Solid switch');
-  check((await ctxBar()).length === 0 && await p.locator('#tools .tool[data-tool=line]').isVisible(), 'empty selection: no command row; the Sketch tool set fills the left rail');
+  // --- part mode: tool sets along the bottom, their tools down the left rail, no pick-mode switch; no drawing tools
+  check(await st(() => StreamLine.S.ed.workspace) === 'model' && await p.locator('#ws-seg').count() === 0 && await p.locator('#toolsets .tset').count() === 5, 'opens in the single 3D studio: the part tool sets along the bottom, no Edge / Face / Solid switch');
+  check((await ctxBar()).length === 0 && await p.locator('#tools .tool[data-id=newsketch]').isVisible() && await p.locator('#tools .tool[data-tool=line]').count() === 0 && await p.locator('#toolsets .tset[data-set=constrain]').count() === 0, 'part mode: Sketch, Extrude … down the rail; no Line or constraint tools outside a sketch');
+
+  // --- command palette: "rect" outside a sketch asks for its plane first (Create Sketch)
+  await p.tap('#btn-cmd'); await p.fill('.pal-in', 'rect'); await p.press('.pal-in', 'Enter'); await p.waitForTimeout(250);
+  check(await st(() => !!StreamLine.S.ed.planePick && StreamLine.S.ed.editingSketch == null) && (await ctxBar()).join() === 'XY · Top,XZ · Front,YZ · Right,Cancel' && await p.locator('.vlabel.plane:visible').count() === 3 && /Create Sketch/.test(await p.textContent('#hud')),
+    'palette "rect" ⏎ outside a sketch: Create Sketch shows the named origin planes and waits for one');
+  const xyLab = await p.evaluate(() => { const e = [...document.querySelectorAll('.vlabel.plane')].find(x => x.textContent === 'XY' && x.style.display !== 'none'), r = e.getBoundingClientRect(), g = document.querySelector('#gl').getBoundingClientRect(); return { x: r.left + r.width / 2 - g.left, y: r.top + r.height / 2 - g.top }; });
+  await tapV(xyLab.x, xyLab.y); await p.waitForTimeout(500);
+  check(await st(() => StreamLine.S.ed.editingSketch != null && StreamLine.S.ed.tool === 'rect' && StreamLine.S.doc.sketches.length === 1 && StreamLine.S.doc.sketches[0].plane.n[2] === 1) && await p.locator('#skbar').isVisible() && !(await p.locator('#timeline').isVisible()) && /Top \(XY\)/.test(await p.textContent('#skbar')),
+    'tapping the XY plane opens Sketch 1 on it with the Rectangle tool; the sketch bar with Finish Sketch takes the timeline\'s place');
+  check(await p.locator('#toolsets .tset').count() === 4 && await p.locator('#tools .tool[data-tool=line]').isVisible() && await p.locator('#tools .tool[data-id=extrude]').count() === 0, 'sketch mode: Create / Modify / Constrain / Inspect tool sets, the drawing tools on the rail');
   await p.tap('#toolsets .tset[data-set=constrain]'); await p.waitForTimeout(150);
   check(await p.locator('#tools .tool[data-cons=h]').isVisible() && await p.locator('#tools .tool[data-cons=tan]').count() === 1, 'the Constrain tool set lists the constraints down the left rail');
-  await p.tap('#toolsets .tset[data-set=sketch]'); await p.waitForTimeout(150);
+  await p.tap('#toolsets .tset[data-set=create]'); await p.waitForTimeout(150);
 
-  // --- command palette: search and run
-  await p.tap('#btn-cmd'); await p.fill('.pal-in', 'rect'); await p.press('.pal-in', 'Enter'); await p.waitForTimeout(150);
-  check(await st(() => StreamLine.S.ed.tool) === 'rect', 'command palette: "rect" ⏎ picks the Rectangle tool');
-
-  // --- rectangle on the grid by typed values: creates its sketch on demand, one undo step
+  // --- rectangle by typed values, in the open sketch
   await p.tap('#draw-card .field.ax-x .val'); await keypad('-20');
   await p.tap('#draw-card .field.ax-y .val'); await keypad('-15');
   await p.tap('#draw-card .field.ax-x .val'); await keypad('40');
   await p.tap('#draw-card .field.ax-y .val'); await keypad('30');
   const sk1 = await st(() => StreamLine.S.doc.sketches.map(k => ({ n: k.plane.n, ents: k.ents.map(e => e.t) })));
-  check(sk1.length === 1 && sk1[0].n[2] === 1 && sk1[0].ents.includes('rect'), 'drawing on the grid creates the ground sketch automatically');
+  check(sk1.length === 1 && sk1[0].n[2] === 1 && sk1[0].ents.includes('rect'), 'the typed rectangle goes into the open sketch');
   await p.tap('#btn-undo'); await p.waitForTimeout(150);
-  check(await st(() => StreamLine.S.doc.sketches.length) === 0, 'one undo removes both the rectangle and its new sketch');
+  check(await st(() => StreamLine.S.doc.sketches.length === 1 && !StreamLine.S.doc.sketches[0].ents.length && StreamLine.sketching()), 'undo takes the rectangle back; the sketch stays open');
   await p.tap('#btn-redo'); await p.waitForTimeout(150);
   // circle inside
   await p.evaluate(() => StreamLine.Draw.resetTool());
@@ -76,14 +82,18 @@ try {
   await p.tap('#draw-card .field.ax-x .val'); await keypad('0');
   await p.tap('#draw-card .field.ax-y .val'); await keypad('0');
   await p.tap('#draw-card .field .val'); await keypad('5');
-  check(await st(() => StreamLine.S.doc.sketches.length === 1 && StreamLine.SK.regions(StreamLine.S.doc.sketches[0]).length === 2), 'circle joins the same ground sketch: 2 regions');
+  check(await st(() => StreamLine.S.doc.sketches.length === 1 && StreamLine.SK.regions(StreamLine.S.doc.sketches[0]).length === 2), 'circle joins the same sketch: 2 profiles');
   await p.locator('.tool[data-tool=select]').tap();
-  await frame([-25, -20, 0], [25, 20, 10]);
+  await shot('0-sketch');
 
-  // --- pick the region (a tap inside the outline), extrude
+  // --- Finish Sketch: back to the part; pick the region (a tap inside the outline), extrude
+  await p.tap('#btn-finish'); await p.waitForTimeout(600);
+  check(await st(() => StreamLine.S.ed.editingSketch == null) && await p.locator('#timeline').isVisible() && !(await p.locator('#skbar').isVisible()) && await p.locator('#tools .tool[data-tool=line]').count() === 0 && await p.locator('#tools .tool[data-id=extrude]').isVisible(),
+    'Finish Sketch: back to the part tools and the timeline');
+  await frame([-25, -20, 0], [25, 20, 10]);
   let c = await projW([-12, -8, 0]); await tapV(c.x, c.y);
-  check(await st(() => StreamLine.S.ed.profiles.length) === 1, 'tapping inside the outline picks the region');
-  check((await ctxBar()).includes('Extrude'), 'region selected: the command bar shows Extrude / Revolve / Sweep');
+  check(await st(() => StreamLine.S.ed.profiles.length) === 1, 'tapping inside the outline picks the profile');
+  check((await ctxBar()).includes('Extrude'), 'profile selected: the command bar shows Extrude / Revolve / Sweep');
   await p.locator('#actions .act', { hasText: 'Extrude' }).tap(); await p.waitForTimeout(200);
   check(await st(() => StreamLine.S.doc.objects.length === 0 && StreamLine.getLast().params.distance === 0 && !!StreamLine.getLast().handle && !StreamLine.H.hist().some(r => r.op === 'F.extrude')),
     'Extrude starts at 0: no body and no timeline step until a distance is given, arrow shown');
@@ -96,16 +106,21 @@ try {
   await closeCard();
   await shot('1-extrude');
 
-  // --- draw a circle directly on the top face (no sketch setup), extrude → auto-join
+  // --- Create Sketch on the body's top face, a circle in it, Finish, extrude → auto-join
+  await p.tap('#tools .tool[data-id=newsketch]'); await p.waitForTimeout(250);
+  c = await projW([12, 6, 8]); await tapV(c.x, c.y); await p.waitForTimeout(600);
+  const fs0 = await st(() => { const L = StreamLine, k = L.S.doc.sketches.at(-1); return { open: L.S.ed.editingSketch === k.id, n: L.S.doc.sketches.length, face: !!k.face, z: k.plane.o[2], nz: k.plane.n[2] }; });
+  check(fs0.open && fs0.n === 2 && fs0.face && fs0.nz === 1 && Math.abs(fs0.z - 8) < 1e-9, `Create Sketch, then a tap on the top face: a sketch opens on that face (${JSON.stringify(fs0)})`);
   await p.locator('.tool[data-tool=circle]').tap(); await p.waitForTimeout(300); // the view settles below the draw card
   const a = await projW([12, 6, 8]), b2 = await projW([15, 6, 8]);
   await drag([[a.x, a.y], [b2.x + 2, b2.y]]);
   const fs = await st(() => StreamLine.S.doc.sketches.map(k => ({ n: k.plane.n, z: k.plane.o[2], face: !!k.face, ents: k.ents.map(e => e.t + (e.r ? ':' + e.r : '')) })));
-  check(fs.length === 2 && fs[1].face && fs[1].n[2] === 1 && Math.abs(fs[1].z - 8) < 1e-9 && fs[1].ents.some(e => e.startsWith('circle')), `pressing on the top face draws on that face (${JSON.stringify(fs[1] && fs[1].ents)})`);
-  const r2 = await st(() => StreamLine.S.doc.sketches[1].ents.find(e => e.t === 'circle').r);
-  await p.locator('.tool[data-tool=select]').tap(); await p.waitForTimeout(300);
+  check(fs.length === 2 && fs[1].face && fs[1].ents.some(e => e.startsWith('circle')), `dragging out a circle draws it in the face sketch (${JSON.stringify(fs[1] && fs[1].ents)})`);
+  const r2 = await st(() => StreamLine.S.doc.sketches[1].ents.find(e => e.t === 'circle' && !e.proj).r); // (the hole's rim comes in projected)
+  await p.locator('.tool[data-tool=select]').tap(); await p.waitForTimeout(200);
+  await p.tap('#btn-finish'); await p.waitForTimeout(600);
   c = await projW([12, 6, 8]); await tapV(c.x, c.y);
-  check(await st(() => StreamLine.S.ed.profiles.length === 1 && StreamLine.S.ed.profiles[0].sk === StreamLine.S.doc.sketches[1].id), 'the circle on the face is a region you can pick');
+  check(await st(() => StreamLine.S.ed.profiles.length === 1 && StreamLine.S.ed.profiles[0].sk === StreamLine.S.doc.sketches[1].id), 'after Finish Sketch the circle on the face is a profile you can pick');
   await p.locator('#actions .act', { hasText: 'Extrude' }).tap();
   await p.tap('#lastop .field .val'); await keypad('5');
   const mode = await st(() => StreamLine.getLast().params.mode);
@@ -124,21 +139,31 @@ try {
   check(v2 < v1 && await st(() => !!StreamLine.getLast().handle), `fillet removes material with a live radius handle (${(v1 - v2).toFixed(3)} mm³)`);
   await closeCard();
 
-  // --- Edge mode on a curve: curve editing commands
+  // --- a curve in a sketch: curve editing commands
   await p.evaluate(() => StreamLine.S.doc.sketches.forEach(k => { k.hidden = false; }));
-  // draw a free line on the grid in front of the body, then pick it in Edge mode
+  // a new sketch on XY (from Create Sketch's plane buttons), a free line in front of the body, then pick it
+  await p.tap('#tools .tool[data-id=newsketch]'); await p.waitForTimeout(250);
+  await p.locator('#actions .act', { hasText: 'XY · Top' }).tap(); await p.waitForTimeout(500);
+  check(await st(() => StreamLine.sketching() && StreamLine.S.doc.sketches.at(-1).plane.n[2] === 1 && !StreamLine.S.doc.sketches.at(-1).face), 'Create Sketch → the XY · Top button opens a sketch on XY');
   await p.locator('.tool[data-tool=line]').tap();
   await p.tap('#draw-card .field.ax-x .val'); await keypad('-20');
   await p.tap('#draw-card .field.ax-y .val'); await keypad('-30');
   await p.tap('#draw-card .field .val'); await keypad('40');
   await p.locator('#draw-card .btn', { hasText: 'Finish' }).tap();
   await p.locator('.tool[data-tool=select]').tap(); await p.waitForTimeout(350); // (the view settles once the draw card closes)
+  await frame([-25, -40, 0], [25, -20, 0]); // (the line sits low, under the view tools, in the sketch's opening view)
   c = await projW([0, -30, 0]);
   await tapV(c.x, c.y);
   const curveSel = await st(() => StreamLine.S.ed.drawSel.size);
   check(curveSel === 1 && (await ctxBar()).includes('Offset'), 'a tap on a sketch curve selects it; Move / Offset / Constrain offered');
 
-  // --- a face, then the same spot again: the whole body (the curve's card is put away first: it sits over the part)
+  // --- a face, then the same spot again: the whole body (after Finish Sketch)
+  await p.evaluate(() => { StreamLine.S.ed.drawSel = new Set(); StreamLine.refresh(); }); await p.waitForTimeout(150);
+  await p.tap('#btn-finish'); await p.waitForTimeout(600);
+  await frame([-25, -20, 0], [25, 20, 10]);
+  c = await projW([0, -30, 0]); await tapV(c.x, c.y);
+  check(await st(() => StreamLine.S.ed.drawSel.size === 1 && !StreamLine.sketching()) && (await ctxBar()).join() === 'Edit sketch,Chain', `outside the sketch a picked curve offers Edit sketch (no curve editing): ${(await ctxBar()).join()}`);
+  check(await st(() => StreamLine.Draw.down(...Object.values(StreamLine.view.project(StreamLine.SK.toW(StreamLine.S.doc.sketches.at(-1).plane, [20, -30]))).slice(0, 2)) === false), 'outside the sketch its curve points cannot be dragged');
   await p.evaluate(() => { StreamLine.S.ed.drawSel = new Set(); StreamLine.refresh(); }); await p.waitForTimeout(300);
   c = await projW([-10, 8, 8]); await tapV(c.x, c.y);
   check(await st(() => StreamLine.S.ed.faces.length === 1 && StreamLine.S.ed.pick === 'face'), 'a tap on a face picks the face');
@@ -155,13 +180,16 @@ try {
   await run('DI'); await run('0,0'); await run('3,4');
   check(/Distance = 5\.00/.test(await p.textContent('#cmdlog')), 'DIST works from the command line');
 
+  check(await st(() => StreamLine.sketching()) && await p.locator('#skbar').isVisible(), 'a drawing command typed outside a sketch opens one on the construction plane');
+  await p.tap('#btn-finish'); await p.waitForTimeout(400);
   // --- undo the fillet etc.
-  for (let i = 0; i < 3; i++) await p.tap('#btn-undo'); // the typed circle, the free line, then the fillet
+  for (let i = 0; i < 5; i++) await p.tap('#btn-undo'); // the typed circle and its sketch, the free line and its sketch, then the fillet
   await p.waitForTimeout(200);
   check(Math.abs(await vol() - v1) < 1e-9, 'undo returns to the state before the fillet exactly');
   await shot('4-final');
 
   // --- drawing modes: rectangle (2 corners / centre / 3 points), circle (centre / 2 points / 3 points), arc (3 points)
+  await st(() => StreamLine.sketchOn({ plane: 'XY' }));
   const drawWith = (t, m, pts) => st(([t, m, pts]) => { const L = StreamLine; L.S.ed.tool = t; L.Draw.setDrawMode(t, m); for (const q of pts) L.Draw.commitPoint(q); const sk = L.S.doc.sketches.find(k => k.id === L.S.ed.sketch); return sk.ents.slice(-4); }, [t, m, pts]);
   let e4 = await drawWith('rect', 'center', [[100, 100], [105, 103]]);
   check(e4.at(-1).t === 'rect' && e4.at(-1).x === 95 && e4.at(-1).y === 97 && e4.at(-1).w === 10 && e4.at(-1).h === 6, 'Rectangle · centre + corner');
@@ -173,7 +201,7 @@ try {
   check(e4.at(-1).t === 'circle' && Math.abs(e4.at(-1).c[0] - 300) < 1e-9 && Math.abs(e4.at(-1).r - 10) < 1e-9, 'Circle · three points');
   e4 = await drawWith('arc', '3pt', [[410, 0], [390, 0], [400, 10]]);
   check(e4.at(-1).t === 'arc' && Math.abs(e4.at(-1).r - 10) < 1e-9 && Math.abs(e4.at(-1).a1 - e4.at(-1).a0 - Math.PI) < 1e-9, 'Arc · start, end, through');
-  await st(() => { StreamLine.Draw.setDrawMode('rect', 'corner'); StreamLine.Draw.setDrawMode('circle', 'center'); StreamLine.Draw.setDrawMode('arc', 'center'); StreamLine.S.ed.tool = 'select'; });
+  await st(() => { StreamLine.Draw.setDrawMode('rect', 'corner'); StreamLine.Draw.setDrawMode('circle', 'center'); StreamLine.Draw.setDrawMode('arc', 'center'); StreamLine.S.ed.tool = 'select'; StreamLine.finishSketchEdit(); });
 
   // --- parametric timeline: every step recorded; editing a sketch rebuilds later features
   const tl = await st(() => StreamLine.H.hist().map(r => r.kind === 'sketch' ? 'sketch' : r.op));
@@ -261,10 +289,10 @@ try {
   // edit a sketch from the timeline: editing mode with a Finish command
   await st(() => { const r = StreamLine.H.hist().find(x => x.kind === 'sketch'); StreamLine.BR.editStep(r.id); });
   await p.waitForTimeout(250);
-  check(/Editing/.test(await p.textContent('#hud')) && (await ctxBar()).includes('Finish'), 'Edit sketch: HUD says Editing, Finish offered');
+  check(await st(() => StreamLine.sketching()) && await p.locator('#skbar #btn-finish').isVisible() && /curve/.test(await p.textContent('#hud')), 'Edit sketch from the timeline opens it in sketch mode, Finish Sketch offered');
   check(await st(() => StreamLine.view.xrayFor === true), 'bodies are ghosted while a sketch is edited');
-  await p.tap('#actions .act.primary'); await p.waitForTimeout(200);
-  check(await st(() => StreamLine.S.ed.editingSketch) == null, 'Finish leaves sketch editing');
+  await p.tap('#btn-finish'); await p.waitForTimeout(200);
+  check(await st(() => StreamLine.S.ed.editingSketch) == null, 'Finish Sketch leaves sketch editing');
   // tapping a History card edits that step, and the panel steps aside on a phone
   await p.tap('#btn-history'); await p.waitForTimeout(450);
   await p.locator('#sheet-body .hcard').filter({ hasText: 'Extrude' }).first().tap(); await p.waitForTimeout(400);
@@ -553,11 +581,13 @@ try {
     const L = StreamLine;
     L.runOp(L.F.newSketch, { plane: 'XY' }); const sk = L.SK.activeSketch();
     L.runOp(L.F.sketchOp('Line', sk.id, k => { L.F.addEntity(k, { t: 'line', a: [500, 0], b: [510, 0] }); }));
+    L.activateSketch(sk.id); // (curves are changed inside their sketch)
     const ents = () => L.SK.sketchById(sk.id).ents, id = ents()[ents().length - 1].id; L.S.ed.sketch = sk.id; L.S.ed.drawSel = new Set([id]); L.S.ed.pick = 'edge'; L.refresh();
     [...document.querySelectorAll('#actions button')].find(b => /^\s*Rotate\s*$/.test(b.textContent))?.click();
     const live = L.Draw.curveCmd(), card = !document.querySelector('#draw-card')?.hidden;
     L.Draw.typed('500,0'); L.Draw.typed('90');
     const e = ents().find(q => q.id === id);
+    L.Draw.resetTool(); L.finishSketchEdit();
     return { live, card, b: e?.b };
   });
   check(rot.live && rot.card && rot.b && Math.abs(rot.b[0] - 500) < 1e-6 && Math.abs(rot.b[1] - 10) < 1e-6, `Selected curves: Rotate runs the 2D command and turns them (end at ${rot.b?.map(v => +v.toFixed(6)).join(', ')})`);
@@ -808,13 +838,13 @@ try {
     return { before, after: [y(), hx()], errs: L.H.hist().filter(r => r.err).map(r => r.err) };
   });
   check(r15.before.join() === '-8,12112.5' && r15.after.join() === '-8,12152.5' && !r15.errs.length, `A longer arm: the mate and the hole on its tongue's side face slide with the tongue (y ${r15.after[0]}, hole x ${r15.before[1]} → ${r15.after[1]})${r15.errs.length ? ' · ' + r15.errs.join('; ') : ''}`);
-  await p.evaluate(() => { const L = StreamLine; L.S.ed.pick = 'solid'; L.S.ed.faces = []; L.S.ed.tool = 'text'; L.refresh(); });
+  await p.evaluate(() => { const L = StreamLine; L.S.ed.pick = 'solid'; L.S.ed.faces = []; L.sketchOn({ plane: 'XY' }); L.S.ed.tool = 'text'; L.refresh(); });
   await p.waitForTimeout(500);
   const txtKey = async str => { await p.waitForTimeout(500); for (const ch of str) await p.tap(`#keypad [data-k="${ch}"]`); await p.tap('#keypad [data-k="ok"]'); await p.waitForTimeout(300); };
   await (await p.$$('#draw-card .field button.val'))[0].tap(); await txtKey('12500');
   await (await p.$$('#draw-card .field button.val'))[1].tap(); await txtKey('5');
   await p.fill('#draw-card input.textin', 'LUX'); await p.press('#draw-card input.textin', 'Enter'); await p.waitForTimeout(500);
-  const txt15 = await p.evaluate(() => { const L = StreamLine, e = L.S.doc.sketches.flatMap(k => k.ents).find(x => x.t === 'text' && x.str === 'LUX'); L.S.ed.tool = 'select'; L.Draw.resetTool(); L.refresh(); return e ? e.p : null; });
+  const txt15 = await p.evaluate(() => { const L = StreamLine, e = L.S.doc.sketches.flatMap(k => k.ents).find(x => x.t === 'text' && x.str === 'LUX'); L.S.ed.tool = 'select'; L.Draw.resetTool(); L.finishSketchEdit(); L.refresh(); return e ? e.p : null; });
   check(txt15 && txt15.join() === '12500,5', `Text: the start point can be typed on the card (${txt15})`);
   // round 16: a ring whose outer circle shrinks is found again (not dropped), and a region that is gone turns the
   // step red; a mate that conflicts leaves the part where it was; a hole tapped off-centre on a boss's end disc is
@@ -925,11 +955,11 @@ try {
     L.BR.editStep(L.H.hist().find(r => r.kind === 'sketch' && r.sk === fsk).id); L.refresh();
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     const onFace = { xray: L.view.xrayFor, grid: L.view.gridPlane?.o?.[2], dark: L.view.gridDark };
-    document.querySelector('#actions .act.primary')?.click(); L.refresh();
+    document.querySelector('#btn-finish').click(); L.refresh();
     const r2 = L.H.hist().find(r => r.kind === 'sketch' && r.sk === ground);
     if (r2) { L.BR.editStep(r2.id); L.refresh(); }
     const free = { xray: L.view.xrayFor, dark: L.view.gridDark };
-    document.querySelector('#actions .act.primary')?.click(); L.refresh();
+    document.querySelector('#btn-finish').click(); L.refresh();
     return { onFace, free, after: L.S.ed.editingSketch, hadGround: !!r2 };
   });
   check(skf.onFace.xray === false && skf.onFace.grid === 6 && skf.onFace.dark === true && (!skf.hadGround || (skf.free.xray === true && skf.free.dark === false)) && skf.after == null,
@@ -1008,6 +1038,7 @@ try {
       L.runOp(F.sketchOpNew('cg', XY(0), null, k => { F.addEntity(k, { t: 'line', a: [50100, 0], b: [50140, 3] }); }));
       const sk = L.S.ed.sketch, id = L.SK.sketchById(sk).ents[0].id;
       L.S.ed.drawSel = new Set([id]); L.Draw.constrain('h'); L.S.ed.drawSel = new Set(); L.refresh();
+      L.activateSketch(sk); // (constraint glyphs show while their sketch is open)
       return sk;
     });
     await frame([50095, -12, 0], [50145, 12, 0]); await p.waitForTimeout(600);
@@ -1017,6 +1048,7 @@ try {
     if (cs) { await p.locator('#actions .act', { hasText: 'Delete' }).tap(); await p.waitForTimeout(300); }
     const consLeft = await p.evaluate(sk => (StreamLine.SK.sketchById(sk).cons || []).length, cgSk);
     check(glyph && cs && cs.t === 'h' && consLeft === 0, `A tap on a constraint glyph picks the constraint, and Delete removes it (${cs && cs.t}, ${consLeft} left)`);
+    await p.evaluate(() => StreamLine.finishSketchEdit()); await p.waitForTimeout(300);
   }
   // Look: theme, lighting, surface and edge width from the top bar's Look button
   await p.tap('#btn-look'); await p.waitForTimeout(400);
