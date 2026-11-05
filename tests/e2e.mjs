@@ -572,6 +572,52 @@ try {
     return { z0, z1: K.worldShape(L.S.doc.objects.find(o => o.id === b)).boundingBox.bounds[0][2], fields };
   });
   check(Math.abs(gap.z0 - 10) < 1e-6 && Math.abs(gap.z1 - 10.5) < 1e-6 && gap.fields.includes('gap'), `Flat mates take a gap: 0 → face to face (z ${+gap.z0.toFixed(6)}), 0.5 mm → stood off (z ${+gap.z1.toFixed(6)})`);
+  // round 11: a hand-picked Cut from a face sketch cuts into the body whichever sign is typed
+  const cutv = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, K = L.K, PJ = await import('./js/projects.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    await PJ.newProject();
+    L.runOp(F.sketchOpNew('blk', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 0, y: 0, w: 20, h: 20 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [5, 5] }], distance: 10, mode: 'new', target: null }); const b = L.S.doc.objects.at(-1);
+    const out = [];
+    for (const d of [-1, 1]) {
+      const cx = d < 0 ? 5 : 15;
+      L.runOp(F.sketchOpNew('top', XY(10), { obj: b.id }, k => { F.addEntity(k, { t: 'circle', c: [cx, 10], r: 2 }); }));
+      const v0 = K.volume(L.S.doc.objects.find(o => o.id === b.id).shape);
+      L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [cx, 10] }], distance: d, mode: 'cut', target: b.id });
+      out.push(v0 - K.volume(L.S.doc.objects.find(o => o.id === b.id).shape));
+    }
+    return out;
+  });
+  check(cutv.every(v => Math.abs(v - Math.PI * 4) < 1e-6), `Cut from a face sketch goes into the body for −1 and +1 alike (${cutv.map(v => v.toFixed(3)).join(', ')} mm³)`);
+  // a face sketch (and the body built from it) turns with its part when an earlier Rotate changes
+  const folr = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, K = L.K, ops = await import('./js/ops.js'), PJ = await import('./js/projects.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    await PJ.newProject();
+    L.runOp(F.sketchOpNew('bar', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 0, y: -5, w: 100, h: 10 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [50, 0] }], distance: 4, mode: 'new', target: null }); const bar = L.S.doc.objects.at(-1).id;
+    L.S.ed.selected = new Set([bar]); L.S.ed.active = bar; L.runOp(L.OPS.transform, { mode: 'rotate', axis: 'z', angle: 30, pivot: [0, 0, 0] });
+        // a sketch on the bar's top face at its far end (bar-local x 90), drawn in world coordinates
+    const c = 90 * Math.cos(Math.PI / 6), s = 90 * Math.sin(Math.PI / 6);
+    L.runOp(F.sketchOpNew('btn', XY(4), { obj: bar }, k => { F.addEntity(k, { t: 'circle', c: [c, s], r: 2 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [c, s] }], distance: 3, mode: 'new', target: null }); const btn = L.S.doc.objects.at(-1).id;
+    const rec = L.H.hist().find(r => /Rotate/.test(r.label || '')); L.BR.editStep(rec.id); ops.updateOp({ angle: 90 }); ops.commit();
+    const bb = K.worldShape(L.S.doc.objects.find(q => q.id === btn)).boundingBox.bounds;
+    return { ctr: [0, 1].map(k => (bb[0][k] + bb[1][k]) / 2), errs: L.H.hist().filter(r => r.err).map(r => r.err) };
+  });
+  check(Math.abs(folr.ctr[0]) < 1e-3 && Math.abs(folr.ctr[1] - 90) < 1e-3 && !folr.errs.length, `A face sketch and its body turn with the part when an earlier Rotate changes (button now at ${folr.ctr.map(v => +v.toFixed(4)).join(', ')}${folr.errs.length ? '; ' + folr.errs.join('; ') : ''})`);
+  // conflicting mates are flagged on their step
+  const conf = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    L.runOp(F.sketchOpNew('c1', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 3000, y: 0, w: 20, h: 20 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [3005, 5] }], distance: 10, mode: 'new', target: null }); const a = L.S.doc.objects.at(-1).id;
+    L.runOp(F.sketchOpNew('c2', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 3100, y: 0, w: 10, h: 10 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [3105, 5] }], distance: 5, mode: 'new', target: null }); const b = L.S.doc.objects.at(-1).id;
+    L.runOp(F.mateOp, { a: { obj: b, n: [0, 0, -1], p: [3105, 5, 0], planar: true }, b: { obj: a, n: [0, 0, 1], p: [3005, 5, 10], planar: true }, gap: 0 });
+    // second: the same bottom face onto the block's bottom (z 0) — impossible together with the first
+    L.runOp(F.mateOp, { a: { obj: b, n: [0, 0, -1], p: [3105, 5, 10], planar: true }, b: { obj: a, n: [0, 0, -1], p: [3005, 5, 0], planar: true }, gap: 0 });
+    return L.H.hist().filter(r => r.op === 'F.mateOp').map(r => r.err || '');
+  });
+  check(conf.some(e => /Conflicts/.test(e)), `Two mates that can't both hold: one is flagged (“${conf.filter(Boolean)[0] || 'none'}”)`);
   await shot('5-timeline');
 } catch (e) {
   await p.screenshot({ path: OUT + 'crash.png' }).catch(() => {});

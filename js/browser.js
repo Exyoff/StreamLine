@@ -119,6 +119,9 @@ export function deleteStep(id) {
       H.hist().splice(j, 1);
       if (S.doc.marker != null && j < S.doc.marker) S.doc.marker--;
       if (r.kind === 'sketch') { S.doc.sketches = S.doc.sketches.filter(k => k.id !== r.sk); if (S.ed.sketch === r.sk) S.ed.sketch = null; S.ed.profiles = []; S.ed.drawSel = new Set(); }
+      // the sketches it used come back into view once no other step uses them
+      const used = new Set(H.hist().flatMap(x => [...(x.params?.pts || []).map(it => it.sk), x.params?.path].filter(v => v != null)));
+      for (const it of [...(r.params?.pts || []), ...(r.params?.path != null ? [{ sk: r.params.path }] : [])]) { const k = (S.doc.sketches || []).find(q => q.id === it.sk); if (k && !used.has(k.id)) k.hidden = false; }
       H.invalidate(j); failNote(H.regenerate(j));
     },
   });

@@ -40,12 +40,16 @@ export function selectedWorldPoints() {
   // objects: the middle of each body's bounds (a solid's placement origin is usually the world origin)
   return selectedObjs().map(o => { const W = o.mesh.v.length ? o.mesh.v.map(xfFor(o).toW) : [o.loc]; const b = M.bbox(W); return M.mul(M.add(b.min, b.max), 0.5); });
 }
+let pivotHook = null;
+export const setPivotHook = fn => { pivotHook = fn; };
 export function computePivot() {
   const pts = selectedWorldPoints();
   if (!pts.length) return null;
   if (S.ed.mode === 'edit') return M.centroid(pts); // median point
   // exact solids: the centre of their exact bounds (the display mesh is float32, which leaves 1e-4 errors)
   const objs = [...S.ed.selected].map(id => S.doc.objects.find(o => o.id === id)).filter(Boolean);
+  // a part on a round mate turns about that axis (a hinge), so the mate doesn't pull it back after the turn
+  if (!subSelection() && objs.length === 1 && pivotHook) { const q = pivotHook(objs[0]); if (q) return q; }
   if (!subSelection() && objs.length && objs.every(o => o.shape)) {
     try {
       const cs = objs.map(o => { const b = K.worldShape(o).boundingBox.bounds; return [0, 1, 2].map(k => (b[0][k] + b[1][k]) / 2); });

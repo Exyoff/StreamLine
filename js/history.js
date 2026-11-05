@@ -3,7 +3,7 @@
 // parameters of an earlier feature, replays everything after it so later features follow the change.
 // A rollback marker hides the features after it; new work is inserted at the marker.
 import { S, emit } from './state.js';
-import { cloneObj, worldVerts, objToJSON, objFromJSON } from './scene.js';
+import { cloneObj, worldVerts, objToJSON, objFromJSON, xfFor } from './scene.js';
 import { PolyMesh } from './mesh.js';
 
 const REG = new Map();      // op name -> def
@@ -76,7 +76,7 @@ const PRES = ['name', 'color', 'hidden', 'layer'];
 // mates are constraints: solved again after every rebuild and edit (set by the app)
 let postSolve = null;
 export function setPostSolve(fn) { postSolve = fn; }
-export function solveConstraints() { if (postSolve) try { postSolve(hist().slice(0, markerIndex())); } catch (e) { console.warn(e); } }
+export function solveConstraints(extra) { if (postSolve) try { const h = hist().slice(0, markerIndex()); postSolve(extra && !h.some(r => r.params === extra.params) ? [...h, extra] : h); } catch (e) { console.warn(e); } }
 export function regenerate(from = 0) {
   const h = hist(), end = markerIndex();
   from = Math.max(0, Math.min(from, end));
@@ -150,10 +150,26 @@ export function applyRollbackVisibility() {
 
 // A sketch drawn on a body face follows that face when earlier steps move it: find the face of the
 // body (as rebuilt so far) with the same normal under the sketch's curves, and slide the plane onto it.
+// a face sketch remembers where it sits on its part (in the part's own coordinates), so it moves and turns with
+// the part when an earlier Move / Rotate / Mate changes the part's placement
+const v3 = { add: (a, b) => a.map((x, i) => x + b[i]), sub: (a, b) => a.map((x, i) => x - b[i]), unit: a => { const l = Math.hypot(...a) || 1; return a.map(x => x / l); } };
+export function anchorSketch(sk) {
+  if (!sk?.face || sk.face.obj == null || sk.face.lp) return;
+  const o = S.doc.objects.find(q => q.id === sk.face.obj); if (!o) return;
+  const x = xfFor(o), O = x.toL(sk.plane.o), dir = d => v3.unit(v3.sub(x.toL(v3.add(sk.plane.o, d)), O));
+  sk.face.lp = { o: O, u: dir(sk.plane.u), v: dir(sk.plane.v), n: dir(sk.plane.n) };
+}
 function followFace(skId, moved) {
   const sk = (S.doc.sketches || []).find(k => k.id === skId);
   if (!sk || !sk.face || sk.face.obj == null) return;
   const o = S.doc.objects.find(q => q.id === sk.face.obj); if (!o) return;
+  if (sk.face.lp) {
+    const x = xfFor(o), lp = sk.face.lp, O = x.toW(lp.o), dir = d => v3.unit(v3.sub(x.toW(v3.add(lp.o, d)), O));
+    const wp = { ...sk.plane, o: O, u: dir(lp.u), v: dir(lp.v), n: dir(lp.n) };
+    const cl = q => q.map(t => (Math.abs(t - Math.round(t * 1e9) / 1e9) < 1e-9 ? Math.round(t * 1e9) / 1e9 || 0 : t));
+    for (const k of ['o', 'u', 'v', 'n']) wp[k] = cl(wp[k]);
+    if (['o', 'u', 'v', 'n'].some(k => wp[k].some((t, i) => Math.abs(t - sk.plane[k][i]) > 1e-9))) { sk.plane = wp; moved.set(sk.id, sk.plane); }
+  }
   const pl = sk.plane, n = pl.n, dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
   const pts = [];
   for (const e of sk.ents) {

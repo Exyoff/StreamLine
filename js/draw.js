@@ -47,7 +47,7 @@ function setPlaneTarget(plane, face = null) {
   else target = { plane: { o: plane.o.slice(), u: plane.u.slice(), v: plane.v.slice(), n: plane.n.slice() }, face };
 }
 const editTarget = () => { const e = S.ed.editingSketch != null && SK.sketchById(S.ed.editingSketch); if (e) { target = { skId: e.id }; S.ed.sketch = e.id; } return !!e; };
-function typedTarget() { if (editTarget()) return; if (studio() && DRAW_PRIMARY.has(tool()) && waitingFirstPoint() && !st.pressed) setPlaneTarget(cplane()); }
+function typedTarget() { if (editTarget()) return; if (studio() && DRAW_PRIMARY.has(tool()) && waitingFirstPoint() && !st.pressed) setPlaneTarget(cplane(), cplane().face || null); }
 export function clearTarget() { target = null; }
 export function chooseTarget(x, y) {
   if (editTarget()) return;
@@ -58,7 +58,7 @@ export function chooseTarget(x, y) {
     plane = F.facePlane(o, hit.face, [-Math.sin(c.yaw), Math.cos(c.yaw), 0]);
     if (plane) face = { obj: o.id };
   }
-  if (!plane) plane = cplane();
+  if (!plane) { plane = cplane(); face = plane.face || null; }
   setPlaneTarget(plane, face);
 }
 const sk = () => {
@@ -68,7 +68,7 @@ const sk = () => {
   if (!DRAW_PRIMARY.has(tool()) && S.ed.sketch != null && SK.activeSketch()) return SK.activeSketch();
   if (target && target.skId) return SK.sketchById(target.skId) || SK.activeSketch();
   if (target) return { id: null, pending: true, plane: target.plane, face: target.face, ents: [], cons: [] };
-  return SK.activeSketch() || { id: null, pending: true, plane: cplane(), face: null, ents: [], cons: [] };
+  return SK.activeSketch() || { id: null, pending: true, plane: cplane(), face: cplane().face || null, ents: [], cons: [] };
 };
 export const drawTarget = sk;
 const DRAW_PRIMARY = new Set(['line', 'rect', 'circle', 'arc', 'ellipse', 'spline', 'polygon', 'text']);
