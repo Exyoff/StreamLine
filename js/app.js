@@ -205,7 +205,7 @@ function facePickTap(x, y) {
   const W = worldVerts(o), reg = regionOf(o, hit.face), loops = faceLoops(W, o.mesh.f, reg);
   S.ed.tools[S.ed.workspace] = S.ed.tool;
   if (S.ed.mode === 'edit') { S.ed.mode = 'object'; S.ed.editSel = new Set(); }
-  runOp(F.newSketch, { face: { obj: o.id, plane, loops } });
+  runOp(F.newSketch, { face: { obj: o.id, plane, loops, edges: F.faceEdgeData(o, hit.face) || undefined } });
   S.ed.tool = S.ed.tools.draw && S.ed.tools.draw !== 'select' ? S.ed.tools.draw : 'line';
   Draw.resetTool();
   // frame the face, looking straight at it
@@ -270,29 +270,11 @@ function sketchOnFace(o, tri) {
   const c = view.cam, plane = F.facePlane(o, tri, [-Math.sin(c.yaw), Math.cos(c.yaw), 0]);
   if (!plane) { toast('That face is degenerate'); return; }
   const W = worldVerts(o), reg = regionOf(o, tri), loops = faceLoops(W, o.mesh.f, reg);
-  createSketchOn({ face: { obj: o.id, plane, loops } });
+  createSketchOn({ face: { obj: o.id, plane, loops, edges: F.faceEdgeData(o, tri) || undefined } });
 }
 // ---------- Project (Fusion): a body's edge or face into the open sketch, as purple reference geometry ----------
-// from the exact B-rep edges: a straight edge comes in as a line, a circle or arc lying parallel to the sketch as the
-// exact circle or arc, any other curve as the lines of its outline seen along the sketch's normal
-function edgeToSketch(pl, E, xf) {
-  const W = v => xf.toW([v.x, v.y, v.z]), at = t => W(E.pointAt(t)), toP = w => SK.toP(pl, w);
-  const d2 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]), cl = x => { const q = Math.round(x * 1e9) / 1e9; return Math.abs(q - x) < 1e-9 ? q || 0 : x; }, c2 = q => q.map(cl);
-  if (E.geomType === 'LINE') { const a = toP(W(E.startPoint)), b = toP(W(E.endPoint)); return d2(a, b) > 1e-9 ? [{ t: 'line', a: c2(a), b: c2(b) }] : []; }
-  if (E.geomType === 'CIRCLE') {
-    const A = at(0), B = at(1 / 3), C = at(2 / 3), u = M.sub(B, A), v = M.sub(C, A), w = M.cross(u, v), w2 = M.dot(w, w);
-    if (w2 > 1e-18 && Math.abs(M.dot(M.norm(w), pl.n)) > 1 - 1e-9) {
-      const c3 = M.add(A, M.mul(M.add(M.mul(M.cross(w, u), M.dot(v, v)), M.mul(M.cross(v, w), M.dot(u, u))), 1 / (2 * w2)));
-      const c = c2(toP(c3)), r = cl(M.dist(A, c3)), Z = at(1);
-      if (M.dist(A, Z) < 1e-9 * Math.max(1, r)) return [{ t: 'circle', c, r }];
-      const ang = q => Math.atan2(q[1] - c[1], q[0] - c[0]), a0 = ang(toP(A)), a1 = ang(toP(Z)), am = ang(toP(at(0.5)));
-      const ccw = (from, to, x) => { const T = 2 * Math.PI, sw = ((to - from) % T + T) % T, t = ((x - from) % T + T) % T; return t <= sw; };
-      return [ccw(a0, a1, am) ? { t: 'arc', c, r, a0, a1 } : { t: 'arc', c, r, a0: a1, a1: a0 }];
-    }
-  }
-  const Q = []; for (let i = 0; i <= 32; i++) { const q = toP(at(i / 32)); if (!Q.length || d2(q, Q.at(-1)) > 1e-9) Q.push(q); }
-  return Q.slice(1).map((q, i) => ({ t: 'line', a: c2(Q[i]), b: c2(q) }));
-}
+// from the exact B-rep edges (features: edgeData / dataToSketch)
+const edgeToSketch = (pl, E, xf) => F.dataToSketch(pl, F.edgeData(E, xf));
 // (already in the sketch: projecting the same rim twice adds nothing)
 const nearP = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-6;
 const sameEnt = (a, b) => a.t === b.t && (a.t === 'line' ? (nearP(a.a, b.a) && nearP(a.b, b.b)) || (nearP(a.a, b.b) && nearP(a.b, b.a))
@@ -305,11 +287,7 @@ function projectTap(x, y) {
     if (ec && ec.d <= 12 && ec.solid && ec.o.shape) { const E = ec.o.shape.edges[ec.solid.e.i]; if (E) { ents = edgeToSketch(k.plane, E, xfFor(ec.o)); what = 'edge'; } }
     else {
       const hit = view.pickObject(x, y), o = hit && hit.face >= 0 && objById(hit.id);
-      if (o && o.shape && o.faceOf) {
-        const fc = o.shape.faces[o.faceOf[hit.face]], es = fc ? fc.edges : [], n = new Map();
-        for (const E of es) n.set(E.hashCode, (n.get(E.hashCode) || 0) + 1);
-        ents = es.filter(E => n.get(E.hashCode) === 1).flatMap(E => edgeToSketch(k.plane, E, xfFor(o))); what = 'face'; // (not a seam)
-      }
+      if (o && o.shape && o.faceOf) { ents = (F.faceEdgeData(o, hit.face) || []).flatMap(d => F.dataToSketch(k.plane, d)); what = 'face'; }
     }
   } catch (e) { console.error(e); ents = []; }
   const fresh = ents.filter((e, i) => !k.ents.some(x => sameEnt(e, x)) && !ents.slice(0, i).some(x => sameEnt(e, x)));
