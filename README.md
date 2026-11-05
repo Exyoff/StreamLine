@@ -50,6 +50,10 @@ Solids are exact boundary representations computed by **OpenCascade** (the kerne
 - **Polygon:** size it **across flats** (13 mm for an M8 nut and head) or to a corner, and set its rotation.
 - **Array:** the default spacing comes from the selection's width.
 
+## Drawing planes
+- The **Plane** button picks Top / Front / Right, or **Offset this plane…** by a typed distance (a sketch 70 mm up for a loft).
+- In Face mode, select a face and tap **Plane here**: the drawing plane goes through the tapped point, touching the face — on a curved wall it is the tangent plane, so a spout or handle can be sketched where it attaches.
+
 ## Projects and assemblies
 - Every project saves on this device automatically (IndexedDB) and stays there offline. Open **Menu → Projects & assemblies** to open, rename, duplicate or delete projects, or to start a new one.
 - **Insert into this project** places another project's solids as a linked component (🔗). Move or rotate it, and measure, sketch on or snap to its faces like any body. Its shape is read-only here.
