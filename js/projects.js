@@ -43,8 +43,11 @@ const shapeSig = sh => { let v = sigCache.get(sh); if (!v) { v = K.massSig(sh); 
 let saveT = 0, saving = null;
 // (not in the middle of a drag: the save renders a thumbnail and exports the solids, which would stall the gizmo)
 const busy = () => { const l = getLast(); return (l && !l.committed) || document.querySelector('#gl')?.dataset.drag === '1'; };
-export function scheduleLibrarySave() { clearTimeout(saveT); saveT = setTimeout(function go() { if (busy()) { saveT = setTimeout(go, 800); return; } saveNow(); }, 1500); }
-export async function saveNow() {
+export function scheduleLibrarySave() { clearTimeout(saveT); saveT = setTimeout(function go() { if (busy()) { saveT = setTimeout(go, 800); return; } saveNow({ auto: true }); }, 1500); }
+// the Projects panel's picture is drawn at most once a minute by the autosave (drawing a big assembly is not free),
+// and always when the project is left, saved by hand or has none yet
+let thumbT = 0, thumbPid = null;
+export async function saveNow({ auto = false } = {}) {
   clearTimeout(saveT);
   if (saving) await saving;
   const pr = ensureProject();
@@ -59,7 +62,9 @@ export async function saveNow() {
       const shp = changed ? exportShape() : null, brep = changed ? (shp ? K.serialize(shp) : null) : prev.exportBrep;
       const parts = changed ? exportParts() : prev.parts || null;
       const rec = { id: pr.id, name: pr.name, created: prev?.created || pr.created || Date.now(), updated: changed || !prev ? Date.now() : prev.updated, version: changed ? (prev?.version || 0) + 1 : prev.version,
-        data: JSON.stringify(serialize(false)), exportBrep: brep, parts, sig, /* full solids: opening needs no rebuild (fast) */ thumb: ctx?.view?.thumbnail?.() || prev?.thumb || null,
+        data: JSON.stringify(serialize(false)), exportBrep: brep, parts, sig, /* full solids: opening needs no rebuild (fast) */ thumb: (() => {
+          if (auto && prev?.thumb && thumbPid === pr.id && Date.now() - thumbT < 60000) return prev.thumb;
+          thumbT = Date.now(); thumbPid = pr.id; return ctx?.view?.thumbnail?.() || prev?.thumb || null; })(),
         bodies: S.doc.objects.filter(o => o.shape).length };
       await LIB.put(rec);
       known.set(rec.id, { id: rec.id, name: rec.name, version: rec.version, updated: rec.updated, thumb: rec.thumb });

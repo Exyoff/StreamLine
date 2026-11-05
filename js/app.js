@@ -558,7 +558,7 @@ function saveLocalNow() {
   try { localStorage.setItem(DOC_KEY, JSON.stringify(serialize(true, true))); }
   catch (e) {
     // too big (imported solids live in the history): keep a pointer and let the device library hold the project
-    try { localStorage.setItem(DOC_KEY, JSON.stringify({ ref: PJ.ensureProject().id })); PJ.saveNow(); } catch (e2) { toast('Autosave failed (storage full?)'); }
+    try { localStorage.setItem(DOC_KEY, JSON.stringify({ ref: PJ.ensureProject().id })); PJ.saveNow({ auto: true }); } catch (e2) { toast('Autosave failed (storage full?)'); }
   }
 }
 function scheduleSave() {

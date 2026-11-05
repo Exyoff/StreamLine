@@ -114,7 +114,7 @@ A mix of Fusion 360 and Plasticity. The 3D view fills the whole screen and every
   - **Edges** get a fillet ball; drag it to round them.
   - A tap on a gizmo that doesn't drag it is an ordinary tap, so nothing is added to the history.
 - **Number typing** (Plasticity):
-  - An operation's handle shows its value in a bubble beside the arrow; tap it to type an exact value.
+  - An operation's handle shows its value in a bubble beside the arrow; tap it to type an exact value. After a body is dragged along a move arrow or round a rotation ring, the distance or angle stays in a bubble beside the gizmo too: tap it to type the exact one.
   - With a keyboard, just type: digits go to the handle's value, or after a gizmo move or turn, to the distance or angle just dragged.
 
 ### Sketch mode (Fusion-style)

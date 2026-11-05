@@ -1418,6 +1418,12 @@ try {
     await tdrag(g0, g1);
     const rot = await p.evaluate(() => { const r = StreamLine.H.hist().at(-1); return { op: r.op, mode: r.params.mode, axis: r.params.axis, angle: r.params.angle }; });
     check(part === 'arc-z' && rot.op === 'O.transform' && rot.mode === 'rotate' && rot.axis === 'z' && Math.abs(rot.angle) >= 15, `A picked body gets move arrows and rotation arcs: dragging the Z arc turns it (${JSON.stringify(rot)})`);
+    // the turn's amount stays beside the gizmo after the drag: a tap on it takes a typed exact one
+    await p.waitForTimeout(500);
+    const rb = await p.evaluate(() => { const el = [...document.querySelectorAll('#labels .vlabel.readout.val')].find(e => e.style.display !== 'none'); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, t: el.textContent }; });
+    if (rb) { await tapT(rb); await p.waitForTimeout(300); if (await p.locator('#keypad').isVisible()) for (const kk of ['3', '0', 'ok']) { await p.tap(`#keypad [data-k="${kk}"]`); await p.waitForTimeout(150); } }
+    const rot2 = await p.evaluate(() => StreamLine.H.hist().at(-1).params.angle);
+    check(!!rb && /°/.test(rb.t) && Math.abs(rot2 - 30) < 1e-9, `After a drag the turn's amount stays beside the gizmo, and a tap on it takes a typed 30° (${rb?.t} → ${rot2})`);
     await p.evaluate(async () => { const m = await import('./js/ops.js'); m.clearLast(); const L = StreamLine; L.S.ed.selected = new Set(); L.S.ed.faces = []; L.refresh(); });
     // a constraint glyph is picked like anything else, and Delete removes the constraint
     const cgSk = await p.evaluate(() => {

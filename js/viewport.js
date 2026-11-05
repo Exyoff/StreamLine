@@ -634,14 +634,28 @@ view.labelAt = (x, y, text, cls = '') => {
 };
 
 // a small picture of the current view (project thumbnails)
+// (drawn into a small off-screen target and read back from there: copying the whole on-screen canvas made a save of a
+// big assembly wait seconds on the read-back)
 view.thumbnail = (w = 240, h = 160) => {
+  let rt = null;
   try {
-    renderFrame();
-    const src = renderer.domElement, c = document.createElement('canvas'); c.width = w; c.height = h;
-    const g = c.getContext('2d'), k = Math.max(w / src.width, h / src.height), sw = w / k, sh = h / k;
-    g.drawImage(src, (src.width - sw) / 2, (src.height - sh) / 2, sw, sh, 0, 0, w, h);
+    updateCamera(); syncScene();
+    const k = 2, W = w * k, H = h * k, { w: vw, h: vh } = view.size();
+    // the middle of the view, cropped to the thumbnail's shape
+    const s = Math.min(vw / w, vh / h), cw = w * s, ch = h * s;
+    const cam = camera().clone(); cam.setViewOffset(vw, vh, (vw - cw) / 2 + (view.offsetX || 0), (vh - ch) / 2 + (view.offsetY || 0), cw, ch); cam.updateProjectionMatrix();
+    rt = new THREE.WebGLRenderTarget(W, H); rt.texture.colorSpace = THREE.SRGBColorSpace;
+    renderer.setRenderTarget(rt); renderer.setClearColor(new THREE.Color(view.theme.bg[1]), 1); renderer.clear(); renderer.render(scene, cam);
+    const px = new Uint8Array(W * H * 4); renderer.readRenderTargetPixels(rt, 0, 0, W, H, px);
+    renderer.setRenderTarget(null);
+    const big = document.createElement('canvas'); big.width = W; big.height = H;
+    const img = big.getContext('2d').createImageData(W, H);
+    for (let y = 0; y < H; y++) img.data.set(px.subarray((H - 1 - y) * W * 4, (H - y) * W * 4), y * W * 4); // (GL rows run bottom-up)
+    big.getContext('2d').putImageData(img, 0, 0);
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    c.getContext('2d').drawImage(big, 0, 0, W, H, 0, 0, w, h);
     return c.toDataURL('image/jpeg', 0.7);
-  } catch (e) { return null; }
+  } catch (e) { return null; } finally { if (rt) { renderer.setRenderTarget(null); rt.dispose(); view.render(); } }
 };
 // ---------- render loop ----------
 function loop(now) {
