@@ -109,6 +109,7 @@ export const transform = {
     if (!hasSelection()) return 'Nothing selected';
     p.pivot ??= computePivot();
     p._edit = S.ed.mode === 'edit';
+    if (p.mode === 'scale') { const l = [...S.ed.selected].map(id => S.doc.objects.find(o => o.id === id)).find(o => o && o.link); if (l) return `“${l.name}” is a linked component — it keeps its size (change it in its own project, then Sync)`; }
     if (!p._edit && p._sub === undefined) { const sb = subSelection(); p._sub = sb ? { obj: sb.obj, idx: sb.idx } : null; }
   },
   touch: p => (p._sub ? { ids: [p._sub.obj], mesh: true } : p._edit ? { ids: [S.ed.active], mesh: true } : { ids: [...S.ed.selected], mesh: false }),

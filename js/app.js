@@ -501,8 +501,7 @@ function selectAllToggle() {
 }
 function acadTool(t) { setTool(t); Draw.startCommand(); refresh(); }
 function setTool(t, m) {
-  // tapping the active Rectangle / Circle / Arc tool again cycles its mode
-  if (!m && t === S.ed.tool && Draw.MODES[t]) { const L = Draw.MODES[t], i = L.findIndex(x => x[0] === Draw.drawMode[t]); m = L[(i + 1) % L.length][0]; toast(`${({ rect: 'Rectangle', circle: 'Circle', arc: 'Arc' })[t]} · ${L.find(x => x[0] === m)[1]}`); }
+  // (tapping the active tool again just starts it over; its mode is chosen on the tool card)
   if (m) Draw.drawMode[t] = m;
   S.ed.tool = t; S.ed.tools[S.ed.workspace] = t;
   Draw.resetTool();
@@ -537,6 +536,8 @@ function initMeasureOverlay() {
   faceGroup = new THREE.Group(); view.scene.add(faceGroup);
   view.renderHooks.push(drawOverlays);
 }
+// tessellation points are float32: 37.79999923706055 → 37.8 when a short decimal is that close
+const clean32 = v => { for (let d = 0; d <= 6; d++) { const q = Math.round(v * 10 ** d) / 10 ** d; if (Math.abs(q - v) <= Math.abs(v) * 2e-7 + 1e-9) return q; } return v; };
 // snap points of exact solids: edge ends, edge midpoints and circle centres (never tessellation vertices)
 function brepSnap(x, y, tol = 26) {
   const hit = view.pickObject(x, y); let best = null;
@@ -548,7 +549,7 @@ function brepSnap(x, y, tol = 26) {
       const pts = [e.pts[0], e.pts.at(-1), K.polyMid(e.pts)];
       if (e.closed && e.type === 'CIRCLE') { const q = e.pts.slice(0, -1); pts.push([0, 1, 2].map(k => q.reduce((s, v) => s + v[k], 0) / q.length)); }
       for (const L of pts) {
-        const w = xf.toW(L), sp = view.project(w); if (!sp.front) continue;
+        const w = xf.toW(L.map(clean32)), sp = view.project(w); if (!sp.front) continue;
         const d = Math.hypot(sp.x - x, sp.y - y); if (d > tol) continue;
         if (hit && hit.id !== o.id && view.project(hit.point).depth < sp.depth - view.worldPerPixel(w) * 3) continue;
         if (!best || d < best.d) best = { d, world: w };
@@ -557,6 +558,8 @@ function brepSnap(x, y, tol = 26) {
   }
   return best;
 }
+// a point on a body under the finger: an exact snap point if one is near, else the surface point
+Draw.setSolidPointPicker((x, y) => { const b = brepSnap(x, y, 20); if (b) return b.world; const hit = view.pickObject(x, y); return hit ? hit.point : null; });
 // a round body edge under the finger: { r, c (world), closed, len }
 Draw.setSolidCirclePicker((x, y) => {
   let best = null;
@@ -581,8 +584,34 @@ Draw.setSolidCirclePicker((x, y) => {
     const ab = M.sub(b, a), am = M.sub(m, a), n = M.cross(ab, am), n2 = M.dot(n, n);
     c = M.add(a, M.mul(M.add(M.mul(M.cross(n, ab), M.dot(am, am)), M.mul(M.cross(am, n), M.dot(ab, ab))), 1 / (2 * n2)));
   }
-  return { r: M.dist(a, c), c, closed: !!e.closed, len: e.len };
+  return { r: clean32(M.dist(a, c)), c: c.map(clean32), closed: !!e.closed, len: e.len };
 });
+// ---------- assembly helpers ----------
+// show only the selected bodies (a view setting, not saved) until Show all
+function isolate(on) {
+  if (on) { const ids = selectedObjs().map(o => o.id); if (!ids.length) return toast('Select the bodies to isolate'); S.ed.isolate = new Set(ids); toast(`Isolated ${ids.length} bod${ids.length === 1 ? 'y' : 'ies'} — Show all brings the rest back`); }
+  else S.ed.isolate = null;
+  view.markSelDirty(); refresh(); view.render();
+}
+// overlapping solids (parts that would collide): exact intersection volumes, pair by pair
+function checkInterference(objs) {
+  const list = (objs && objs.length >= 2 ? objs : S.doc.objects.filter(isShown)).filter(o => o.shape);
+  if (list.length < 2) return toast('Interference needs at least two solids');
+  const W = list.map(o => ({ o, w: K.worldShape(o), b: null })); W.forEach(x => { x.b = x.w.boundingBox.bounds; });
+  const hits = [];
+  for (let i = 0; i < W.length; i++) for (let j = i + 1; j < W.length; j++) {
+    const A = W[i], B = W[j];
+    if ([0, 1, 2].some(k => A.b[1][k] < B.b[0][k] || B.b[1][k] < A.b[0][k])) continue;
+    let v = 0; try { const x = A.w.intersect(B.w); v = K.isEmpty(x) ? 0 : K.volume(x); } catch (e) { continue; }
+    if (v > 1e-6) hits.push({ a: A.o, b: B.o, v });
+  }
+  if (!hits.length) { toast(`No interference between ${list.length} solids`); return; }
+  S.ed.selected = new Set(hits.flatMap(x => [x.a.id, x.b.id])); S.ed.active = hits[0].a.id; S.ed.pick = 'solid';
+  popover($('#btn-menu'), h('div', {}, h('div', { class: 'mtitle' }, `Interference · ${hits.length} pair${hits.length > 1 ? 's' : ''}`),
+    ...hits.map(x => h('div', { class: 'mnote', style: 'padding:6px 12px' }, `${x.a.name} ↔ ${x.b.name}: ${fmtVol(x.v)} overlap`)),
+    h('div', { class: 'mnote', style: 'padding:6px 12px;opacity:.75' }, 'The overlapping bodies are selected. Isolate them, or Subtract one from the other to make room.')));
+  selectionChanged();
+}
 function measureTap(x, y) {
   let p = null;
   const v = brepSnap(x, y) || view.pickVertex(x, y, { tol: 30, objs: S.doc.objects.filter(o => isShown(o) && !o.brep) });
@@ -839,6 +868,9 @@ function renderActions() {
     if (edges) c.push(act(I.fillet, 'Fillet', () => modifier('fillet'), 'primary'), act(I.chamfer, 'Chamfer', () => modifier('chamfer')),
       ...(S.ed.edges.some(q => q.pts) ? [act(I.next, 'Chain', () => growEdges(false)), act(I.all, 'All edges', () => growEdges(true))] : []));
     if (curves) c.push(act(I.move, 'Move', () => acadTool('move')), act(I.dup, 'Copy', () => acadTool('copy')), act(I.rotate, 'Rotate', () => acadTool('rotate')), act(I.flip, 'Mirror', () => acadTool('mirror')), act(I.scale, 'Scale', () => acadTool('scale')), act(I.inset, 'Offset', () => acadTool('offset')), act(I.array, 'Array', () => acadTool('arrayrect')), act(I.constrain, 'Constrain', e => openConstrainMenu(e.currentTarget)), act(I.line, 'Construction', () => Draw.toggleConstruction()), act(I.trash, 'Delete', () => Draw.deleteSelected(), 'danger'));
+    if (S.ed.isolate) c.push(act(I.eye, 'Show all', () => isolate(false), 'primary'));
+    if (solids >= 2) c.push(act(I.intersect, 'Interference', () => checkInterference(selectedObjs())));
+    if (solids && !S.ed.isolate) c.push(act(I.eye, 'Isolate', () => isolate(true)));
     const linked = solids === 1 ? selectedObjs().find(o => o.link) : null;
     if (linked) c.push(act(I.history, PJ.outOfDate(linked.link.pid) ? 'Sync ●' : 'Sync', () => PJ.syncComponent(linked.link.pid), PJ.outOfDate(linked.link.pid) ? 'primary' : ''), act(I.folder, 'Open source', () => PJ.openSource(linked.link.pid)));
     if (linked) c.push(act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; refresh(); } }), act(I.array, 'Array', () => runOp(OPS.arrayOp)), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'));
@@ -966,7 +998,7 @@ function commands() {
     C('Move', 'G', tool('move'), 'grab translate'), C('Rotate', 'R', tool('rotate')), C('Scale', 'S', tool('scale')), C('Duplicate', '⇧D', () => runOp(OPS.duplicate), 'copy'), C('Delete', 'X', () => deleteSelection(), 'erase remove'),
     ...OPS.PRIM_TYPES.map(([t, l]) => C(`Add ${l}`, '', () => addSketchedPrim(t), 'primitive solid box')),
     C('Select: Edge mode', '2', () => setPick('edge'), 'curve'), C('Select: Face mode', '3', () => setPick('face'), 'region'), C('Select: Solid mode', '4', () => setPick('solid'), 'body'), C('Edit mesh (polygons)', 'Tab', () => setPick('mesh')),
-    C('Measure distance', '', () => acadTool('dist'), 'dist inquiry'), C('Measure angle', '', () => acadTool('angle')), C('Measure area', '', () => acadTool('area')), C('Measure (3D)', '', tool('measure')),
+    C('Measure distance', '', () => acadTool('dist'), 'dist inquiry'), C('Check interference', '', () => checkInterference(), 'clash overlap collision assembly fit'), C('Isolate selection', '', () => isolate(true), 'hide others focus'), C('Show all', '', () => isolate(false), 'unhide isolate'), C('Measure angle', '', () => acadTool('angle')), C('Measure area', '', () => acadTool('area')), C('Measure (3D)', '', tool('measure')),
     C('Construction plane: Top (XY)', '', () => { S.ed.cplane = null; toast('Drawing plane: XY'); }, 'cplane'), C('Construction plane: Front (XZ)', '', () => { S.ed.cplane = SK.PLANES.XZ; toast('Drawing plane: XZ'); }, 'cplane'), C('Construction plane: Right (YZ)', '', () => { S.ed.cplane = SK.PLANES.YZ; toast('Drawing plane: YZ'); }, 'cplane'),
     C('Toggle construction curves', '', () => Draw.toggleConstruction()), C('Toggle snapping', '', () => $('#btn-snap').click(), 'snap'), C('Toggle X-ray', '', () => $('#btn-xray').click()), C('Toggle perspective / ortho', '5', () => view.toggleOrtho()),
     C('View: Top', '7', () => view.setView('top')), C('View: Front', '1', () => view.setView('front')), C('View: Right', '3', () => view.setView('right')), C('View: Isometric', '0', () => view.setView('iso')), C('Frame all', 'Home', () => view.frame(S.doc.objects.flatMap(worldVerts).concat(allSketchPoints()))),
@@ -1117,10 +1149,11 @@ function itemTab() {
   if (S.ed.mode === 'edit' && o) return editItemTab(o);
   if (!o || !S.ed.selected.has(o.id)) return [h('p', { class: 'note' }, 'Nothing selected. Tap an object in the viewport, or add one with ', h('b', {}, '+ Add'), '.')];
   const id = o.id;
-  const xyzFields = (key, kind, label) => h('div', { class: 'fields' }, [0, 1, 2].map(k => field({
-    label: 'XYZ'[k], kind, value: o[key][k], cls: AXC[k],
-    onCommit: v => setProp(`${label} ${'XYZ'[k]}`, id, ob => { ob[key][k] = v; }),
+  const xyzFields = (key, kind, label, ro = false) => h('div', { class: 'fields' }, [0, 1, 2].map(k => field({
+    label: 'XYZ'[k], kind, value: o[key][k], cls: AXC[k], readonly: ro,
+    onCommit: v => { if (!ro) setProp(`${o.name} · ${label} ${'XYZ'[k]}`, id, ob => { ob[key][k] = v; }); },
   })));
+  const linked = !!o.link; // a linked part can be placed (location, rotation) but not resized
   const local = M.bbox(o.mesh.v);
   const size = [0, 1, 2].map(k => (o.mesh.v.length ? local.max[k] - local.min[k] : 0));
   const dims = size.map((s, k) => s * Math.abs(o.scl[k]));
@@ -1138,11 +1171,12 @@ function itemTab() {
     group('Object', h('div', { style: 'display:flex;gap:8px;align-items:center' }, nameIn, colorIn)),
     group('Location', xyzFields('loc', 'len', 'Location')),
     group('Rotation', xyzFields('rot', 'ang', 'Rotation')),
-    group('Scale', xyzFields('scl', 'num', 'Scale')),
+    group('Scale', xyzFields('scl', 'num', 'Scale', linked)),
     group('Dimensions', h('div', { class: 'fields' }, [0, 1, 2].map(k => field({
-      label: 'XYZ'[k], kind: 'len', value: dims[k], cls: AXC[k], readonly: size[k] === 0,
-      onCommit: v => { if (size[k] > 0) setProp(`Dimension ${'XYZ'[k]}`, id, ob => { ob.scl[k] = (v / size[k]) * (Math.sign(ob.scl[k]) || 1); }); },
+      label: 'XYZ'[k], kind: 'len', value: dims[k], cls: AXC[k], readonly: size[k] === 0 || linked,
+      onCommit: v => { if (size[k] > 0 && !linked) setProp(`${o.name} · Dimension ${'XYZ'[k]}`, id, ob => { ob.scl[k] = (v / size[k]) * (Math.sign(ob.scl[k]) || 1); }); },
     })))),
+    linked ? h('p', { class: 'note' }, 'A linked part keeps its size — change it in its own project, then Sync.') : null,
     group('Mesh',
       stat('Vertices', String(o.mesh.v.length)), stat('Edges', String(edges.length)), stat('Faces', String(o.mesh.f.length)),
       stat('Surface area', fmtArea(area)),
@@ -1241,6 +1275,7 @@ function openMainMenu() {
     menuItem(I.file, 'New project', () => PJ.newProject()),
     menuItem(I.folder, 'Open / Import…', () => $('#file-input').click(), 'json step stl obj'),
     menuItem(I.save, 'Save project', () => saveProject()),
+    menuItem(I.intersect, 'Check interference', () => checkInterference()),
     h('div', { class: 'msep' }),
     menuItem(I.save, 'Export STEP (exact)', () => exportAs('step'), selLabel()),
     menuItem(I.save, 'Export STL', () => exportAs('stl'), selLabel()),
@@ -1293,13 +1328,18 @@ function exportTargets() {
 async function exportAs(kind) {
   const objs = exportTargets();
   if (!objs.length) { toast('Nothing to export'); return; }
-  const name = (objs.length === 1 ? objs[0].name : 'streamline').replace(/[^\w.-]+/g, '_');
+  const name = (objs.length === 1 ? objs[0].name : PJ.projectName() || 'streamline').replace(/[^\w.-]+/g, '_');
   let blob;
   if (kind === 'step') {
     const solids = objs.filter(o => o.shape);
     if (!solids.length) { toast('STEP needs exact solids (imported meshes have none)'); return; }
-    try { const shapes = solids.map(o => K.worldShape(o)); blob = (shapes.length === 1 ? shapes[0] : K.R.makeCompound(shapes)).blobSTEP(); }
-    catch (err) { console.error(err); toast('STEP export failed'); return; }
+    // an assembly STEP: one named, coloured part per body (so CAD apps show the part names)
+    try { blob = K.R.exportSTEP(solids.map(o => ({ shape: K.worldShape(o).clone(), name: o.name, color: o.color })), { unit: 'MM' }); }
+    catch (err) {
+      console.warn('assembly STEP failed, writing a plain compound', err);
+      try { const shapes = solids.map(o => K.worldShape(o).clone()); blob = (shapes.length === 1 ? shapes[0] : K.R.makeCompound(shapes)).blobSTEP(); }
+      catch (err2) { console.error(err2); toast('STEP export failed'); return; }
+    }
   } else blob = kind === 'stl' ? IO.exportSTL(objs) : IO.exportOBJ(objs);
   const r = await IO.deliver(blob, `${name}.${kind}`);
   if (r !== 'cancelled') toast(`Exported ${objs.length} object${objs.length > 1 ? 's' : ''} (mm)`);

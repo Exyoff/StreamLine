@@ -57,4 +57,5 @@ export function saveSettings() {
 
 // visible = not hidden itself and on a visible layer (objects and sketches)
 export function layerVisible(id) { const l = (S.doc.layers || []).find(x => x.id === (id ?? 1)); return !l || l.visible !== false; }
-export function isShown(x) { return !!x && !x.hidden && layerVisible(x.layer); }
+export function isShown(x) { return !!x && !x.hidden && layerVisible(x.layer) && (!S.ed.isolate || !x.mesh || S.ed.isolate.has(x.id)); }
+// Isolate (view only, not saved): just these bodies are shown until Show all
