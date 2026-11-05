@@ -690,6 +690,12 @@ body.has-handle #toast.show { transform: translate(-50%, 0) scale(1); }
 .zb-tool svg { width: 19px; height: 19px; }
 .zb-tool.on { background: var(--accent); color: var(--accent-ink); }
 .zb-tool:active { transform: scale(.92); }
+/* phone landscape: too short for the column above the cube — it stands just left of the Home / Frame / Persp
+   stack instead, full height, without the + / − steps (the handle and pinch still zoom) */
+@media (orientation: landscape) and (max-height: 500px) {
+  #zoombar { right: calc(var(--sar) + 160px); top: calc(var(--topH) + 6px); bottom: calc(var(--bot) + var(--cmdh) + var(--tlh) + 10px); max-height: 300px; }
+  #zoombar .zb-btn { display: none; }
+}
 .zb-btn { flex: none; width: 36px; height: 30px; border-radius: 15px; font: 600 20px/1 var(--font); color: var(--muted); }
 .zb-btn:active { background: var(--fill-2); color: var(--text); }
 .zb-track { position: relative; flex: 1; min-height: 64px; width: 100%; display: grid; place-items: center; touch-action: none; }
@@ -725,5 +731,6 @@ body.ws-model.has-lastop #zoombar, body.has-drawcard #zoombar, body.has-lastop #
 #btn-finish { flex: none; display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 15px 0 11px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font: 700 13.5px var(--font); }
 #btn-finish svg { width: 17px; height: 17px; }
 #btn-finish:active { transform: scale(.96); }
+@media (orientation: landscape) and (max-height: 500px) { #skbar { top: calc(var(--sat) + 52px); height: 38px; } #btn-finish { height: 32px; } }
 body.sketching #toolsets .tset.on { background: var(--accent-soft); }
 .vlabel.plane { background: rgba(20,24,34,.75); font: 700 11px var(--font); letter-spacing: .04em; }
