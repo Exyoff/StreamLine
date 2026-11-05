@@ -117,7 +117,7 @@ async function boot() {
 }
 function defaultScene() {
   S.doc.objects = []; S.doc.sketches = []; S.doc.nextId = 1;
-  S.doc.history = []; S.doc.marker = null; S.doc.components = {}; S.doc.layers = [{ id: 1, name: 'Default', visible: true }]; S.doc.layer = 1;
+  S.doc.history = []; S.doc.marker = null; S.doc.gonePres = {}; S.doc.components = {}; S.doc.layers = [{ id: 1, name: 'Default', visible: true }]; S.doc.layer = 1;
   S.ed.tools = { draw: 'line', cad: 'select', model: 'select' };
   S.ed.workspace = 'model'; S.ed.tool = 'select'; S.ed.sketch = null;
 }
@@ -712,7 +712,10 @@ function mateTap(x, y) {
     return retry(direct ? `${B.name} is already mated onto ${A.name} — mate them the other way round (tap ${B.name}'s face first)` : `${B.name} already hangs off ${A.name} through other mates — mating it back would make a loop`); }
   S.ed.faces = []; S.ed.selected = new Set([A.id]); S.ed.active = A.id; // (stays in Face mode for the next mate)
   // a Mate step in the history: it is solved again whenever the parts change (e.g. after Sync)
-  if (!runOp(F.mateOp, { a: JSON.parse(JSON.stringify(from)), b: JSON.parse(JSON.stringify(to)), gap: 0, align: 'face' })) return retry('Could not mate those faces');
+  // two faces pointing the same way on a part that is already mated: Flush (turning it round would undo its other mates)
+  const GA = F.mateGeom(from), GB = F.mateGeom(to), held = H.hist().some(r => r.op === 'F.mateOp' && !r.off && !r.err && r.params.a.obj === A.id);
+  const align = GA?.kind === 'plane' && GB?.kind === 'plane' && M.dot(GA.n, GB.n) > 0.9999 && held ? 'flush' : 'face';
+  if (!runOp(F.mateOp, { a: JSON.parse(JSON.stringify(from)), b: JSON.parse(JSON.stringify(to)), gap: 0, align })) return retry('Could not mate those faces');
   const rec = H.hist().find(r => r.params === getLast()?.params);
   if (rec?.err) toast(`${A.name} → ${objById(to.obj).name}: ${rec.err}`);
   else toast(`${A.name} mated to ${objById(to.obj).name}${err.kind === 'axis' ? ' (same axis — slide it along with Move)' : ' — set a Gap on the card'}`);
@@ -1464,7 +1467,7 @@ function openInstall() {
 }
 
 function newScene() {
-  S.doc.objects = []; S.doc.nextId = 1;
+  S.doc.objects = []; S.doc.nextId = 1; S.doc.gonePres = {};
   S.ed.mode = 'object'; S.ed.selected = new Set(); S.ed.active = null; S.ed.editSel = new Set(); S.ed.measure = []; S.ed.profiles = []; S.ed.drawSel = new Set();
   S.ed.isolate = null; S.ed.mateFrom = null; S.ed.editingSketch = null;
   defaultScene(); resetHistory(); Draw.clearTarget(); Draw.resetTool(); scheduleSave(); refresh();
@@ -1592,6 +1595,8 @@ function onKey(e) {
     if (k === 'enter' && Draw.enter()) { refresh(); return; }
     const pm = { '2': 'edge', '3': 'face', '4': 'solid' };
     if (pm[k]) { setPick(pm[k]); return; }
+    const gk = { g: 'move', r: 'rotate', s: 'scale' }; // (as the command palette lists them)
+    if (!e.shiftKey && gk[k]) { setTool(gk[k]); return; }
     const mm = { f: 'fillet', o: 'pushpull', h: 'shell', m: 'mirror' };
     if (mm[k] && !e.shiftKey) { modifier(mm[k]); return; }
   }

@@ -125,25 +125,37 @@ function resolveRegion(sk, it) {
   // (a region that only changed size keeps its centre, so it is still the same region)
   if (it._a != null && (!r || (Math.abs(area(r) - it._a) > 1e-6 * Math.max(1, it._a) + 1e-9 && it._c && SK.d2(regionCentre(r), it._c) > 1e-6 + 0.05 * Math.sqrt(it._a)))) {
     let best = null;
-    for (const q of SK.regions(sk)) {
+    const all = SK.regions(sk);
+    for (const q of all) {
       const a = area(q); if (Math.abs(a - it._a) > 0.05 * it._a) continue;
       const d = SK.d2(regionCentre(q), it._c || it.pt); if (!best || d < best.d) best = { d, q };
     }
+    // resized in place (a ring whose outer circle shrank): the region still centred where the old one was, with the
+    // same number of holes and the nearest area
+    if (!best && it._c) for (const q of all) {
+      if (SK.d2(regionCentre(q), it._c) > 1e-6 + 0.05 * Math.sqrt(it._a) || (it._h != null && q.holes.length !== it._h)) continue;
+      const d = Math.abs(area(q) - it._a); if (!best || d < best.d) best = { d, q };
+    }
     if (best) { r = best.q; const ip = interiorPoint(sk, r); if (ip) it.pt = ip; }
+    // the point now lies in a quite different region (a small tooth instead of the ring): that is not the pick
+    else if (r && (area(r) < 0.25 * it._a || area(r) > 4 * it._a || (it._h != null && r.holes.length !== it._h))) r = null;
   }
-  if (r) { it._a = area(r); it._c = regionCentre(r); }
+  if (r) { it._a = area(r); it._c = regionCentre(r); it._h = r.holes.length; }
   return r;
 }
+// (a pick that no longer resolves is counted in .missing, so the step can say so instead of quietly building less)
 function profileGroups(pts) {
-  const groups = new Map();
+  const groups = new Map(); let missing = 0;
   for (const it of pts) {
-    const sk = SK.sketchById(it.sk); if (!sk) continue;
-    const r = resolveRegion(sk, it); if (!r) continue;
+    const sk = SK.sketchById(it.sk); if (!sk) { missing++; continue; }
+    const r = resolveRegion(sk, it); if (!r) { missing++; continue; }
     const g = groups.get(sk.id) || groups.set(sk.id, { sk, regs: [], pts: [] }).get(sk.id);
     if (!g.regs.includes(r)) { g.regs.push(r); g.pts.push(it.pt); }
   }
-  return [...groups.values()];
+  const out = [...groups.values()]; out.missing = missing;
+  return out;
 }
+const missingMsg = (gs, what) => (gs.missing ? `${gs.missing === 1 ? 'One of the picked regions no longer exists' : `${gs.missing} of the picked regions no longer exist`}${gs.length ? ` — the ${what} would be built without ${gs.missing === 1 ? 'it' : 'them'}` : ''}. Edit the step and tap the regions again` : null);
 function regionsCentroid(g) {
   const pts = g.regs.flatMap(r => r.outer);
   return SK.toW(g.sk.plane, [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length]);
@@ -245,6 +257,7 @@ export const extrude = {
     const auto = !!p._auto;
     const groups = profileGroups(p.pts);
     if (!groups.length) return 'Profiles no longer exist';
+    if (groups.missing) return missingMsg(groups, 'extrude');
     // a cut chosen by hand from a face sketch goes into the body whichever sign is typed (−1 and 1 both cut 1 deep)
     const into = g => !auto && g.sk.face && (p.mode === 'cut' || p.mode === 'intersect');
     const sgn = g => (p.flip ? -1 : 1) * (into(g) ? (p.distance >= 0 ? -1 : 1) : 1);
@@ -279,7 +292,27 @@ export const revolve = {
     // name each candidate axis by what it looks like: length and direction (↔ along the sketch's X, ↕ along Y)
     p._lines = lines.map(l => { const dx = l.b[0] - l.a[0], dy = l.b[1] - l.a[1], L = Math.hypot(dx, dy), dir = Math.abs(dy) < 1e-9 ? '↔' : Math.abs(dx) < 1e-9 ? '↕' : '⟋';
       return { v: 'l:' + l.id, label: `${l.construction ? '┄ ' : ''}${dir} ${fmtLen(L)}` }; });
-    p.axis ??= lines.find(l => l.construction) ? 'l:' + lines.find(l => l.construction).id : 'y';
+    // no construction line: the profile's own straight edge with the whole profile to one side of it (the edge
+    // that lies on the axis, as drawn for a turned part); else the sketch's Y
+    const edgeAxis = () => {
+      if (!sk) return null;
+      const regs = profileGroups(p.pts).filter(g => g.sk === sk).flatMap(g => g.regs), P = regs.flatMap(r => r.outer); if (!P.length) return null;
+      let best = null;
+      for (const l of sk.ents) {
+        if (l.t !== 'line' || l.construction) continue;
+        const L = SK.d2(l.a, l.b); if (L < 1e-9) continue;
+        if (![l.a, l.b].every(q => P.some(v => SK.d2(v, q) < 1e-6))) continue;
+        const vals = P.map(q => ((q[0] - l.a[0]) * -(l.b[1] - l.a[1]) + (q[1] - l.a[1]) * (l.b[0] - l.a[0])) / L);
+        if (Math.min(...vals) < -1e-6 && Math.max(...vals) > 1e-6) continue;
+        // (along a sketch axis first, then the longest)
+        const sc = L + (Math.abs(l.a[0] - l.b[0]) < 1e-9 || Math.abs(l.a[1] - l.b[1]) < 1e-9 ? 1e6 : 0);
+        if (!best || sc > best.sc) best = { sc, l };
+      }
+      return best ? 'l:' + best.l.id : null;
+    };
+    const touchesY = () => { const P = profileGroups(p.pts).flatMap(g => g.regs.flatMap(r => r.outer)); return P.length && Math.min(...P.map(q => Math.abs(q[0]))) < 1e-6; };
+    p.axis ??= lines.find(l => l.construction) ? 'l:' + lines.find(l => l.construction).id : touchesY() ? 'y' : edgeAxis() || 'y';
+    if (/^l:/.test(p.axis) && !p._lines.some(x => x.v === p.axis)) { const l = SK.entById(sk, +p.axis.slice(2)); if (l) { const dx = l.b[0] - l.a[0], dy = l.b[1] - l.a[1]; p._lines.push({ v: p.axis, label: `${Math.abs(dy) < 1e-9 ? '↔' : Math.abs(dx) < 1e-9 ? '↕' : '⟋'} ${fmtLen(Math.hypot(dx, dy))}` }); } }
   },
   touch: touchFeature,
   fields: p => [{ key: 'axis', label: 'Axis', kind: 'choice', options: [['x', 'Sketch X'], ['y', 'Sketch Y'], ...(p._lines || []).map(l => [l.v, l.label])], wide: true }, { key: 'angle', label: 'Angle', kind: 'ang' }, { key: 'mode', label: 'Operation', kind: 'choice', options: MODES, wide: true }],
@@ -287,6 +320,7 @@ export const revolve = {
     if (Math.abs(p.angle) < 1e-6) return 'Angle must not be zero';
     const groups = profileGroups(p.pts);
     if (!groups.length) return 'Profiles no longer exist';
+    if (groups.missing) return missingMsg(groups, 'revolve');
     const axisOf = sk => {
       if (p.axis === 'x') return { p: [0, 0], d: [1, 0] };
       if (p.axis === 'y') return { p: [0, 0], d: [0, 1] };
@@ -754,6 +788,7 @@ export const sweepOp = {
   },
 };
 
+function draftNeutral(p) { const W = worldVerts(objById(p.obj)), k = 'xyz'.indexOf(p.pull); p.neutral = p._nAuto = +Math.min(...W.map(q => q[k])).toFixed(9); p._np = p.pull; }
 export const draftOp = {
   label: () => 'Draft',
   defaults: () => ({ angle: 3, pull: 'z' }),
@@ -761,13 +796,15 @@ export const draftOp = {
     p.faces ??= JSON.parse(JSON.stringify(S.ed.faces || []));
     if (!p.faces.length) return 'Select the side faces to draft (Face mode)';
     p.obj = p.faces[0].obj; p.faces = p.faces.filter(f => f.obj === p.obj);
-    if (p.neutral == null) { const W = worldVerts(objById(p.obj)), k = 'xyz'.indexOf(p.pull); p.neutral = Math.min(...W.map(q => q[k])); }
+    if (p.neutral == null) draftNeutral(p);
   },
   touch: p => ({ ids: [p.obj], mesh: true }),
   fields: () => [{ key: 'angle', label: 'Draft angle', kind: 'ang' }, { key: 'pull', label: 'Pull direction', kind: 'choice', options: [['x', '+X'], ['y', '+Y'], ['z', '+Z']], wide: true }, lenF('neutral', 'Neutral plane')],
   apply(p) {
     const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
     const faces = findFaces(o, p.faces); if (!faces) return 'The face it used no longer exists';
+    // a new pull direction moves a neutral plane that was never typed to the part's base along that direction
+    if (p._np && p._np !== p.pull && p.neutral === p._nAuto) draftNeutral(p);
     const d = AX[p.pull], x = Math.abs(d[2]) < 0.9 ? M.norm(M.cross([0, 0, 1], d)) : [1, 0, 0];
     const res = guard(() => o.shape.draft(p.angle, () => ({ find: () => faces, delete() {} }), new R.Plane(M.mul(d, p.neutral), x, d)), 'Draft failed');
     if (typeof res === 'string') return res;
@@ -877,7 +914,7 @@ function faceCentre(o, f, tapW, strict) {
     const ca = K.circleAxisOf(hit.f);
     if (ca) {
       const cw = xf.toW(ca.c);
-      if (strict || M.dist(cw, tapW) < ca.R * 0.6) return { c: cw, how: 'circle' };
+      if (strict || ca.whole || M.dist(cw, tapW) < ca.R * 0.6) return { c: cw, how: 'circle' };
     }
     const c0 = hit.f.center, c = typeof c0 === 'function' ? c0() : c0, cw = xf.toW([c.x, c.y, c.z]);
     const b = hit.f.boundingBox.bounds, dims = [0, 1, 2].map(k => b[1][k] - b[0][k]).sort((a, b2) => a - b2), inPlane = dims[1] || dims[2];
@@ -1216,9 +1253,25 @@ export const mateOp = {
   label: p => `Mate ${objById(p.a.obj)?.name || 'part'} → ${objById(p.b.obj)?.name || 'part'}${p.b.edgeAxis || p.a.edgeAxis || mateGeom(p.b)?.kind === 'axis' ? ' (axis)' : ` (${p.align === 'flush' ? 'flush' : 'flat'}${+p.gap ? ', gap ' + fmtLen(+p.gap) : ''})`}`,
   touch: p => ({ ids: [p.a.obj], mesh: false }),
   // flat-to-flat mates take a gap: a clearance (0.5 mm round a drawer), or − to overlap
-  fields: p => (mateGeom(p.a)?.kind === 'plane' ? [{ key: 'align', label: 'Faces', kind: 'choice', options: [['face', 'Face to face'], ['flush', 'Flush']], wide: true }, lenF('gap', 'Gap (− overlaps)')] : []),
-  apply(p) { return solveMate(p); },
+  // two flat faces each tapped beside a hole's rim can mean either: the faces, or the holes' axes (a pin through both)
+  fields: p => {
+    const by = mateNearRims(p) ? [{ key: 'by', label: 'Mate by', kind: 'choice', options: [['face', 'Flat faces'], ['axis', 'Hole axes']], wide: true }] : [];
+    return mateGeom(p.a)?.kind === 'plane' ? [...by, { key: 'align', label: 'Faces', kind: 'choice', options: [['face', 'Face to face'], ['flush', 'Flush']], wide: true }, lenF('gap', 'Gap (− overlaps)')] : by;
+  },
+  apply(p) {
+    if (p.by === 'axis' && !(p.a.edgeAxis && p.b.edgeAxis)) for (const f of [p.a, p.b]) { f.edgeAxis = true; f.planar = false; delete f._ax; f._by = 1; }
+    else if (p.by === 'face') for (const f of [p.a, p.b]) if (f._by) { delete f.edgeAxis; delete f._ax; delete f._by; f.planar = true; }
+    const o = objById(p.a.obj); if (o) prePose.set(p, { loc: [...o.loc], rot: [...o.rot] }); return solveMate(p); },
 };
+// both of a mate's taps lie on flat faces right beside a round edge (within 3 mm, or the rim's radius)
+function mateNearRims(p) {
+  if (p.by === 'axis') return true;
+  if (p.a.edgeAxis || p.b.edgeAxis || p.a.planar === false || p.b.planar === false) return false;
+  return [p.a, p.b].every(f => { const o = objById(f.obj); if (!o?.shape || !f.lp) return false;
+    return (o.brep?.edges || []).some(e => e.type === 'CIRCLE' && e.closed && !e.seam && K.polyDist(f.lp, e.pts) <= Math.max(3, circleOfEdge(e.pts).R)); });
+}
+// where a mate's part was just before that mate was applied: a mate that turns out to conflict puts it back there
+const prePose = new WeakMap();
 // would mate p (p.a's part moves onto p.b's) close a loop with the mates in list? (p.b's part already depends on p.a's)
 export function mateLoop(list, p) {
   const dep = new Map(); for (const q of list) { if (!dep.has(q.a.obj)) dep.set(q.a.obj, []); dep.get(q.a.obj).push(q.b.obj); }
@@ -1242,12 +1295,20 @@ export function solveMates(recs) {
   // earlier mates win: after each mate, the part's earlier mates are solved again (latest to earliest), so a new
   // mate that contradicts them is the one left unsatisfied (and flagged), not the hinge that was there first
   const solve = r => { try { solveMate(r.params); } catch (e) { /* keep the part where it is */ } };
-  for (let pass = 0; pass < 2; pass++) ms.forEach((r, i) => { solve(r); for (let j = i - 1; j >= 0; j--) if (ms[j].params.a.obj === r.params.a.obj) solve(ms[j]); });
+  const solveAll = list => { for (let pass = 0; pass < 2; pass++) list.forEach((r, i) => { solve(r); for (let j = i - 1; j >= 0; j--) if (list[j].params.a.obj === r.params.a.obj) solve(list[j]); }); };
+  solveAll(ms);
   // a mate left unsatisfied fights another one: say so on its step (red in History) instead of failing silently
+  const bad = [];
   for (const r of ms) {
     let off = 0, msg = ''; try { const v = mateSolve(r.params.a, r.params.b, +r.params.gap || 0); if (typeof v === 'string') { if (/not parallel/.test(v)) msg = 'Conflicts with another mate (its faces are no longer parallel) — delete or edit one of them'; } else off = M.len(v.v); } catch (e) {}
     if (off > 1e-6) msg = `Conflicts with another mate (${fmtLen(off)} off) — delete or edit one of them`;
-    if (msg) { r.err = msg; r.conflict = true; }
+    if (msg) { r.err = msg; r.conflict = true; bad.push(r); }
+  }
+  // …and it does not move the part: the part goes back to where it was before that mate, and the other mates are
+  // solved again without it (a face-to-face mate that turned a part round, fighting two others, leaves it as it was)
+  if (bad.length) {
+    for (const r of bad) { const o = objById(r.params.a.obj), pp = prePose.get(r.params); if (o && pp) { o.loc = [...pp.loc]; o.rot = [...pp.rot]; } }
+    solveAll(ms.filter(r => !bad.includes(r)));
   }
 }
 

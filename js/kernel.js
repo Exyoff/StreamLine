@@ -120,10 +120,23 @@ export function stepParts(shape, text) {
     // the representation holding the item, then the product it describes
     const rep = repOf.get(item), sdr = rep != null ? sdrOf.get(rep) : null;
     const prod = sdr != null ? bfs(sdr, x => x.t === 'PRODUCT', 6) : null;
-    if (prod != null && rgb.length === 3) colorOf.set(prod, hex(rgb));
+    if (rgb.length === 3) { colorOf.set(item, hex(rgb)); if (prod != null && !colorOf.has(prod)) colorOf.set(prod, hex(rgb)); }
+  }
+  if (solids.length === 1) solids[0] = shape; // (one part: keep the shape as read)
+  // each solid's own entity (in file order, which is the order they are read), traced to the product whose
+  // representation holds it — so a part made of two solids gives both its name, and the other parts keep theirs
+  const solidIds = [...ent].filter(([, e]) => e.t === 'MANIFOLD_SOLID_BREP' || e.t === 'BREP_WITH_VOIDS').map(([id]) => id);
+  if (solidIds.length === solids.length) {
+    const prodName = new Map(products.map(p => [p.id, p.name])), seen = new Map();
+    return solids.map((sh, i) => {
+      const sid = solidIds[i], rep = repOf.get(sid), sdr = rep != null ? sdrOf.get(rep) : null;
+      const prod = sdr != null ? bfs(sdr, x => x.t === 'PRODUCT', 6) : null;
+      let name = prod != null ? prodName.get(prod) : null;
+      if (name) { const k = (seen.get(name) || 0) + 1; seen.set(name, k); if (k > 1) name = `${name} (${k})`; }
+      return { shape: sh, name: name || null, color: colorOf.get(sid) || (prod != null ? colorOf.get(prod) : null) || null };
+    });
   }
   const named = products.length === solids.length;
-  if (solids.length === 1) solids[0] = shape; // (one part: keep the shape as read)
   return solids.map((sh, i) => ({ shape: sh, name: named ? products[i].name : null, color: named ? colorOf.get(products[i].id) || null : null }));
 }
 
@@ -403,19 +416,21 @@ export function revolutionAxis(face) {
   } catch (e) { return circleAxisOf(face); } finally { try { ad && ad.delete(); } catch (e) {} }
 }
 // centre, normal and radius of the largest circular edge of a face (a boss's rim, not a hole in it)
+// (.whole: the face is a plain disc — every edge is the same circle — e.g. a boss's end face)
 export function circleAxisOf(face) {
-  let best = null;
+  let best = null, all = true; const cs = [];
   for (const e of face.edges) {
-    if (e.geomType !== 'CIRCLE') continue;
+    if (e.geomType !== 'CIRCLE') { all = false; continue; }
     try {
       const P = [0.05, 0.38, 0.71].map(t => { const v = e.pointAt(t); return [v.x, v.y, v.z]; });
       const u = sub3(P[1], P[0]), v = sub3(P[2], P[0]), w = cross3(u, v), w2 = dot3(w, w);
       if (w2 < 1e-18) continue;
       const c = P[0].map((x, k) => x + (dot3(u, u) * cross3(v, w)[k] + dot3(v, v) * cross3(w, u)[k]) / (2 * w2));
-      const R0 = Math.hypot(...sub3(P[0], c));
+      const R0 = Math.hypot(...sub3(P[0], c)); cs.push([c, R0]);
       if (!best || R0 > best.R) best = { c, d: unit3(w), R: R0 };
-    } catch (err) { /* next edge */ }
+    } catch (err) { all = false; }
   }
+  if (best) best.whole = all && cs.every(([c, r]) => Math.hypot(...sub3(c, best.c)) < 1e-6 * Math.max(1, best.R) && Math.abs(r - best.R) < 1e-6 * Math.max(1, best.R));
   return best;
 }
 const cross3 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
