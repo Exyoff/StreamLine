@@ -88,6 +88,7 @@ A mix of Fusion 360 and Plasticity. The 3D view fills the whole screen and every
   - **Joints:** the mates. Tap one to edit its gap or flush setting.
   - **Layers.**
 - **Right edge:** the zoom bar, with **Snap** and **X-ray** under it. On a phone a sketch tool's card leaves this column free, and with a step's card docked at the bottom the zoom bar moves up above it (without Snap and X-ray if room is short); the cube and its view tools step aside only when a card is over them.
+- In phone landscape, a sketch tool's card stands beside the rail like a step's card, so the zoom bar, the cube and the view tools stay in view on the right.
 - **Step cards** on a phone dock at the bottom and show their first two settings (Extrude: Distance and Operation), with **More options** for the rest; once opened, that kind of step keeps showing everything.
 - **Bottom right:** the orientation cube, with **Home**, **Frame** and **Perspective / Orthographic** in a slim column beside it. Nothing floats over the middle of the model.
 - **Look** (top bar) opens compact, and the model moves down under it so a theme or a light can be judged on the part.
