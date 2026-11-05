@@ -49,9 +49,12 @@ const closeCard = async () => { if (await p.locator('#lastop .ib[aria-label=Done
 const frame = (lo, hi) => p.evaluate(([lo, hi]) => { StreamLine.view.frame([lo, hi]); }, [lo, hi]).then(() => p.waitForTimeout(450));
 
 try {
-  // --- one studio, Plasticity selection modes
-  check(await st(() => StreamLine.S.ed.workspace) === 'model' && await p.locator('#ws-seg [data-pick=solid]').isVisible(), 'opens in the single 3D studio with Edge / Face / Solid modes');
-  check((await ctxBar()).includes('Add solid'), 'empty selection: the command bar offers Add solid and drawing tools');
+  // --- one studio: tool sets along the bottom, their tools down the left rail, no pick-mode switch
+  check(await st(() => StreamLine.S.ed.workspace) === 'model' && await p.locator('#ws-seg').count() === 0 && await p.locator('#toolsets .tset').count() === 7, 'opens in the single 3D studio: tool sets along the bottom, no Edge / Face / Solid switch');
+  check((await ctxBar()).length === 0 && await p.locator('#tools .tool[data-tool=line]').isVisible(), 'empty selection: no command row; the Sketch tool set fills the left rail');
+  await p.tap('#toolsets .tset[data-set=constrain]'); await p.waitForTimeout(150);
+  check(await p.locator('#tools .tool[data-cons=h]').isVisible() && await p.locator('#tools .tool[data-cons=tan]').count() === 1, 'the Constrain tool set lists the constraints down the left rail');
+  await p.tap('#toolsets .tset[data-set=sketch]'); await p.waitForTimeout(150);
 
   // --- command palette: search and run
   await p.tap('#btn-cmd'); await p.fill('.pal-in', 'rect'); await p.press('.pal-in', 'Enter'); await p.waitForTimeout(150);
@@ -77,15 +80,14 @@ try {
   await p.locator('.tool[data-tool=select]').tap();
   await frame([-25, -20, 0], [25, 20, 10]);
 
-  // --- Face mode: pick the region, extrude
-  await p.tap('#ws-seg [data-pick=face]');
+  // --- pick the region (a tap inside the outline), extrude
   let c = await projW([-12, -8, 0]); await tapV(c.x, c.y);
-  check(await st(() => StreamLine.S.ed.profiles.length) === 1, 'Face mode: tapping inside the outline picks the region');
+  check(await st(() => StreamLine.S.ed.profiles.length) === 1, 'tapping inside the outline picks the region');
   check((await ctxBar()).includes('Extrude'), 'region selected: the command bar shows Extrude / Revolve / Sweep');
   await p.locator('#actions .act', { hasText: 'Extrude' }).tap(); await p.waitForTimeout(200);
   check(await st(() => StreamLine.S.doc.objects.length === 0 && StreamLine.getLast().params.distance === 0 && !!StreamLine.getLast().handle && !StreamLine.H.hist().some(r => r.op === 'F.extrude')),
     'Extrude starts at 0: no body and no timeline step until a distance is given, arrow shown');
-  check(await p.locator('#layerpill').isVisible() && /Default/.test(await p.textContent('#layerpill')), 'the active layer is always shown in the view');
+  check(await p.locator('#timeline').isVisible() && (await p.locator('#timeline').boundingBox()).y < 140 && await p.locator('#timeline .tl-ctl').count() === 4, 'the history timeline is always shown along the top, with playback buttons');
   await p.tap('#lastop .field .val'); await keypad('8');
   check(await st(() => StreamLine.H.hist().filter(r => r.op === 'F.extrude').length === 1), 'typing the distance builds the body and records one Extrude step');
   const area = 1200 - Math.PI * 25; // exact: the hole is a true cylinder
@@ -113,10 +115,9 @@ try {
   await closeCard();
   await shot('2-face');
 
-  // --- Edge mode: fillet a body edge
-  await p.tap('#ws-seg [data-pick=edge]');
+  // --- a tap on an edge picks it: fillet it
   c = await projW([0, -15, 8]); await tapV(c.x, c.y);
-  check(await st(() => StreamLine.S.ed.edges.length) === 1, 'Edge mode picks a body edge');
+  check(await st(() => StreamLine.S.ed.edges.length) === 1, 'a tap on a body edge picks the edge');
   check((await ctxBar()).includes('Fillet'), 'edge selected: Fillet / Chamfer offered');
   await p.locator('#actions .act', { hasText: 'Fillet' }).tap();
   const v2 = await vol();
@@ -131,17 +132,18 @@ try {
   await p.tap('#draw-card .field.ax-y .val'); await keypad('-30');
   await p.tap('#draw-card .field .val'); await keypad('40');
   await p.locator('#draw-card .btn', { hasText: 'Finish' }).tap();
-  await p.locator('.tool[data-tool=select]').tap();
+  await p.locator('.tool[data-tool=select]').tap(); await p.waitForTimeout(350); // (the view settles once the draw card closes)
   c = await projW([0, -30, 0]);
   await tapV(c.x, c.y);
   const curveSel = await st(() => StreamLine.S.ed.drawSel.size);
-  check(curveSel === 1 && (await ctxBar()).includes('Offset'), 'Edge mode on a sketch curve selects it; Move / Offset / Constrain offered');
+  check(curveSel === 1 && (await ctxBar()).includes('Offset'), 'a tap on a sketch curve selects it; Move / Offset / Constrain offered');
 
-  // --- Solid mode
-  await p.tap('#ws-seg [data-pick=solid]');
-  c = await projW([-10, 8, 4]); await tapV(c.x, c.y);
-  
-  check(await st(() => StreamLine.S.ed.selected.size) === 1 && (await ctxBar()).includes('Boolean'), 'Solid mode selects the body; Boolean / Mirror / Shell offered');
+  // --- a face, then the same spot again: the whole body (the curve's card is put away first: it sits over the part)
+  await p.evaluate(() => { StreamLine.S.ed.drawSel = new Set(); StreamLine.refresh(); }); await p.waitForTimeout(300);
+  c = await projW([-10, 8, 8]); await tapV(c.x, c.y);
+  check(await st(() => StreamLine.S.ed.faces.length === 1 && StreamLine.S.ed.pick === 'face'), 'a tap on a face picks the face');
+  await tapV(c.x, c.y);
+  check(await st(() => StreamLine.S.ed.selected.size === 1 && StreamLine.S.ed.pick === 'solid' && !StreamLine.S.ed.faces.length) && (await ctxBar()).includes('Boolean'), 'tapping the face again selects the whole body; Boolean / Mirror / Shell offered');
   await shot('3-solid');
 
   // --- optional AutoCAD command line, from the palette
@@ -213,22 +215,24 @@ try {
   check(await st(id => !StreamLine.S.doc.objects.find(o => o.id === id), box.id), 'suppressing a step removes its result');
   await st(() => { const r = StreamLine.H.hist().findLast(x => x.op === 'F.extrude'); StreamLine.BR.toggleStep(r.id); });
   // layers + visibility
-  await p.tap('#layerpill'); await p.waitForTimeout(250);
-  check(await p.locator('#sheet.open').count() === 1 && await p.locator('#sheet-tabs [data-tab=objects].on').count() === 1, 'the layer pill opens the Layers panel');
-  check(await p.locator('#sheet-body h3', { hasText: 'Layers' }).count() === 1 && await p.locator('#sheet-body h3', { hasText: 'Bodies' }).count() === 1, 'Items shows Layers, Sketches and Bodies');
+  await p.tap('#btn-browser'); await p.waitForTimeout(450);
+  check(await p.locator('#browser.open').count() === 1, 'the Browser button opens the Browser from the bottom bar');
+  check(await p.locator('#browser-body .trow.folder', { hasText: 'Origin' }).count() === 1 && await p.locator('#browser-body .trow.folder', { hasText: 'Bodies' }).count() === 1 && await p.locator('#browser-body .trow.folder', { hasText: 'Sketches' }).count() === 1 && await p.locator('#browser-body .trow.folder', { hasText: 'Layers' }).count() === 1, 'the Browser is a Fusion-style tree: Origin, Bodies, Sketches, Layers');
   await st(() => StreamLine.runOp({ label: () => 'Add layer', presentation: true, touch: () => 'all', apply() { StreamLine.S.doc.layers.push({ id: 2, name: 'Parts', visible: true }); StreamLine.S.doc.layer = 2; } }));
   await st(id => StreamLine.runOp({ label: () => 'mv', presentation: true, touch: () => 'all', apply() { StreamLine.S.doc.objects.find(o => o.id === id).layer = 2; } }), box.id);
   await st(() => StreamLine.runOp({ label: () => 'hide', presentation: true, touch: () => 'all', apply() { StreamLine.S.doc.layers.find(l => l.id === 2).visible = false; } }));
   check(await st(id => !StreamLine.isShown(StreamLine.S.doc.objects.find(o => o.id === id)), box.id), 'hiding a layer hides the bodies on it');
   await st(() => { const sk = StreamLine.S.doc.sketches.at(-1); sk.hidden = false; StreamLine.runOp(StreamLine.F.sketchOp('Widen', sk.id, k => { k.ents.find(e => e.t === 'rect').w = 30; })); });
   check(await st(id => StreamLine.S.doc.objects.find(o => o.id === id).layer === 2, box.id), 'layer and visibility survive a rebuild');
-  await p.tap('#sheet-body button.btn.wide'); await p.waitForTimeout(250);
+  await p.locator('#browser-body .trow.folder', { hasText: 'Layers' }).tap(); await p.waitForTimeout(200);
+  await p.locator('#browser-body .trow', { hasText: 'New layer' }).tap(); await p.waitForTimeout(250);
   await p.fill('.askform input', 'Fixtures'); await p.press('.askform input', 'Enter'); await p.waitForTimeout(200);
   check(await st(() => StreamLine.S.doc.layers.some(l => l.name === 'Fixtures' ) && StreamLine.S.doc.layers.find(l => l.id === StreamLine.S.doc.layer).name === 'Fixtures'), 'New layer uses an in-app name field and becomes active');
-  await st(() => { const L = StreamLine.S.doc; L.layer = 1; });
-  check(await p.locator('#sheet-body .objrow.act').count() === 0 && await p.locator('#sheet-body .objrow.cur').count() >= 1, 'Browser rows use their own "current" style (no clash with the command bar)');
-  await tapV(24, 300);
-  check(!(await p.locator('#sheet.open').count()), 'tapping the viewport closes the Browser sheet on a phone');
+  await st(() => { const L = StreamLine.S.doc; L.layer = 1; StreamLine.refresh(); });
+  await p.waitForTimeout(200);
+  check(await p.locator('#browser-body .trow.sel', { hasText: 'Default' }).count() === 1, 'the active layer is marked in the Browser');
+  await p.tap('#btn-browser'); await p.waitForTimeout(450);
+  check(!(await p.locator('#browser.open').count()), 'the Browser button closes it again');
   // Plasticity-style hole: on a face, pushing the extrude into the body cuts automatically
   await st(() => StreamLine.addSketchedPrim('cube'));
   const cube = await st(() => { const o = StreamLine.S.doc.objects.at(-1); return { id: o.id, v: StreamLine.K.volume(o.shape) }; });
@@ -255,7 +259,6 @@ try {
   const vF3 = await st(id => StreamLine.K.volume(StreamLine.S.doc.objects.find(o => o.id === id).shape), cube.id);
   check(!(await st(() => StreamLine.H.hist().some(r => r.err))) && Math.abs(vF3 - vF2 - 20 * 2 * 35) < 1e-6, `a fillet follows its edge when the sketch moves it sideways (+${(vF3 - vF2).toFixed(3)} mm³)`);
   // edit a sketch from the timeline: editing mode with a Finish command
-  await p.tap('#ws-seg [data-pick=edge]'); await p.waitForTimeout(150); // already in Edge mode: the bar must still switch
   await st(() => { const r = StreamLine.H.hist().find(x => x.kind === 'sketch'); StreamLine.BR.editStep(r.id); });
   await p.waitForTimeout(250);
   check(/Editing/.test(await p.textContent('#hud')) && (await ctxBar()).includes('Finish'), 'Edit sketch: HUD says Editing, Finish offered');
@@ -468,10 +471,9 @@ try {
       L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [2002, 2] }], distance: 10, mode: 'new', target: null });
       L.runOp(F.sketchOpNew('pin', XY(0), null, k => { F.addEntity(k, { t: 'circle', c: [2060, 40], r: 3 }); }));
       L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [2060, 40] }], distance: 30, mode: 'new', target: null });
-      L.S.ed.selected = new Set(); L.S.ed.pick = 'face'; L.refresh(); return L.S.doc.objects.at(-1).id;
+      L.S.ed.selected = new Set(); L.S.ed.pick = 'face'; L.S.ed.drawSel = new Set(); L.S.ed.profiles = []; L.S.ed.faces = []; L.S.ed.edges = []; L.refresh(); return L.S.doc.objects.at(-1).id;
     });
     await p.evaluate(() => { [...document.querySelectorAll('#keypad button')].find(b => b.textContent === 'Cancel')?.click(); document.querySelector('#lastop .ib[aria-label=Done]')?.click(); }); await p.waitForTimeout(200);
-    await p.tap('#ws-seg [data-pick=face]');
     await p.evaluate(() => StreamLine.view.setView('iso')); await p.waitForTimeout(400);
     await frame([1995, -5, 0], [2070, 50, 30]);
     let q = await projW([2063, 40, 15]); await tapV(q.x, q.y);

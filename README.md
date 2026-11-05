@@ -37,14 +37,14 @@ On iPhone, open the page in Safari, then Share → **Add to Home Screen**. It th
 Solids are exact boundary representations computed by **OpenCascade** (the kernel behind FreeCAD), compiled to WebAssembly and used through **replicad**.
 - **True surfaces:** planes, cylinders, cones, spheres and tori, with rolling-ball fillets and true chamfers. Volumes and measurements are exact (a Ø10 hole is exactly 25π mm² in plan), and edges and corners are perfect at any zoom.
 - **Sketch regions:** the sketch curves split the sketch plane exactly, so arcs and circles stay arcs and circles in the solid.
-- **Selection:** Face mode picks whole faces, including curved ones, and Edge mode picks true edges. Cylinder seams are hidden.
+- **Selection:** a tap picks whole faces, including curved ones, or true edges. Cylinder seams are hidden.
 - **Files:** STEP export (menu → Export STEP) and STEP import (Open… a .step/.stp) carry the exact geometry to other CAD apps. An imported assembly comes in as one body per part, with the file's part names and colours. STL/OBJ export uses a fine tessellation.
 - **Autosave** stores only the history and sketches; solids are rebuilt from it on load. Saved projects (.streamline.json) include the exact solids.
 - **Mesh editing:** imported STL/OBJ files stay triangle meshes and keep vertex editing ("Edit mesh"). Solids are changed with features instead.
 - The kernel (about 7 MB compressed) loads once and is then cached for offline use. Licences: OpenCascade LGPL-2.1 and replicad MIT, both in `vendor/occ/`.
 
 ## Fasteners: threads, holes, recesses
-- **Thread:** in Face mode, tap a shaft or a round hole, then tap **Thread**. It cuts a true helical ISO thread (60°), exact geometry that exports to STEP. The ISO coarse pitch is suggested from the diameter (M8 gets 1.25). Pitch, length, the end it starts from and left-hand are all editable. A hole gets an internal thread; a hole drilled at the ISO tap-drill size (Ø6.8 for M8) is threaded as that nominal size (the thread zone opens to the major diameter). Threads find their cylinder again by its axis when an earlier hole or shaft changes size.
+- **Thread:** tap a shaft or a round hole, then tap **Thread**. It cuts a true helical ISO thread (60°), exact geometry that exports to STEP. The ISO coarse pitch is suggested from the diameter (M8 gets 1.25). Pitch, length, the end it starts from and left-hand are all editable. A hole gets an internal thread; a hole drilled at the ISO tap-drill size (Ø6.8 for M8) is threaded as that nominal size (the thread zone opens to the major diameter). Threads find their cylinder again by its axis when an earlier hole or shaft changes size.
 - **Hole:** tap a flat face, then **Hole**. Choose simple, counterbore or countersink; the depth is a set value, or 0 for through — through just the wall it starts in (a port in a box side) or through everything. The centre snaps to the grid and can be typed. **Pattern** turns one hole into a row, a grid or a bolt circle in a single step, which you can still edit from the timeline.
 - **Recess:** tap a screw head's flat top, then **Recess**. Choose a slot, a cross (Phillips-style), a hex socket or a square drive. Set the size, depth and rotation; sockets get a 118° drill-point cone at the bottom. Recesses can be patterned like holes. A tap near the middle of a face (a screw head, a nut) centres the hole or recess exactly; both follow their face when an earlier step moves it.
 - **Polygon:** size it **across flats** (13 mm for an M8 nut and head) or to a corner, and set its rotation.
@@ -52,13 +52,13 @@ Solids are exact boundary representations computed by **OpenCascade** (the kerne
 
 ## Drawing planes
 - The **Plane** button picks Top / Front / Right, **Offset this plane…** by a typed distance (a sketch 70 mm up for a loft; units and expressions work), or **Tilt this plane…** by a typed angle about its X direction (a 15° phone slot).
-- In Face mode, select a face and tap **Plane here**: the drawing plane goes through the tapped point, touching the face — on a curved wall it is the tangent plane, so a spout or handle can be sketched where it attaches. Typed coordinates on it are the model's own (its origin sits where the plane passes nearest the world origin) — except that a face you look at from below or behind has one axis running against the model's; the toast says which (on a bottom face, the sketch's Y is the model's −Y). Hole patterns always run their rows toward the model's +Y (+Z on a wall), on any face.
+- Select a face and tap **Plane here**: the drawing plane goes through the tapped point, touching the face — on a curved wall it is the tangent plane, so a spout or handle can be sketched where it attaches. Typed coordinates on it are the model's own (its origin sits where the plane passes nearest the world origin) — except that a face you look at from below or behind has one axis running against the model's; the toast says which (on a bottom face, the sketch's Y is the model's −Y). Hole patterns always run their rows toward the model's +Y (+Z on a wall), on any face.
 
 ## Projects and assemblies
 - Every project saves on this device automatically (IndexedDB) and stays there offline. Open **Menu → Projects & assemblies** to open, rename, duplicate or delete projects, or to start a new one.
 - **Insert into this project** places another project's solids as a linked component (🔗). Move or rotate it, and measure, sketch on or snap to its faces like any body. Its shape is read-only here.
 - When the source project changes, the component shows **Sync ●**. Select it and tap **Sync** to bring in the latest version; its placement is kept and later steps rebuild. **Open source** jumps to the project it came from. A part is only marked out of date when its solids really changed.
-- **Mate:** in Face mode tap a face on the part to move, tap **Mate**, then tap a face on the part it goes against. If the faces or axes are not parallel, the part is first turned to line them up. Flat faces become coplanar (face to face); round faces (cylinders, cones, or threads via their nearest round edge) become coaxial (a pin drops onto its hole's axis). It is a History step (“Mate Pin → Block”) and a live constraint: it is solved again after every edit and rebuild, so mated parts follow when the part they sit on moves, when an earlier step changes it, or after a Sync. A round mate still lets the part slide along its axis. Rotating a part on a round mate turns it about that axis (a hinge); the Rotate card's Axis also offers **Mate axis**, an exact turn about a tilted shaft or hinge. Tapping the flat face right beside a hole's rim counts as the hole's axis, so small bores are easy to mate. A mate that would make a loop (a part mated onto one that is already mated onto it) is refused — mate them the other way round. Mates that can't all hold at once: the earlier ones win, and the newer one is flagged in red on its step and does not move the part. Mate steps say their kind: “(axis)”, “(flat, gap 0.5 mm)”, “(flush)”. A flat mate is **Face to face** (the part is turned round if both faces point the same way) or **Flush** (tops level; the default when both faces point the same way on a part that is already mated). When both taps are on flat faces right beside hole rims, the card's **Mate by** switches between the flat faces and the hole axes (a pin through both). A flat mate also has a **Gap** (0.5 mm of drawer clearance, or − to overlap). Dragging a part along a direction a mate holds tells you so instead of silently snapping back.
+- **Mate:** tap a face on the part to move, tap **Mate**, then tap a face on the part it goes against. If the faces or axes are not parallel, the part is first turned to line them up. Flat faces become coplanar (face to face); round faces (cylinders, cones, or threads via their nearest round edge) become coaxial (a pin drops onto its hole's axis). It is a History step (“Mate Pin → Block”) and a live constraint: it is solved again after every edit and rebuild, so mated parts follow when the part they sit on moves, when an earlier step changes it, or after a Sync. A round mate still lets the part slide along its axis. Rotating a part on a round mate turns it about that axis (a hinge); the Rotate card's Axis also offers **Mate axis**, an exact turn about a tilted shaft or hinge. Tapping the flat face right beside a hole's rim counts as the hole's axis, so small bores are easy to mate. A mate that would make a loop (a part mated onto one that is already mated onto it) is refused — mate them the other way round. Mates that can't all hold at once: the earlier ones win, and the newer one is flagged in red on its step and does not move the part. Mate steps say their kind: “(axis)”, “(flat, gap 0.5 mm)”, “(flush)”. A flat mate is **Face to face** (the part is turned round if both faces point the same way) or **Flush** (tops level; the default when both faces point the same way on a part that is already mated). When both taps are on flat faces right beside hole rims, the card's **Mate by** switches between the flat faces and the hole axes (a pin through both). A flat mate also has a **Gap** (0.5 mm of drawer clearance, or − to overlap). Dragging a part along a direction a mate holds tells you so instead of silently snapping back.
 - **Text → Outline:** select a text and tap **Outline**: the letters become closed curves (Liberation Sans Bold, SIL OFL) with their filled areas selected — Extrude them to emboss, or into the body to engrave.
 - A sketch on a part's face (tapped, or on **Plane here**) belongs to that part: Extrude joins by default, a hand-picked **Cut** goes into the body whichever sign you type, and the sketch moves and turns with the part when an earlier Move / Rotate / Mate changes. On a linked (read-only) part, Extrude makes a new body.
 - **Check interference** (Menu, or the **Interference** button with two or more bodies selected) reports the exact overlap volume of every pair of parts that collide, and selects them. **Isolate** shows only the selected bodies until **Show all**.
@@ -66,16 +66,38 @@ Solids are exact boundary representations computed by **OpenCascade** (the kerne
 - STEP export writes an assembly: one named, coloured part per body.
 
 ## Layout
-The interface follows the iOS "Liquid Glass" design language. The 3D view fills the whole screen, and every control floats over it as glass.
-- **Top left:** the menu button.
-- **Top right:** the layer pill, **Look**, **History** and **Settings**.
-  - History opens a panel that slides in from the right, listing every step in order. Tap a step to edit it, roll back to it, suppress it or delete it.
-  - The same panel has tabs for **Items** (layers, sketches, bodies), **Info** (properties of the selection) and **Settings**.
+A mix of Fusion 360 and Plasticity. The 3D view fills the whole screen and every control floats over it.
+- **Top bar:** the menu and undo/redo on the left; **Look**, **History list** and **Settings** on the right.
+- **History timeline:** always shown along the top. It works like Fusion's timeline.
+  - The buttons at its left roll back to the start, step back, step forward and roll to the end.
+  - Tap a step to edit it, roll back to it, suppress it or delete it.
+  - The History list button opens the same steps as cards in a panel. That panel also has tabs for **Info** (properties of the selection) and **Settings**.
   - The History button shows an orange dot while you are rolled back and a red dot if a step failed.
-- **Bottom:** the command capsule for the current selection. Under it are undo/redo (bottom left), the **Edge / Face / Solid** switch and the command search.
-- **Left:** the tool rail.
+- **Bottom bar:** the **Browser** button, then the **tool sets**, then command search.
+  - The tool sets are **Sketch**, **Solid**, **Modify**, **Constrain**, **Assemble**, **Construct** and **Inspect**. Tapping one fills the **left rail** with its tools.
+  - Examples: Constrain lists Horizontal, Vertical, Parallel, Perpendicular, Equal, Tangent, Concentric and Fix. Solid lists Extrude, Revolve, Loft, Sweep, the primitives, Hole and Thread.
+- **Above the bottom bar:** the commands for what is selected (Plasticity-style). Fillet and Chamfer appear for edges; Push/Pull, Shell, Hole and Mate for faces. The row is hidden when nothing is selected.
+- **Browser:** opens from the bottom bar as a tree, like Fusion's browser. It stays open while you work, and its folders are:
+  - **Origin:** the XY, XZ and YZ planes. Tap one to draw on it; the eye shows them in the view.
+  - **Bodies:** each with an eye, its colour and a ⋯ menu for rename, colour, isolate, layer and delete.
+  - **Components:** inserted parts, with Sync and Open.
+  - **Sketches:** tap one to edit it.
+  - **Joints:** the mates. Tap one to edit its gap or flush setting.
+  - **Layers.**
 - **Bottom right:** the view controls and the axis navigator.
-- The old history strip along the bottom can be turned back on in Settings.
+
+### Picking
+There is no Edge / Face / Solid switch: a tap picks what is under your finger.
+- Sketch curves and sketch regions not used yet come first.
+- Next is a body edge within a few pixels of the tap. Hidden edges behind the part are never picked.
+- Otherwise the tap picks the face.
+- **Tap the same spot again** to move up: edge → face → whole body → edge.
+- A command that needs a kind of pick holds picking to it until you have one:
+  - Fillet and Chamfer wait for edges.
+  - Hole, Thread, Mate and Plane on a face wait for a face, then carry on once you tap one.
+  - **Cancel** in the action row stops waiting.
+- **Constraints work like Fusion's:** tap the constraint in the Constrain set, then tap the curves it applies to. Horizontal, Vertical and Fix need one curve; the others need two. The constraint stays active for the next curves until **Done** or Select.
+- **Multi-select** (on the left rail) keeps adding the same kind of pick.
 
 ## Look: theme, lighting, surface and edges
 The **Look** button (the half-filled circle, top right) opens a panel that is also at the top of Settings. Every option is also in the command search: type "Lighting", "Theme", "Surface" or "Edges".
@@ -135,7 +157,7 @@ An extrude from a face sketch targets that body automatically (Join, or Cut into
 - **Visuals:** OSNAP markers with names (□ Endpoint, △ Midpoint, ○ Center, ✕ Intersection, ◇ Quadrant), polar tracking rays, a crosshair with pickbox, blue grips and dashed selection, all on the dark model-space background.
 
 ## Plasticity-style modelling (Model)
-- **Selection modes:** **Solid / Face / Edge** (keys `4` `3` `2`), plus **Mesh** for polygon editing. Face mode selects a whole planar face, not individual triangles.
+- **Picking:** a tap picks the face, edge or curve under the finger, and tapping the same spot again picks the whole body (see Picking above). The keys `2`, `3` and `4` hold picking to edges, faces or bodies. **Edit mesh** is for imported meshes. A face pick selects the whole face, not individual triangles.
 - **Modifiers:** each runs from the selection, opens a compact floating dialog with exact values, and has a **live drag handle** in the viewport.
   - **Fillet** (`F`) and **Chamfer** (`C`) on straight edges and on **round edges**: tapping the rim of a hole or boss selects the whole circle, so a chamfered hole rim gives a countersink. Where three filleted edges meet at right angles, the corner is rounded into a true spherical patch.
   - **Push/Pull** (`O`): move a face along its normal, adding or removing material.
@@ -146,7 +168,7 @@ An extrude from a face sketch targets that body automatically (Join, or Cut into
   - **Pattern** (`3A`): a polar pattern of bodies around X, Y or Z.
   - **Thicken:** turn a surface, such as an added Plane, into a solid.
   - **Draft:** tilt the selected side faces by an exact angle about a neutral plane, along +X, +Y or +Z. The geometry is re-solved from the face planes, so the edges stay exact.
-- **Direct modelling:** in Face or Edge mode, the Move/Rotate/Scale gizmo drags the selected faces or edges, and the neighbouring faces stretch to follow.
+- **Direct modelling:** with faces or edges picked, the Move/Rotate/Scale gizmo drags them, and the neighbouring faces stretch to follow.
 - **Revolve** can use any line in the sketch as its axis, including construction lines. With no construction line and a profile off the sketch's Y axis, it turns about the profile's own straight edge.
 - **Loft** (`LOFT`): a solid through two or more profiles, resampled and aligned automatically. **Sweep** (`SWEEP`): a profile, holes included, along an open path (lines, arcs or a spline) in another sketch. Corners are mitred so the section stays exact. Both can create a new body or Join, Cut or Intersect with an existing one.
 

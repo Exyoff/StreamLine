@@ -35,10 +35,10 @@ export const FINISH = {
   metal: { name: 'Metal', r: 0.3, m: 0.85, env: 2.2 },
 };
 export const THEMES = {
-  midnight: { name: 'Midnight', note: 'Indigo glass', bg: ['#1b2235', '#0a0d14'], glow: 'rgba(120,140,255,0.13)', edge: 0x141925, soft: 0x3c4660, sel: '#ffb547', act: '#ffe08a', grid: [0.78, 0.84, 1], gridA: 1, sketch: '#eef1f8', meta: '#0a0d13', nav: 'rgba(255,255,255,0.06)', chip: ['#1b2235', '#8b93ff', '#5ec8ff'] },
-  graphite: { name: 'Graphite', note: 'Neutral grey, mint', bg: ['#2e3034', '#141517'], glow: 'rgba(255,255,255,0.05)', edge: 0x17181b, soft: 0x4f535b, sel: '#ffcf3a', act: '#fff0a8', grid: [1, 1, 1], gridA: 1, sketch: '#f2f2f2', meta: '#111213', nav: 'rgba(255,255,255,0.06)', chip: ['#2e3034', '#3fe0c0', '#8af2a8'] },
-  ember: { name: 'Ember', note: 'The original orange', bg: ['#2f3034', '#25262a'], glow: 'rgba(255,255,255,0.03)', edge: 0x3a4250, soft: 0x55606f, sel: '#ff9a1f', act: '#ffd27a', grid: [1, 1, 1], gridA: 1, sketch: '#f2f2f2', meta: '#16171a', nav: 'rgba(255,255,255,0.06)', chip: ['#2b2c30', '#ff9f0a', '#ffc44d'] },
-  daylight: { name: 'Daylight', note: 'Light studio', bg: ['#f8fafd', '#d2d8e3'], glow: 'rgba(255,255,255,0.6)', edge: 0x283042, soft: 0x707a8e, sel: '#ff7a1a', act: '#ffb066', grid: [0.12, 0.16, 0.28], gridA: 1.7, sketch: '#1a2030', meta: '#e9edf3', nav: 'rgba(12,18,32,0.07)', chip: ['#eef1f6', '#3d63ff', '#19a7ff'] },
+  midnight: { name: 'Midnight', note: 'Navy, blue', bg: ['#1a2130', '#0b0e14'], glow: 'rgba(120,150,220,0.10)', edge: 0x141925, soft: 0x3c4660, sel: '#2f8bff', act: '#8cc4ff', grid: [0.78, 0.84, 1], gridA: 1, sketch: '#eef1f8', meta: '#0a0d13', nav: 'rgba(255,255,255,0.06)', chip: ['#1a2130', '#3d8bfd'] },
+  graphite: { name: 'Graphite', note: 'Neutral grey, blue', bg: ['#2e3034', '#141517'], glow: 'rgba(255,255,255,0.05)', edge: 0x17181b, soft: 0x4f535b, sel: '#3a8dff', act: '#9cc8ff', grid: [1, 1, 1], gridA: 1, sketch: '#f2f2f2', meta: '#111213', nav: 'rgba(255,255,255,0.06)', chip: ['#2e3034', '#4a90f2'] },
+  ember: { name: 'Ember', note: 'The original orange', bg: ['#2f3034', '#25262a'], glow: 'rgba(255,255,255,0.03)', edge: 0x3a4250, soft: 0x55606f, sel: '#ff9a1f', act: '#ffd27a', grid: [1, 1, 1], gridA: 1, sketch: '#f2f2f2', meta: '#16171a', nav: 'rgba(255,255,255,0.06)', chip: ['#2b2c30', '#ff9f0a'] },
+  daylight: { name: 'Daylight', note: 'Light studio', bg: ['#f8fafd', '#d2d8e3'], glow: 'rgba(255,255,255,0.6)', edge: 0x283042, soft: 0x707a8e, sel: '#1f6feb', act: '#5ea0ff', grid: [0.12, 0.16, 0.28], gridA: 1.7, sketch: '#1a2030', meta: '#e9edf3', nav: 'rgba(12,18,32,0.07)', chip: ['#eef1f6', '#1f6feb'] },
 };
 
 export const view = {
@@ -493,6 +493,8 @@ view.pickObject = (x, y) => {
   const tf = hit.object.geometry.userData.triFace;
   return { id: hit.object.userData.objId, face: tf ? tf[hit.faceIndex] : tf === null ? hit.faceIndex : -1, point: hit.point.toArray(), distance: hit.distance };
 };
+// a world point hidden behind a body (seen from the camera)? (always false in X-ray)
+view.occluded = world => occluded(world, new THREE.Raycaster());
 function occluded(world, rc) {
   if (S.settings.xray || view.xrayFor) return false;
   const cam = camera();
