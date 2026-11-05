@@ -686,7 +686,8 @@ function startMate() {
   const f = S.ed.faces[0]; if (!f) return;
   const g = faceGeom(f); if (!g) return toast('Mate works with flat and round (cylindrical) faces');
   S.ed.mateFrom = f; S.ed.pick = 'face';
-  toast(`Now tap the face to put “${g.o.name}” against`); refresh();
+  const others = S.doc.objects.some(o => o.shape && o.id !== g.o.id && isShown(o));
+  toast(others ? `Now tap the face to put “${g.o.name}” against` : `Now show the other part (eye in Items, or Show all) and tap the face to put “${g.o.name}” against`); refresh();
 }
 function mateTap(x, y) {
   const from = S.ed.mateFrom; S.ed.mateFrom = null;
@@ -999,7 +1000,7 @@ function renderActions() {
     // Thread only on round, straight faces (cylinders), not cones
     const cyl = !flat && S.ed.faces.every(f => { if (f.planar !== false) return false; try { const o = objById(f.obj), h = K.faceAt(o.shape, xfFor(o).toL(f.p)); return !h || h.f.geomType === 'CYLINDRE'; } catch (e) { return true; } });
     if (S.ed.mateFrom) { row.replaceChildren(act(I.close, 'Cancel mate', () => { S.ed.mateFrom = null; refresh(); }, 'primary')); return; }
-    if (faces === 1 && S.doc.objects.filter(o => o.shape && !o.hidden).length > 1) /* (also while isolated) */ c.push(act(I.join, 'Mate', () => startMate()));
+    if (faces === 1 && S.doc.objects.filter(o => o.shape).length > 1) /* (also while isolated, or with the other parts hidden to reach a covered face: show them again once Mate is armed) */ c.push(act(I.join, 'Mate', () => startMate()));
     const faceLinked = faces && S.ed.faces.some(f => objById(f.obj)?.link);
     if (faces === 1) c.push(act(I.plane, 'Plane here', () => planeHere()));
     if (faces && faceLinked) { if (!c.length) c.push(act(I.measure, 'Inquiry', e => openInquiryMenu(e.currentTarget))); }

@@ -788,6 +788,31 @@ try {
   check(r14.l1.length === 4 && r14.l1.every(z => z === 4) && r14.l2.length === 4 && r14.l2.some(z => z !== 4), `Loop takes the face toward the viewer (top outline), Loop again the side face (${r14.l1} / ${r14.l2})`);
   check(Math.abs(r14.cut1 - 2 * r14.hole) < 1e-6, `A hole grid on a bottom face runs toward +Y (both holes cut: ${r14.cut1.toFixed(3)} mm³)`);
   check(Math.abs(r14.cut2 - 2 * r14.hole) < 1e-6 && !/outside/.test(r14.toast2), `A hole row across two bosses' tops counts both as on the part (${r14.toast2 || 'no warning'})`);
+  // round 15: when an arm gets longer, a mate and a hole on its tongue's side face follow the tongue (not a slot
+  // wall of about the same size nearer the old spot); Text's start point can be typed on its card
+  const r15 = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, K = L.K, XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    L.runOp(F.sketchOpNew('arm', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 12000, y: -10, w: 100, h: 20 }); F.addEntity(k, { t: 'rect', x: 12100, y: -7.5, w: 25, h: 15 }); F.addEntity(k, { t: 'rect', x: 12070, y: 4, w: 25, h: 4 }); }));
+    const sk = L.S.ed.sketch;
+    L.runOp(F.extrude, { pts: [{ sk, pt: [12005, 0] }, { sk, pt: [12110, 0] }], distance: 10, mode: 'new', target: null }); const arm = L.S.doc.objects.at(-1).id;
+    L.runOp(F.sketchOpNew('pl', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 12300, y: 0, w: 10, h: 2 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [12301, 1] }], distance: 10, mode: 'new', target: null }); const pl = L.S.doc.objects.at(-1).id;
+    L.runOp(F.mateOp, { a: { obj: pl, n: [0, 1, 0], p: [12305, 2, 5], planar: true }, b: { obj: arm, n: [0, -1, 0], p: [12112, -7.5, 5], planar: true }, gap: 0.5 });
+    L.S.ed.faces = [{ obj: arm, n: [0, -1, 0], w: 7.5, p: [12112.5, -7.5, 5], planar: true }]; L.runOp(F.holeOp, { dia: 3, depth: 3 }); L.S.ed.faces = [];
+    const y = () => +K.worldShape(L.S.doc.objects.find(o => o.id === pl)).boundingBox.bounds[1][1].toFixed(4), hx = () => L.H.hist().filter(r => r.op === 'F.holeOp').at(-1).params.x;
+    const before = [y(), hx()];
+    L.runOp(F.sketchOp('longer', sk, k => { const rs = k.ents.filter(e => e.t === 'rect'); rs[0].w = 140; rs[1].x = 12140; }));
+    return { before, after: [y(), hx()], errs: L.H.hist().filter(r => r.err).map(r => r.err) };
+  });
+  check(r15.before.join() === '-8,12112.5' && r15.after.join() === '-8,12152.5' && !r15.errs.length, `A longer arm: the mate and the hole on its tongue's side face slide with the tongue (y ${r15.after[0]}, hole x ${r15.before[1]} → ${r15.after[1]})${r15.errs.length ? ' · ' + r15.errs.join('; ') : ''}`);
+  await p.evaluate(() => { const L = StreamLine; L.S.ed.pick = 'solid'; L.S.ed.faces = []; L.S.ed.tool = 'text'; L.refresh(); });
+  await p.waitForTimeout(500);
+  const txtKey = async str => { await p.waitForTimeout(500); for (const ch of str) await p.tap(`#keypad [data-k="${ch}"]`); await p.tap('#keypad [data-k="ok"]'); await p.waitForTimeout(300); };
+  await (await p.$$('#draw-card .field button.val'))[0].tap(); await txtKey('12500');
+  await (await p.$$('#draw-card .field button.val'))[1].tap(); await txtKey('5');
+  await p.fill('#draw-card input.textin', 'LUX'); await p.press('#draw-card input.textin', 'Enter'); await p.waitForTimeout(500);
+  const txt15 = await p.evaluate(() => { const L = StreamLine, e = L.S.doc.sketches.flatMap(k => k.ents).find(x => x.t === 'text' && x.str === 'LUX'); L.S.ed.tool = 'select'; L.Draw.resetTool(); L.refresh(); return e ? e.p : null; });
+  check(txt15 && txt15.join() === '12500,5', `Text: the start point can be typed on the card (${txt15})`);
   await shot('5-timeline');
 } catch (e) {
   await p.screenshot({ path: OUT + 'crash.png' }).catch(() => {});

@@ -238,7 +238,10 @@ export function polyMid(pts) {
 export function polyDist(p, pts) { let d = Infinity; for (let k = 1; k < pts.length; k++) d = Math.min(d, ptSegDist(p, pts[k - 1], pts[k])); return pts.length === 1 ? dist3(p, pts[0]) : d; }
 // face of `shape` under a local point (and roughly facing n, when given)
 // the area and centre of a face (local), remembered with a face pick so a moved face is found again by its size
-export function faceHint(f) { try { const c0 = f.center, c = typeof c0 === 'function' ? c0() : c0; return { a: R.measureArea(f), c: [c.x, c.y, c.z] }; } catch (e) { return null; } }
+// a flat face's two biggest box extents (its length and width, for an axis-aligned face): tells the tongue's side
+// face from a slot wall of about the same area
+function faceDims(f) { try { const b = f.boundingBox.bounds, e = [0, 1, 2].map(k => b[1][k] - b[0][k]).sort((x, y) => y - x); return [e[0], e[1]]; } catch (e) { return null; } }
+export function faceHint(f) { try { const c0 = f.center, c = typeof c0 === 'function' ? c0() : c0; return { a: R.measureArea(f), c: [c.x, c.y, c.z], dims: faceDims(f) }; } catch (e) { return null; } }
 export function faceAt(shape, p, n = null, hint = null) {
   const v = R.makeVertex(p), faces = shape.faces;
   let best = null;
@@ -265,7 +268,18 @@ export function faceAt(shape, p, n = null, hint = null) {
     let score = Math.abs(dw) + 4 * out;
     // known size: a face of about the same area wins over a big one that merely contains the point (a block that
     // moved along a long wall), and the point keeps its place on the face (a hole stays 9 mm up, not at the centre)
-    if (hint && hint.a > 0) { let a = 0; try { a = R.measureArea(f); } catch (e) {} if (a > 0) score += 4 * Math.sqrt(hint.a) * Math.abs(Math.log(a / hint.a)); }
+    let a = 0; if (hint && hint.a > 0) { try { a = R.measureArea(f); } catch (e) {} if (a > 0) score += 4 * Math.sqrt(hint.a) * Math.abs(Math.log(a / hint.a)); }
+    // and its length and width: exactly the same face, slid along with its feature (the tongue at the end of an arm
+    // that got longer), is scored by its offset with only a light charge for the slide; another shape (a slot
+    // wall of about the same area) pays for the difference
+    if (hint && hint.dims && hint.dims[1] > 1e-6) {
+      const dd = faceDims(f);
+      if (dd && dd[1] > 1e-6) {
+        const lr = Math.abs(Math.log(dd[0] / hint.dims[0])) + Math.abs(Math.log(dd[1] / hint.dims[1]));
+        if (lr < 1e-4 && a > 0 && Math.abs(a / hint.a - 1) < 0.1) score = Math.abs(dw) + 0.25 * out; // (a hole or recess on it changes its area a little)
+        else score += 8 * Math.sqrt(hint.a || hint.dims[0] * hint.dims[1]) * lr;
+      }
+    }
     if (hint && hint.c) { const qs = [p[0] + c.x - hint.c[0], p[1] + c.y - hint.c[1], p[2] + c.z - hint.c[2]]; if (R.measureDistanceBetween(f, R.makeVertex(qs)) <= t.tol * 4 + 1e-6) q = qs; }
     if (R.measureDistanceBetween(f, R.makeVertex(q)) > t.tol * 4 + 1e-6) q = [c.x, c.y, c.z]; // (the point is off the face: follow its centre instead)
     if (!alt || score < alt.score) alt = { d: 0, i, f, dw, q, score };
