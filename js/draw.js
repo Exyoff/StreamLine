@@ -726,7 +726,8 @@ function dimGeom(s, d) {
 
 function renderSketches() {
   const ws = S.ed.workspace, act = studio() ? sk() : SK.activeSketch(), stu = studio();
-  const key = [ws, S.ed.sketch, S.ed.editingSketch, H.hist().length, H.markerIndex(), (S.doc.sketches || []).map(s => isShown(s)).join(), [...S.ed.drawSel].join(), JSON.stringify(S.ed.profiles), S.settings.showSketches].join('|');
+  const key = [ws, S.ed.sketch, S.ed.editingSketch, H.hist().length, H.markerIndex(), (S.doc.sketches || []).map(s => isShown(s)).join(), [...S.ed.drawSel].join(), JSON.stringify(S.ed.profiles), S.settings.showSketches, view.theme.name].join('|');
+  C.line.set(view.theme.sketch);
   const sketches = S.doc.sketches || [];
   const entsArr = sketches.map(s => s.ents), prevEnts = sketchGroup.userData.ents || [];
   const changed = key !== renderKey || entsArr.length !== prevEnts.length || entsArr.some((e, i) => e !== prevEnts[i]);
@@ -745,7 +746,7 @@ function renderSketches() {
         const fixedSet = isAct ? constrainedEntities(s) : null;
         for (const e of s.ents) {
           if (e.t === 'dim') continue;
-          if (e.t === 'text') { sketchGroup.add(textMesh(s, e, mine && S.ed.drawSel.has(e.id) ? '#6fb4ff' : isAct ? '#f2f2f2' : '#8d93a0')); continue; }
+          if (e.t === 'text') { sketchGroup.add(textMesh(s, e, mine && S.ed.drawSel.has(e.id) ? '#6fb4ff' : isAct ? view.theme.sketch : '#8d93a0')); continue; }
           if (e.t === 'hatch') {
             const hl = SK.hatchLines(s, e); if (!hl) continue;
             const col = mine && S.ed.drawSel.has(e.id) ? C.sel : isAct ? new THREE.Color('#b9c3cf') : C.other;
@@ -773,7 +774,7 @@ function renderSketches() {
         }
         if (ws === 'draw' && isAct || ws === 'cad' || stu) {
           const selRegs = new Set(S.ed.profiles.filter(q => q.sk === s.id).map(q => SK.regionAt(s, q.pt)).filter(Boolean));
-          for (const r of SK.regions(s)) if (!usedRegs || !usedRegs.has(r) || selRegs.has(r)) sketchGroup.add(fillObj(s, r, selRegs.has(r) ? 0xff9a1f : 0x4f8ff7, selRegs.has(r) ? 0.55 : ws === 'cad' || stu ? 0.14 : 0.08));
+          for (const r of SK.regions(s)) if (!usedRegs || !usedRegs.has(r) || selRegs.has(r)) sketchGroup.add(fillObj(s, r, selRegs.has(r) ? view.selHex() : 0x4f8ff7, selRegs.has(r) ? 0.55 : ws === 'cad' || stu ? 0.14 : 0.08));
         }
       }
     }

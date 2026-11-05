@@ -68,7 +68,7 @@ Solids are exact boundary representations computed by **OpenCascade** (the kerne
 ## Layout
 The interface follows the iOS "Liquid Glass" design language. The 3D view fills the whole screen, and every control floats over it as glass.
 - **Top left:** the menu button.
-- **Top right:** the layer pill, **History** and **Settings**.
+- **Top right:** the layer pill, **Look**, **History** and **Settings**.
   - History opens a panel that slides in from the right, listing every step in order. Tap a step to edit it, roll back to it, suppress it or delete it.
   - The same panel has tabs for **Items** (layers, sketches, bodies), **Info** (properties of the selection) and **Settings**.
   - The History button shows an orange dot while you are rolled back and a red dot if a step failed.
@@ -76,6 +76,29 @@ The interface follows the iOS "Liquid Glass" design language. The 3D view fills 
 - **Left:** the tool rail.
 - **Bottom right:** the view controls and the axis navigator.
 - The old history strip along the bottom can be turned back on in Settings.
+
+## Look: theme, lighting, surface and edges
+The **Look** button (the half-filled circle, top right) opens a panel that is also at the top of Settings. Every option is also in the command search: type "Lighting", "Theme", "Surface" or "Edges".
+- **Theme:**
+  - **Midnight** (the default): indigo glass with a violet-to-cyan accent.
+  - **Graphite:** neutral grey with mint.
+  - **Ember:** the original warm grey with orange.
+  - **Daylight:** a light studio with white glass.
+  - Each theme also sets the backdrop, the grid, edge and sketch colours, and the selection colour.
+- **Lighting:**
+  - **Studio:** key, fill and rim light with sky light.
+  - **Soft:** even, low contrast.
+  - **Daylight:** a sun from above with a blue sky.
+  - **Dramatic:** a hard side light and a cool rim.
+  - **Flat:** shows true colours and is easiest for reading edges.
+  - **Showroom:** soft boxes and reflections.
+  - Studio, Soft, Dramatic and Flat move with the camera, so a part is lit the same way from every side. Daylight's sun stays fixed in the scene.
+- **Surface:**
+  - **Matte**, **Satin** (the default) and **Gloss**.
+  - **Metal:** reflects a soft-box studio.
+- **Edges:**
+  - **Width:** Thin, Normal or Bold.
+  - **When you zoom:** **Stay the same** keeps the same number of pixels at any zoom. **Scale with zoom** makes edges thicken as you zoom in and thin out as you zoom out, like ink on the part. At the zoom Frame uses, they are the normal width.
 
 ## Parametric timeline, layers and visibility
 
