@@ -1128,6 +1128,12 @@ try {
   await (await p.$$('#draw-card .field button.val'))[0].tap(); await keypad('10');
   const arcEnts = await p.evaluate(() => { const L = StreamLine, r = L.SK.sketchById(L.S.ed.editingSketch).ents.map(e => e.t + (e.r ? ':' + (+e.r.toFixed(6)) : '')).join(); L.Draw.resetTool(); L.finishSketchEdit(); return r; });
   check(arcEnts === 'line,arc:5', `The Line card's Tangent arc makes the next segment an arc tangent to the line (${arcEnts})`);
+  // inside a sketch, Home looks straight at it again (Fusion's Look At)
+  await p.evaluate(() => { const L = StreamLine; L.sketchOn({ plane: 'XZ' }); }); await p.waitForTimeout(700);
+  await p.evaluate(() => StreamLine.view.setView('iso')); await p.waitForTimeout(700);
+  await p.tap('#btn-home'); await p.waitForTimeout(2500);
+  const lookAt = await p.evaluate(() => { const L = StreamLine, r = [L.view.cam.yaw, L.view.cam.pitch].map(v => Math.round(v * 180 / Math.PI)).join(); L.finishSketchEdit(); return r; });
+  check(lookAt === '-90,0', `Inside a sketch, Home looks straight at it again (${lookAt})`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
@@ -1181,10 +1187,21 @@ try {
     await tdrag(a0, a1);
     const pp = await p.evaluate(id => ({ v: StreamLine.K.volume(StreamLine.S.doc.objects.find(o => o.id === id).shape), op: StreamLine.H.hist().at(-1).op }), tid);
     const vb = await p.evaluate(() => { const el = [...document.querySelectorAll('#labels .vlabel.val')].find(e => e.style.display !== 'none'); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
-    if (vb) { await tapT(vb); await p.waitForTimeout(300); for (const kk of ['4', 'ok']) { await p.tap(`#keypad [data-k="${kk}"]`); await p.waitForTimeout(200); } await p.waitForTimeout(300); }
+    let bubbleRetry = false;
+    if (vb) {
+      await tapT(vb); await p.waitForTimeout(300);
+      if (!(await p.locator('#keypad').isVisible())) { // (diagnose a miss, then try once more — the check says so)
+        bubbleRetry = true;
+        console.log('bubble miss', JSON.stringify(vb), JSON.stringify(await p.evaluate(q => { const L = StreamLine, g = document.querySelector('#gl').getBoundingClientRect(); return { hit: L.valueHit(q.x - g.left, q.y - g.top), handle: !!L.getLast()?.handle, op: L.getLast()?.def?.label?.(L.getLast().params), labels: [...document.querySelectorAll('#labels .vlabel.val')].filter(e => e.style.display !== 'none').map(e => { const r = e.getBoundingClientRect(); return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)]; }), pick: L.S.ed.pick, edges: L.S.ed.edges.length, faces: L.S.ed.faces.length }; }, vb)));
+        await shot('bubble-miss');
+        const vb2 = await p.evaluate(() => { const el = [...document.querySelectorAll('#labels .vlabel.val')].find(e => e.style.display !== 'none'); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+        if (vb2) { await tapT(vb2); await p.waitForTimeout(300); }
+      }
+      if (await p.locator('#keypad').isVisible()) { for (const kk of ['4', 'ok']) { await p.tap(`#keypad [data-k="${kk}"]`); await p.waitForTimeout(200); } await p.waitForTimeout(300); }
+    }
     const typed = await p.evaluate(id => StreamLine.K.volume(StreamLine.S.doc.objects.find(o => o.id === id).shape), tid);
     const area = 60 * 40 - Math.PI * 9;
-    check(pp.op === 'F.pushPullOp' && pp.v > v0 + 1 && vb && Math.abs(typed - (v0 + area * 4)) < 1e-6, `A picked face gets a push / pull arrow to drag, and its value bubble takes a typed 4 mm (${(typed - v0).toFixed(3)} mm³)`);
+    check(pp.op === 'F.pushPullOp' && pp.v > v0 + 1 && vb && Math.abs(typed - (v0 + area * 4)) < 1e-6, `A picked face gets a push / pull arrow to drag, and its value bubble takes a typed 4 mm (${(typed - v0).toFixed(3)} mm³${bubbleRetry ? ' — the first tap missed' : ''})`);
     // a body (the face tapped again): move arrows and rotation arcs; dragging an arc turns it
     await p.evaluate(async () => { const m = await import('./js/ops.js'); m.clearLast(); }); await p.waitForTimeout(600);
     await p.evaluate(() => { const L = StreamLine; L.S.ed.faces = []; L.S.ed.selected = new Set(); L.refresh(); }); await p.waitForTimeout(300);

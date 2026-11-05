@@ -117,7 +117,7 @@ A mix of Fusion 360 and Plasticity. The 3D view fills the whole screen and every
 
 ### Sketch mode (Fusion-style)
 - **Create Sketch** shows the three origin planes, named, around the origin; tap a plane, its name, a flat face of a body, or one of the plane buttons above the bottom bar (XY · Top, XZ · Front, YZ · Right, and the construction plane if you made one). **Cancel** or `Esc` stops.
-- The view turns to look straight at the new sketch, and the Create tools fill the rail. The HUD counts curves and profiles and says how many degrees of freedom are left.
+- The view turns to look straight at the new sketch, and the Create tools fill the rail. Turned away with the cube, **Home** looks straight at the sketch again (Fusion's Look At). The HUD counts curves and profiles and says how many degrees of freedom are left.
 - Dimensions, constraint glyphs and the little square points on curve ends show only while the sketch is open.
 - After a line's first segment, its card switches the next one between **Line** and **Tangent arc** (a slot, a hook, a rounded profile in one chain).
 - **Finish Sketch** returns to the part and the view you had. Undoing the sketch's creation, or deleting it, finishes it too.
