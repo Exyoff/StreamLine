@@ -53,7 +53,10 @@ Solids are exact boundary representations computed by **OpenCascade** (the kerne
 ## Projects and assemblies
 - Every project saves on this device automatically (IndexedDB) and stays there offline. Open **Menu → Projects & assemblies** to open, rename, duplicate or delete projects, or to start a new one.
 - **Insert into this project** places another project's solids as a linked component (🔗). Move or rotate it, and measure, sketch on or snap to its faces like any body. Its shape is read-only here.
-- When the source project changes, the component shows **Sync ●**. Select it and tap **Sync** to bring in the latest version; its placement is kept and later steps rebuild. **Open source** jumps to the project it came from.
+- When the source project changes, the component shows **Sync ●**. Select it and tap **Sync** to bring in the latest version; its placement is kept and later steps rebuild. **Open source** jumps to the project it came from. A part is only marked out of date when its solids really changed.
+- **Check interference** (Menu, or the **Interference** button with two or more bodies selected) reports the exact overlap volume of every pair of parts that collide, and selects them. **Isolate** shows only the selected bodies until **Show all**.
+- **Measuring parts:** Inquiry DIST and ID use the 3D point on a body (snapped to its exact corners, edge midpoints and circle centres); Radius works on round body edges such as hole rims.
+- STEP export writes an assembly: one named, coloured part per body.
 
 ## Layout
 The interface follows the iOS "Liquid Glass" design language. The 3D view fills the whole screen, and every control floats over it as glass.

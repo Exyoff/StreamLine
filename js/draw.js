@@ -331,6 +331,9 @@ export function tapLabel(x, y, glyphs = true) {
 // the app supplies a picker for round edges of exact solids (Inquiry → Radius on a hole rim)
 let solidCircleAt = null, tapXY = null;
 export function setSolidCirclePicker(fn) { solidCircleAt = fn; }
+// and a 3D point on a body under the finger (snapped to its exact vertices / edge midpoints / centres)
+let solidPointAt = null;
+export function setSolidPointPicker(fn) { solidPointAt = fn; }
 export function tap(x, y) {
   tapXY = [x, y];
   const s = sk(); if (!s) return;
@@ -465,7 +468,8 @@ export function cardContent() {
   const t = tool();
   const title = (txt, hint) => h('div', { class: 'head' }, h('div', { class: 'title' }, txt, hint ? h('small', {}, hint) : null),
     (st.start || st.arc || st.dimA) ? h('button', { class: 'ib', 'aria-label': 'Cancel', html: I.close, onclick: () => resetTool() }) : null);
-  const [AU, AV] = axisNames(s.plane);
+  // before the first point the typed values go on the construction plane (see typedTarget)
+  const [AU, AV] = axisNames(studio() && DRAW_PRIMARY.has(t) && waitingFirstPoint() && !target && S.ed.editingSketch == null ? cplane() : s.plane);
   const xyFields = (lab, cb) => h('div', { class: 'fields' },
     field({ label: lab + ' ' + AU, kind: 'len', value: pv() ? pv()[0] : 0, cls: axCls(AU), onCommit: v => cb([v, pv() ? pv()[1] : 0], 0) }),
     field({ label: lab + ' ' + AV, kind: 'len', value: pv() ? pv()[1] : 0, cls: axCls(AV), onCommit: v => cb([st.typed.x ?? (pv() ? pv()[0] : 0), v], 1) }));
@@ -1153,18 +1157,20 @@ const f4 = v => fmtLen(v, false);
 function endInquiry() { st.cmd = null; S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); }
 function inquiryPoint(c, p) {
   const t = c.tool, s = sk();
+  // on a body, ID and DIST use the 3D point on it (not the drawing plane under it)
+  const w3 = (t === 'id' || t === 'dist') && solidPointAt && tapXY ? solidPointAt(...tapXY) : null;
+  const W = w3 || SK.toW(s.plane, p), P2 = w3 ? SK.toP(s.plane, w3) : p;
   if (t === 'id') {
-    const w = SK.toW(s.plane, p);
-    log(`ID  X = ${f4(p[0])}  Y = ${f4(p[1])}   (world ${w.map(f4).join(', ')} ${S.settings.unit})`);
-    result = { type: 'pt', pts: [p], text: `${f4(p[0])}, ${f4(p[1])}` };
+    log(`ID  X = ${f4(W[0])}  Y = ${f4(W[1])}  Z = ${f4(W[2])}${w3 ? '   (on a body)' : `   (sketch ${f4(p[0])}, ${f4(p[1])})`}`);
+    result = { type: 'pt', pts: [P2], text: `${f4(W[0])}, ${f4(W[1])}, ${f4(W[2])}` };
     return endInquiry();
   }
   if (t === 'dist') {
-    if (c.stage === 'base') { c.base = p; c.stage = 'second'; return; }
-    const d = [p[0] - c.base[0], p[1] - c.base[1]], L = Math.hypot(d[0], d[1]);
+    if (c.stage === 'base') { c.base = P2; c.baseW = W; c.stage = 'second'; return; }
+    const d = [W[0] - c.baseW[0], W[1] - c.baseW[1], W[2] - c.baseW[2]], L = Math.hypot(...d);
     const a = ((Math.atan2(d[1], d[0]) * 180 / Math.PI) + 360) % 360;
-    log(`DIST  Distance = ${fmtLen(L)},  Angle in XY plane = ${fmtAng(a)},  ΔX = ${f4(d[0])},  ΔY = ${f4(d[1])}`);
-    result = { type: 'dist', pts: [c.base, p], text: fmtLen(L) };
+    log(`DIST  Distance = ${fmtLen(L)},  Angle in XY plane = ${fmtAng(a)},  ΔX = ${f4(d[0])},  ΔY = ${f4(d[1])},  ΔZ = ${f4(d[2])}`);
+    result = { type: 'dist', pts: [c.base, P2], text: fmtLen(L) };
     return endInquiry();
   }
   if (t === 'angle') {

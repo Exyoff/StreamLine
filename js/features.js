@@ -1,5 +1,5 @@
 // CAD operators: sketches, extrude, revolve, body booleans. All re-adjustable via the last-op card.
-import { S, emit, objById, selectedObjs } from './state.js';
+import { S, emit, objById, selectedObjs, isShown } from './state.js';
 import * as SK from './sketch.js';
 import * as M from './mesh.js';
 import { toPolys, boolean, polysToMesh } from './csg.js';
@@ -152,8 +152,10 @@ function applyBody(p, tool, name) {
     S.doc.objects.push(o);
     S.ed.selected = new Set([o.id]); S.ed.active = o.id;
   } else {
+    // no target picked: use the body the new shape touches (largest overlap), like Plasticity
+    if (!objById(p.target)) p.target = touchedBody(tool)?.id ?? null;
     const t = objById(p.target);
-    if (!t) return 'Select a target body first (tap it), or use New';
+    if (!t) return p.mode === 'join' ? 'It touches no body to join — pick the body in Solid mode, or use New' : 'It touches no body to cut — pick the body in Solid mode first';
     const e = solidOnly(t); if (e) return e;
     const res = guard(() => K.boolean(p.mode === 'join' ? 'union' : p.mode === 'cut' ? 'subtract' : 'intersect', t.shape, K.toLocal(tool, t)), 'Boolean failed');
     if (typeof res === 'string') return res;
@@ -170,6 +172,20 @@ function applyBody(p, tool, name) {
   }
   S.ed.profiles = [];
 }
+function touchedBody(tool) {
+  const tb = tool.boundingBox.bounds; let best = null;
+  for (const o of S.doc.objects) {
+    if (!o.shape || o.link || o.hidden || !isShown(o)) continue;
+    const w = K.worldShape(o), b = w.boundingBox.bounds;
+    if ([0, 1, 2].some(k => b[1][k] < tb[0][k] - 1e-6 || b[0][k] > tb[1][k] + 1e-6)) continue;
+    let v = 0; try { const i = w.intersect(tool); v = K.isEmpty(i) ? 0 : K.volume(i); } catch (e) { continue; }
+    // a join only needs to touch; a cut needs overlap
+    const touch = v > 1e-9 || (() => { try { return R0dist(w, tool) < 1e-6; } catch (e) { return false; } })();
+    if (touch && (!best || v > best.v)) best = { o, v };
+  }
+  return best?.o;
+}
+const R0dist = (a, b) => K.R.measureDistanceBetween(a, b);
 function prepFeature(p) {
   if (!p.pts) p.pts = JSON.parse(JSON.stringify(S.ed.profiles));
   const groups = profileGroups(p.pts);

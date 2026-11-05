@@ -6,6 +6,7 @@ import * as SK from './sketch.js';
 import { I } from './icons.js';
 import { $, h, toast, popover, closePopover, menuItem } from './ui.js';
 import { fmtLen, fmtAng } from './units.js';
+import { outOfDate } from './projects.js';
 
 let ctx = null; // { activateSketch(id), selectObj(id), refresh() }
 export function initBrowser(c) { ctx = c; }
@@ -241,7 +242,7 @@ export function browserTab(group) {
   }) : [h('p', { class: 'note' }, 'Draw on the grid or on a face to make a sketch.')]));
   const bodies = group(`Bodies · ${S.doc.objects.length}`, ...(S.doc.objects.length ? S.doc.objects.map(o => {
     const row = h('div', { class: 'objrow' + (S.ed.selected.has(o.id) ? ' sel' : '') + (S.ed.active === o.id ? ' cur' : '') + (layerVisible(o.layer) ? '' : ' dim') },
-      h('span', { class: 'sw', style: `background:${o.color}` }), h('span', { class: 'nm' }, o.name), h('span', { class: 'meta' }, o.link ? '🔗 linked' : o.brep ? `${o.brep.faces.length} faces` : `${o.mesh.f.length} tris`),
+      h('span', { class: 'sw', style: `background:${o.color}` }), h('span', { class: 'nm' }, o.name), h('span', { class: 'meta' }, o.link ? (outOfDate(o.link.pid) ? '🔗 update ●' : '🔗 linked') : o.brep ? `${o.brep.faces.length} faces` : `${o.mesh.f.length} tris`),
       layerTag('obj', o), eyeBtn(!o.hidden, () => setVisible('obj', o.id, !!o.hidden)));
     row.onclick = () => ctx.selectObj(o.id);
     return row;
