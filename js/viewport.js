@@ -502,13 +502,18 @@ function syncScene() {
 }
 
 // ---------- picking ----------
+// picks see the model as it is now, not as last drawn (a cancelled preview, e.g. the fillet ball tapped
+// without a drag, leaves its mesh on screen until the next frame)
+function freshVisuals() { if (S.doc.objects.some(o => visuals.get(o.id)?.meshRef !== o.mesh) || visuals.size !== S.doc.objects.length) syncScene(); }
 view.pickObject = (x, y) => {
+  freshVisuals();
   const rc = view.ray(x, y);
   const meshes = [...visuals.values()].filter(v => v.group.visible).map(v => v.mesh);
   const hit = rc.intersectObjects(meshes, false)[0];
   if (!hit) return null;
   const tf = hit.object.geometry.userData.triFace;
-  return { id: hit.object.userData.objId, face: tf ? tf[hit.faceIndex] : tf === null ? hit.faceIndex : -1, point: hit.point.toArray(), distance: hit.distance };
+  const face = tf ? tf[hit.faceIndex] : tf === null ? hit.faceIndex : -1;
+  return { id: hit.object.userData.objId, face: face ?? -1, point: hit.point.toArray(), distance: hit.distance };
 };
 // a world point hidden behind a body (seen from the camera)? (always false in X-ray)
 view.occluded = world => occluded(world, new THREE.Raycaster());
@@ -519,7 +524,7 @@ function occluded(world, rc) {
   let dir, origin;
   if (view.cam.ortho) { dir = new THREE.Vector3(); cam.getWorldDirection(dir); origin = P.clone().addScaledVector(dir, -1e5); }
   else { origin = cam.position.clone(); dir = P.clone().sub(origin).normalize(); }
-  rc.set(origin, dir);
+  rc.set(origin, dir); freshVisuals();
   const meshes = [...visuals.values()].filter(v => v.group.visible).map(v => v.mesh);
   const hit = rc.intersectObjects(meshes, false)[0];
   if (!hit) return false;
@@ -566,6 +571,7 @@ view.pickEdge = (x, y, o, tol = 22) => {
   return null;
 };
 view.pickFace = (x, y, o) => {
+  freshVisuals();
   const v = visuals.get(o.id); if (!v) return -1;
   const hit = view.ray(x, y).intersectObject(v.mesh, false)[0];
   const tf = v.mesh.geometry.userData.triFace;

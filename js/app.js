@@ -457,6 +457,7 @@ function edgeTap(x, y, probe = false) { // probe: only report how close the near
 // Plasticity-style face pick: a tap selects the whole planar face (all coplanar connected polygons)
 // faces of solids: every triangle of the B-rep face under a triangle; meshes: the coplanar region
 function regionOf(o, tri) {
+  if (!o.mesh.f[tri]) return null; // (a stale pick)
   if (o.shape && o.faceOf) {
     const fi = o.faceOf[tri], faces = [];
     o.faceOf.forEach((x, i) => { if (x === fi) faces.push(i); });
@@ -478,7 +479,8 @@ function findRegionObj(o, f) {
 function faceTap(x, y) {
   const hit = view.pickObject(x, y);
   if (!hit || hit.face < 0) { if (!S.ed.multi) S.ed.faces = []; return selectionChanged(); }
-  const o = objById(hit.id), reg = regionOf(o, hit.face);
+  const o = objById(hit.id), reg = o && regionOf(o, hit.face);
+  if (!reg) { if (!S.ed.multi) S.ed.faces = []; return selectionChanged(); }
   const same = q => q.obj === o.id && (() => { const r2 = findRegionObj(o, q); return r2 && r2.faces.includes(hit.face); })();
   const i = S.ed.faces.findIndex(same);
   if (i >= 0) { if (S.ed.multi) S.ed.faces.splice(i, 1); } // a second tap keeps the pick (multi-select toggles)
@@ -798,7 +800,7 @@ function showHover(d) {
   if (p.pts) hoverGroup.add(Draw.fatLine(p.pts, col, 3.4, false));
   else if (p.e) { const pl = SK.entPolyline(p.e); if (pl) hoverGroup.add(Draw.fatLine(pl.pts.map(q => SK.toW(p.k.plane, q)), col, 3.4, pl.closed)); }
   else if (p.r) hoverGroup.add(Draw.fatLine(p.r.outer.map(q => SK.toW(p.k.plane, q)), col, 3, true));
-  else if (p.o && p.tri != null) {
+  else if (p.o && p.tri != null && p.o.mesh.f[p.tri]) {
     const reg = regionOf(p.o, p.tri), W = worldVerts(p.o), pos = [];
     for (const t of reg.faces) for (const i of p.o.mesh.f[t]) pos.push(...W[i]);
     const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -2212,20 +2214,11 @@ boot();
 // console/debug access
 // an inserted assembly shows each part in its own colour (from its project), not one colour for all: the component's
 // shape lists its parts' faces in order, so each B-rep face maps to the part it came from
-const partColorMemo = new Map();
+const partColorMemo = new WeakMap();
 view.faceColorsOf = o => {
-  const c = o.link && (S.doc.components || {})[o.link.pid];
-  if (!c || !c.parts || c.parts.length < 2 || !o.brep?.faces) return null;
-  const key = o.link.pid + '@' + c.version + '#' + o.brep.faces.length;
-  if (!partColorMemo.has(key)) {
-    let cols = null;
-    try {
-      const counts = c.parts.map(pt => K.deserialize(pt.brep).faces.length);
-      if (counts.reduce((a, b) => a + b, 0) === o.brep.faces.length) { cols = []; c.parts.forEach((pt, i) => { for (let k = 0; k < counts[i]; k++) cols.push(pt.color || o.color); }); }
-    } catch (e) { cols = null; }
-    partColorMemo.set(key, cols);
-  }
-  return partColorMemo.get(key);
+  const parts = F.compParts(o); if (!parts) return null;
+  if (!partColorMemo.has(parts)) { const cols = []; for (const pt of parts) for (let k = pt.f0; k < pt.f1; k++) cols.push(pt.color || o.color); partColorMemo.set(parts, cols); }
+  return partColorMemo.get(parts);
 };
 OPS.setPivotHook(o => {
   const r = H.hist().slice(0, H.markerIndex()).find(x => x.op === 'F.mateOp' && !x.off && x.params?.a?.obj === o.id && x.params.b && F.mateGeom(x.params.b)?.kind === 'axis');
