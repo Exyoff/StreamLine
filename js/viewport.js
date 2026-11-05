@@ -196,6 +196,8 @@ view.lookAlong = (n, target, dist = null) => {
 view.saveCam = () => { const c = view.cam; return { yaw: c.yaw, pitch: c.pitch, dist: c.dist, target: c.target.toArray(), ortho: c.ortho, autoOrtho: c.autoOrtho }; };
 view.restoreCam = s => { const c = view.cam; c.ortho = s.ortho; c.autoOrtho = s.autoOrtho; animateTo(s.yaw, s.pitch, new THREE.Vector3(...s.target), s.dist); emit('viewchange'); };
 view.toggleOrtho = () => { view.cam.ortho = !view.cam.ortho; view.cam.autoOrtho = false; view.render(); emit('viewchange'); };
+// screen space the floating controls cover ({ l, r, t, b } in px); set by the app
+view.insets = () => ({ l: 0, r: 0, t: 0, b: 0 });
 view.frame = (points) => {
   const c = view.cam;
   if (!points.length) { animateTo(c.yaw, c.pitch, new THREE.Vector3(0, 0, 0), 7 * defSize()); return; }
@@ -203,8 +205,17 @@ view.frame = (points) => {
   const ctr = b.getCenter(new THREE.Vector3());
   const rad = Math.max(b.getSize(new THREE.Vector3()).length() / 2, 1 * unitFactor());
   const { w, h } = view.size();
-  const fov = persp.fov * D2R / 2, fit = Math.min(1, w / h);
-  animateTo(c.yaw, c.pitch, ctr, rad / Math.sin(fov) / fit * 1.5);
+  // fit into the part of the screen the controls leave free, and centre the model there
+  let ins = { l: 0, r: 0, t: 0, b: 0 }; try { ins = view.insets() || ins; } catch (e) {}
+  const fw = Math.max(w * 0.4, w - ins.l - ins.r), fh = Math.max(h * 0.4, h - ins.t - ins.b);
+  const fov = persp.fov * D2R / 2;
+  const dist = rad / Math.sin(fov) * h / Math.min(fw, fh) * 1.15;
+  const wpp = 2 * dist * Math.tan(fov) / h;
+  const cp = Math.cos(c.pitch), dir = new THREE.Vector3(cp * Math.cos(c.yaw), cp * Math.sin(c.yaw), Math.sin(c.pitch));
+  const r = new THREE.Vector3(-Math.sin(c.yaw), Math.cos(c.yaw), 0), u = new THREE.Vector3().crossVectors(dir, r);
+  const dx = (Math.min(ins.l, w * 0.3) - Math.min(ins.r, w * 0.3)) / 2, dy = (Math.min(ins.t, h * 0.3) - Math.min(ins.b, h * 0.3)) / 2;
+  const tgt = ctr.clone().addScaledVector(r, -dx * wpp).addScaledVector(u, dy * wpp);
+  animateTo(c.yaw, c.pitch, tgt, dist);
 };
 
 view.project = (p) => {

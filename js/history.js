@@ -193,6 +193,7 @@ function friendlyError(msg, h, i) {
   else if (/Axis line missing/.test(msg)) m = 'Its axis line was deleted from the sketch';
   else if (/Result is empty/.test(msg)) m = 'The result would be empty';
   const cause = h.slice(0, i).reverse().find(r => r.off || r.err);
-  if (cause) m += ` (after “${cause.label || 'an earlier step'}” was ${cause.off ? 'suppressed' : 'broken'})`;
+  // an earlier step may be the reason (or may not): say so without claiming it
+  if (cause) m += cause.off ? ` (“${cause.label || 'an earlier step'}” is suppressed — try turning it back on)` : ` (“${cause.label || 'an earlier step'}” before it also failed — fix that first)`;
   return m;
 }

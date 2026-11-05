@@ -47,7 +47,12 @@ export function runOp(def, params = {}, { interactive = false } = {}) {
   if (def.prepare) { const p = def.prepare(op.params); if (typeof p === 'string') { emit('toast', p); return false; } }
   op.base = makeBase(def, op.params);
   restore(op.base); // operate on fresh copies so caches keyed by identity stay valid
-  const r = apply(op);
+  let r = apply(op);
+  // a default size that does not fit (a fillet on a thin wall): try smaller ones before giving up
+  if (typeof r === 'string' && def.shrink && params[def.shrink] == null) {
+    for (let k = 0; k < 8 && typeof r === 'string'; k++) { op.params[def.shrink] /= 2; restore(op.base); r = apply(op); }
+    if (typeof r !== 'string') emit('toast', `Size reduced to ${+op.params[def.shrink].toFixed(3)} so it fits — type a value to change it`);
+  }
   if (typeof r === 'string') { restore(op.base); emit('toast', r); emit('change', { reason: 'op-fail' }); return false; }
   last = op;
   emit('change', { reason: 'op' });

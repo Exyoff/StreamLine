@@ -184,7 +184,7 @@ export function faceAt(shape, p, n = null) {
   let best = null;
   faces.forEach((f, i) => {
     const d = R.measureDistanceBetween(f, v);
-    if (n) { try { const fn = f.normalAt(p); const k = fn.x * n[0] + fn.y * n[1] + fn.z * n[2]; if (k < 0.9) return; } catch (e) {} }
+    if (n) { try { const fn = f.normalAt(p); const k = (fn.x * n[0] + fn.y * n[1] + fn.z * n[2]) / (Math.hypot(fn.x, fn.y, fn.z) || 1); if (k < 0.9) return; } catch (e) {} }
     if (!best || d < best.d) best = { d, i, f };
   });
   const t = tess(shape);
@@ -205,12 +205,49 @@ export function faceAt(shape, p, n = null) {
   });
   return alt;
 }
-// edge of `shape` nearest a local point; falls back to the same kind/length when it moved
+// An edge's signature, so it can be found again after earlier steps resize the body: its centre and
+// axis (a circle's centre and normal, or a line's midpoint and direction), radius, and how the faces
+// on either side sit relative to it (outer rim vs inner rim, top vs bottom). All in local coordinates.
+const sub3 = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const unit3 = a => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+export function edgeSig(shape, info) {
+  const pts = info.pts, mid = polyMid(pts);
+  let c, ax, r = 0;
+  if (info.closed) {
+    const q = pts.slice(0, -1); c = [0, 1, 2].map(k => q.reduce((s, v) => s + v[k], 0) / q.length);
+    let nx = 0, ny = 0, nz = 0; for (let k = 0; k < q.length; k++) { const a = q[k], b = q[(k + 1) % q.length]; nx += (a[1] - b[1]) * (a[2] + b[2]); ny += (a[2] - b[2]) * (a[0] + b[0]); nz += (a[0] - b[0]) * (a[1] + b[1]); }
+    ax = unit3([nx, ny, nz]); r = q.reduce((s, v) => s + Math.hypot(...sub3(v, c)), 0) / q.length;
+  } else { c = mid; ax = unit3(sub3(pts[pts.length - 1], pts[0])); }
+  if (ax[0] < -1e-9 || (Math.abs(ax[0]) < 1e-9 && (ax[1] < -1e-9 || (Math.abs(ax[1]) < 1e-9 && ax[2] < 0)))) ax = ax.map(v => -v); // direction-free
+  const E = shape.edges[info.i], hc = E && E.hashCode, fn = [];
+  const radial = info.closed ? unit3(sub3(mid, c)) : null;
+  if (hc != null) for (const f of shape.faces) {
+    if (!f.edges.some(e => e.hashCode === hc)) continue;
+    let n; try { const v = f.normalAt(mid); n = unit3([v.x, v.y, v.z]); } catch (e) { continue; }
+    fn.push(info.closed ? [dot3(n, radial), Math.abs(dot3(n, ax)) < 1e-9 ? 0 : dot3(n, ax)] : n);
+  }
+  fn.sort((a, b) => a[0] - b[0] || a[1] - b[1] || (a[2] || 0) - (b[2] || 0));
+  return { c, ax, r, fn };
+}
+const sigFacesMatch = (a, b) => !a || !b || (a.length === b.length && a.every((v, k) => v.every((x, j) => Math.abs(x - b[k][j]) < 0.25)));
+// edge of `shape` nearest a local point; when it moved, the same kind of edge whose signature matches
 export function edgeAt(shape, ref) {
   const t = tess(shape), list = shape.edges;
   let best = null;
   for (const e of t.edges) { if (e.seam || e.i < 0) continue; const d = polyDist(ref.p, e.pts); if (!best || d < best.d) best = { d, e }; }
-  if (best && best.d < t.tol * 4 + 1e-6) return { edge: list[best.e.i], info: best.e };
+  if (best && best.d < t.tol * 4 + 1e-6 && (!ref.sig || sigFacesMatch(edgeSig(shape, best.e).fn, ref.sig.fn))) return { edge: list[best.e.i], info: best.e };
+  if (ref.sig) {
+    const g = ref.sig; best = null;
+    for (const e of t.edges) {
+      if (e.seam || e.i < 0 || (ref.type && e.type !== ref.type) || !!e.closed !== !!ref.closed) continue;
+      const q = edgeSig(shape, e);
+      if (Math.abs(dot3(q.ax, g.ax)) < 0.995 || !sigFacesMatch(q.fn, g.fn)) continue;
+      // circles: distance between centres plus the change in radius; lines: how far the line moved
+      const d = e.closed ? Math.hypot(...sub3(q.c, g.c)) + Math.abs(q.r - g.r) : polyDist(ref.p, e.pts) + 0.1 * Math.abs(e.len - ref.len);
+      if (!best || d < best.d) best = { d, e };
+    }
+    if (best) return { edge: list[best.e.i], info: best.e };
+  }
   if (ref.len == null) return null;
   best = null;
   for (const e of t.edges) {
