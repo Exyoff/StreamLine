@@ -44,6 +44,14 @@ export function computePivot() {
   const pts = selectedWorldPoints();
   if (!pts.length) return null;
   if (S.ed.mode === 'edit') return M.centroid(pts); // median point
+  // exact solids: the centre of their exact bounds (the display mesh is float32, which leaves 1e-4 errors)
+  const objs = [...S.ed.selected].map(id => S.doc.objects.find(o => o.id === id)).filter(Boolean);
+  if (!subSelection() && objs.length && objs.every(o => o.shape)) {
+    try {
+      const cs = objs.map(o => { const b = K.worldShape(o).boundingBox.bounds; return [0, 1, 2].map(k => (b[0][k] + b[1][k]) / 2); });
+      return M.centroid(cs).map(v => { const q = Math.round(v * 1e6) / 1e6; return Math.abs(q - v) < 1e-7 ? q : v; });
+    } catch (e) { /* mesh centre */ }
+  }
   return M.centroid(pts);
 }
 function hasSelection() { if (subSelection()) return true; return S.ed.mode === 'edit' ? S.ed.editSel.size > 0 : S.ed.selected.size > 0; }

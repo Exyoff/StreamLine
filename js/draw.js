@@ -190,6 +190,7 @@ function placeArc(c, r, a0, swDeg) {
 
 // ---------- pointer handling (called from app) ----------
 export function down(x, y) {
+  tapXY = [x, y]; // (inquiry points on bodies need the screen position)
   const t = tool();
   if (studio() && DRAW_PRIMARY.has(t) && waitingFirstPoint()) { chooseTarget(x, y); st.pressed = true; }
   const s = sk(); if (!s) return false;
@@ -205,6 +206,7 @@ export function move(x, y) {
   if (st.grip) return gripMove(x, y);
   if (!st.press) return;
   if (Math.hypot(x - st.press.x, y - st.press.y) > 6) st.press.moved = true;
+  tapXY = [x, y];
   if (!st.start && !(tool() === 'arc' && st.arc) && st.press.moved && !st.pressAnchor) st.pressAnchor = st.press.p || st.preview; // drag-to-draw from press point
   snapAt(x, y, fromPt() || st.pressAnchor);
   view.render(); emit('drawcard');
