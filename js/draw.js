@@ -85,10 +85,10 @@ const tool = () => S.ed.tool;
 function planePt(x, y, s = sk()) {
   const r = view.ray(x, y).ray;
   const pl = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(...s.plane.n), new THREE.Vector3(...s.plane.o));
-  const w = r.intersectPlane(pl, new THREE.Vector3());
-  if (!w) { // ray parallel: project onto the plane
-    const o = r.origin.toArray(); return SK.toP(s.plane, o);
-  }
+  // looking along the plane (e.g. the Top plane from the Front view): the hit would be miles away, so take the
+  // ray's point nearest the view centre and drop it onto the plane
+  const w = Math.abs(r.direction.dot(pl.normal)) > 0.02 ? r.intersectPlane(pl, new THREE.Vector3()) : null;
+  if (!w) { const tc = view.cam.target.clone().sub(r.origin).dot(r.direction); return SK.toP(s.plane, r.origin.clone().addScaledVector(r.direction, tc).toArray()); }
   return SK.toP(s.plane, w.toArray());
 }
 let refCache = { key: null, pts: [] };

@@ -52,7 +52,7 @@ Solids are exact boundary representations computed by **OpenCascade** (the kerne
 
 ## Drawing planes
 - The **Plane** button picks Top / Front / Right, **Offset this plane…** by a typed distance (a sketch 70 mm up for a loft; units and expressions work), or **Tilt this plane…** by a typed angle about its X direction (a 15° phone slot).
-- In Face mode, select a face and tap **Plane here**: the drawing plane goes through the tapped point, touching the face — on a curved wall it is the tangent plane, so a spout or handle can be sketched where it attaches. Typed coordinates on it are the model's own (its origin sits where the plane passes nearest the world origin).
+- In Face mode, select a face and tap **Plane here**: the drawing plane goes through the tapped point, touching the face — on a curved wall it is the tangent plane, so a spout or handle can be sketched where it attaches. Typed coordinates on it are the model's own (its origin sits where the plane passes nearest the world origin) — except that a face you look at from below or behind has one axis running against the model's; the toast says which (on a bottom face, the sketch's Y is the model's −Y). Hole patterns always run their rows toward the model's +Y (+Z on a wall), on any face.
 
 ## Projects and assemblies
 - Every project saves on this device automatically (IndexedDB) and stays there offline. Open **Menu → Projects & assemblies** to open, rename, duplicate or delete projects, or to start a new one.

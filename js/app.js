@@ -209,14 +209,27 @@ function growEdges(all) {
   let pick;
   if (all === 'loop') {
     // the closed boundary of the flat face along the picked edge (a hex head's six edges)
+    // (the shape's edge and face lists are built anew on every access, and slowly: read them once)
     const e0 = edgeOfItem(o, S.ed.edges[0]); if (!e0) return;
-    const hc = o.shape.edges[e0.i].hashCode;
+    const SE = o.shape.edges, hc = SE[e0.i].hashCode, ehc = E.map(e => SE[e.i].hashCode);
     const faces = o.shape.faces.filter(f => f.edges.some(x => x.hashCode === hc));
-    const f = faces.find(x => x.geomType === 'PLANE') || faces[0]; if (!f) return;
-    let wire; try { wire = f.clone().outerWire(); } catch (e) { wire = null; }
-    let hs = new Set((wire ? wire.edges : f.edges).map(x => x.hashCode));
-    if (!hs.has(hc)) hs = new Set(f.edges.map(x => x.hashCode)); // the edge is on an inner loop (a hole rim)
-    pick = E.filter(e => hs.has(o.shape.edges[e.i].hashCode));
+    // the flat faces along the edge, the one facing the viewer first; Loop again on its loop gives the next one
+    const xf = xfFor(o), vd = view.viewDir(), vl = M.norm(M.sub(xf.toL(vd), xf.toL([0, 0, 0])));
+    const facing = f => { try { const n = f.normalAt(); return M.dot([n.x, n.y, n.z], vl); } catch (e) { return -2; } };
+    const cands = faces.filter(x => x.geomType === 'PLANE').sort((a, b) => facing(b) - facing(a));
+    if (!cands.length && faces[0]) cands.push(faces[0]);
+    if (!cands.length) return;
+    const loopOf = f => {
+      let wire; try { wire = f.clone().outerWire(); } catch (e) { wire = null; }
+      let hs = new Set((wire ? wire.edges : f.edges).map(x => x.hashCode));
+      if (!hs.has(hc)) hs = new Set(f.edges.map(x => x.hashCode)); // the edge is on an inner loop (a hole rim)
+      return E.filter((e, k) => hs.has(ehc[k]));
+    };
+    const cur = new Set(S.ed.edges.filter(q => q.obj === o.id).map(q => edgeOfItem(o, q)));
+    let k = 0;
+    if (cur.size > 1) { const at = cands.findIndex(f => { const l = loopOf(f); return l.length === cur.size && l.every(e => cur.has(e)); }); if (at >= 0) k = (at + 1) % cands.length; }
+    pick = loopOf(cands[k]);
+    pick.sort((a, b) => (a === e0 ? -1 : b === e0 ? 1 : 0)); // the tapped edge stays first (Loop again cycles from it)
   } else if (all) pick = E;
   else {
     const tol = Math.max(o.brep.tol * 4, 1e-6), d = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
@@ -356,7 +369,12 @@ function cadTap(x, y) {
 }
 async function loadAutosave() {
   try {
-    const s = localStorage.getItem(DOC_KEY); if (!s) return false; deserialize(s);
+    let s = localStorage.getItem(DOC_KEY); if (!s) return false;
+    // too big for localStorage (e.g. an imported STEP): only a pointer was kept, the project is in the device library
+    const ref = s.length < 200 && JSON.parse(s).ref;
+    if (ref) { const rec = await LIB.get(ref); if (!rec) return false; s = rec.data; }
+    deserialize(s);
+    if (ref && !S.doc.project) S.doc.project = { id: ref, name: 'Untitled', created: Date.now() };
     // linked components' solids are kept in the device library, not in localStorage
     const miss = Object.entries(S.doc.components || {}).filter(([, c]) => !c.brep);
     if (miss.length) {
@@ -372,7 +390,14 @@ async function loadAutosave() {
   } catch (e) { console.warn(e); return false; }
 }
 let saveT = 0;
-function saveLocalNow() { clearTimeout(saveT); try { localStorage.setItem(DOC_KEY, JSON.stringify(serialize(true, true))); } catch (e) { toast('Autosave failed (storage full?)'); } }
+function saveLocalNow() {
+  clearTimeout(saveT);
+  try { localStorage.setItem(DOC_KEY, JSON.stringify(serialize(true, true))); }
+  catch (e) {
+    // too big (imported solids live in the history): keep a pointer and let the device library hold the project
+    try { localStorage.setItem(DOC_KEY, JSON.stringify({ ref: PJ.ensureProject().id })); PJ.saveNow(); } catch (e2) { toast('Autosave failed (storage full?)'); }
+  }
+}
 function scheduleSave() {
   clearTimeout(saveT);
   PJ.scheduleLibrarySave();
@@ -647,11 +672,14 @@ function mateTap(x, y) {
   const err = { kind: F.mateGeom(from)?.kind || gA.kind }; // (not parallel is fine: the Mate step turns the part to line them up)
   const A = objById(from.obj);
   if (F.mateLoop(H.hist().filter(r => r.op === 'F.mateOp' && !r.off && !r.err).map(r => r.params), { a: from, b: to }))
-    return retry(`${objById(to.obj).name} is already mated onto ${A.name} — mate them the other way round (tap ${objById(to.obj).name}'s face first)`);
+  { const B = objById(to.obj), direct = H.hist().some(r => r.op === 'F.mateOp' && !r.off && !r.err && r.params.a.obj === to.obj && r.params.b.obj === from.obj);
+    return retry(direct ? `${B.name} is already mated onto ${A.name} — mate them the other way round (tap ${B.name}'s face first)` : `${B.name} already hangs off ${A.name} through other mates — mating it back would make a loop`); }
   S.ed.faces = []; S.ed.selected = new Set([A.id]); S.ed.active = A.id; // (stays in Face mode for the next mate)
   // a Mate step in the history: it is solved again whenever the parts change (e.g. after Sync)
   if (!runOp(F.mateOp, { a: JSON.parse(JSON.stringify(from)), b: JSON.parse(JSON.stringify(to)), gap: 0, align: 'face' })) return retry('Could not mate those faces');
-  toast(`${A.name} mated to ${objById(to.obj).name}${err.kind === 'axis' ? ' (same axis — slide it along with Move)' : ' — set a Gap on the card'}`);
+  const rec = H.hist().find(r => r.params === getLast()?.params);
+  if (rec?.err) toast(`${A.name} → ${objById(to.obj).name}: ${rec.err}`);
+  else toast(`${A.name} mated to ${objById(to.obj).name}${err.kind === 'axis' ? ' (same axis — slide it along with Move)' : ' — set a Gap on the card'}`);
   view.markSelDirty(); refresh(); // (the Mate card stays open: a flat mate's Gap can be typed right away)
 }
 // show only the selected bodies (a view setting, not saved) until Show all
@@ -1178,11 +1206,13 @@ function renderLastOp() {
     return field({ label: f.label, kind: f.kind, value: op.params[f.key], min: f.min, max: f.max, cls, onCommit: v => updateOp({ [f.key]: v }) });
   });
   el.classList.toggle('collapsed', lastCollapsed);
+  const recErr = H.hist().find(r => r.params === op.params)?.err || ''; // (e.g. a mate that conflicts with another: red in History too)
   el.replaceChildren(
     h('div', { class: 'head' },
       h('div', { class: 'title' }, op.def.label(op.params), op.info ? h('small', {}, op.info) : null),
       fields.length ? h('button', { class: 'ib', 'aria-label': 'Collapse', onclick: () => { lastCollapsed = !lastCollapsed; renderLastOp(); }, html: lastCollapsed ? '▴' : '▾' }) : null,
       h('button', { class: 'ib', 'aria-label': 'Done', onclick: () => clearLast(), html: I.check })),
+    ...(recErr ? [h('div', { class: 'cardwarn' }, recErr)] : []),
     ...(fields.length ? [h('div', { class: 'fields' }, fieldEls)] : [])); // (replaceChildren would print a null)
 }
 
@@ -1368,7 +1398,9 @@ function openMainMenu() {
     menuItem(I.phone, 'Install on iPhone', () => openInstall()),
   ));
 }
-const selLabel = () => (S.ed.mode === 'object' && S.ed.selected.size ? 'selected' : 'all');
+// only a selection you can see counts (in Face / Edge mode a part stays selected underneath, e.g. after a Mate)
+const exportSel = () => S.ed.mode === 'object' && S.ed.pick === 'solid' && S.ed.selected.size > 0;
+const selLabel = () => (exportSel() ? `${S.ed.selected.size} selected` : 'all');
 function openViewsMenu() {
   const v = (n, l, k) => menuItem('', l, () => view.setView(n), k);
   popover($('#btn-menu'), h('div', {}, h('div', { class: 'mtitle' }, 'Viewpoint'),
@@ -1403,7 +1435,7 @@ function newScene() {
   const sk0 = SK.activeSketch(); if (sk0) enterSketchView(sk0); else view.frameAll?.();
 }
 function exportTargets() {
-  const objs = S.ed.mode === 'object' && S.ed.selected.size ? selectedObjs() : S.doc.objects.filter(isShown);
+  const objs = exportSel() ? selectedObjs() : S.doc.objects.filter(isShown);
   return objs.filter(o => o.mesh.f.length);
 }
 async function exportAs(kind) {
@@ -1424,7 +1456,7 @@ async function exportAs(kind) {
     }
   } else blob = kind === 'stl' ? IO.exportSTL(objs) : IO.exportOBJ(objs);
   const r = await IO.deliver(blob, `${name}.${kind}`);
-  if (r !== 'cancelled') toast(`Exported ${objs.length} object${objs.length > 1 ? 's' : ''} (mm)`);
+  if (r !== 'cancelled') toast(exportSel() && objs.length < S.doc.objects.filter(isShown).length ? `Exported only the ${objs.length} selected (mm) — tap empty space first to export everything` : `Exported ${objs.length} object${objs.length > 1 ? 's' : ''} (mm)`);
 }
 async function saveProject() {
   // the history rebuilds the solids on open, so the file only needs the light document
@@ -1556,7 +1588,10 @@ OPS.setPivotHook(o => {
   return M.add(g.c, M.mul(g.d, M.dot(M.sub(mid, g.c), g.d)));
 }, o => {
   const r = H.hist().slice(0, H.markerIndex()).filter(x => x.op === 'F.mateOp' && !x.off && !x.err && x.params?.a?.obj === o.id).map(x => F.mateGeom(x.params.b)).find(g => g?.kind === 'axis');
-  return r ? { c: r.c, d: r.d } : null;
+  if (!r) return null;
+  // (a stored axis can point either way: turn it toward its main +X / +Y / +Z so +20° is anticlockwise seen from there)
+  const k = [0, 1, 2].reduce((a, i) => (Math.abs(r.d[i]) > Math.abs(r.d[a]) ? i : a), 0);
+  return { c: r.c, d: r.d[k] < 0 ? M.mul(r.d, -1) : r.d };
 });
 window.StreamLine = { K, S, view, OPS, F, SK, Draw, Cmd, runOp, undo, redo, getLast, M, serialize, setWorkspace, H, BR, isShown, addSketchedPrim, refresh: () => selectionChanged() };
 
@@ -1616,7 +1651,9 @@ function planeHere() {
   // coordinates (the tapped point is only where the plane touches)
   n = M.norm(n); pt = M.mul(n, M.dot(n, pt));
   const pl = planeAt(pt, n, 'on face'); pl.face = { obj: o.id }; // sketches on it belong to that part (Join / Cut, follow it)
-  setDrawPlane(pl, 'Drawing plane set on that face — draw on it, or offset it from the Plane menu');
+  // (a face looking down is seen from below: one of its axes has to run against the model's)
+  const flip = ['X', 'Y', 'Z'].flatMap((A, k) => { const e = [0, 0, 0]; e[k] = 1; return M.dot(pl.u, e) < -0.999 ? [`its X is the model's −${A}`] : M.dot(pl.v, e) < -0.999 ? [`its Y is the model's −${A}`] : []; });
+  setDrawPlane(pl, 'Drawing plane set on that face — draw on it, or offset it from the Plane menu' + (flip.length ? ` (seen from outside: ${flip.join(', ')})` : ''));
 }
 // pick every sketch curve joined end to end with the picked ones (a slot's two lines and two arcs)
 function chainCurves() {

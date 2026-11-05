@@ -98,7 +98,7 @@ export const area = s => R.measureArea(s);
 // order, and each STYLED_ITEM's colour traced back to its product)
 export function stepParts(shape, text) {
   const solids = shape.solids || [];
-  if (solids.length <= 1) return [{ shape, name: null, color: null }];
+  if (!solids.length) return [{ shape, name: null, color: null }];
   const ent = new Map(), re = /#(\d+)\s*=\s*([A-Z_0-9]+)\s*\(([\s\S]*?)\)\s*;/g;
   let m; while ((m = re.exec(text))) ent.set(+m[1], { t: m[2], a: m[3] });
   const refs = a => [...a.matchAll(/#(\d+)/g)].map(x => +x[1]);
@@ -123,6 +123,7 @@ export function stepParts(shape, text) {
     if (prod != null && rgb.length === 3) colorOf.set(prod, hex(rgb));
   }
   const named = products.length === solids.length;
+  if (solids.length === 1) solids[0] = shape; // (one part: keep the shape as read)
   return solids.map((sh, i) => ({ shape: sh, name: named ? products[i].name : null, color: named ? colorOf.get(products[i].id) || null : null }));
 }
 
