@@ -125,7 +125,15 @@ A mix of Fusion 360 and Plasticity. The 3D view fills the whole screen and every
 - After a line's first segment, its card switches the next one between **Line** and **Tangent arc** (a slot, a hook, a rounded profile in one chain).
 - **Project** (Create set) brings a body's edge or face into the open sketch as purple reference geometry, from the exact B-rep: a straight edge as a line, a circle or arc parallel to the sketch as that exact circle or arc, other curves as the outline seen along the sketch's normal. Snap to it, dimension against it, or let it close a profile; a curve already there is not added twice. Projected geometry is fixed reference: it adds no degrees of freedom and has no drag points.
 - **Finish Sketch** returns to the part and the view you had — or, when that view would not show what you drew (a Ø200 disc drawn after zooming in on a detail), looks from the same direction framed on it. Undoing the sketch's creation, or deleting it, finishes it too. A curve typed bigger than the view (or anywhere off-screen) brings the whole sketch back into view.
-- Dimension values and constraint glyphs are spread out on screen so none sits on another; a press on a point that never drags is a tap (it picks the curve there instead of starting a Move point step).
+- **Dimension** (Create set) works like Fusion's Sketch Dimension:
+  - Tap what to measure — a line (its length), a circle or arc (Ø / R), a rectangle's side, or a point — then tap where the dimension goes. Its value comes up to type (Done keeps it as measured).
+  - Before placing it, another line makes it the angle between the two, and a point makes it a distance (point to point, or point to line — two parallel lines give the distance between them).
+  - For two points, where you put it decides the kind: above or below them → horizontal, to their left or right → vertical, off to a side → aligned.
+  - It is drawn like Fusion's: extension lines out to a dimension line with arrows and the value on it; Ø and R as leaders; an angle as an arc. Lines and arrows keep their size at any zoom.
+  - A size the sketch already fixes (a 90° angle between a Horizontal and a Vertical line, a distance between projected points) goes in **driven**: shown in brackets, it reports the size and does not set it. **Make driving** turns it back when that would not over-constrain the sketch.
+  - Tap a dimension's value to type a new one; its keypad also has **Driven** and **Delete**. Drag the value to move the dimension.
+- **Deleting constraints:** tap a constraint's glyph (with any tool when nothing is half-drawn) and **Delete** it — or pick a curve and open **Constrain**: under **On the selection** every constraint and dimension on it is listed with its own Delete, and **Remove all of them**.
+- Constraint glyphs stand off their curves (a line's square to it), so a tap on the curve itself is never taken by a glyph; dimension values and glyphs are spread out on screen so none sits on another. A press on a point that never drags is a tap (it picks the curve there instead of starting a Move point step).
 - A project keeps the construction plane it was left on: it comes back when the project is opened again (and is not carried into a new one).
 - Reopen a sketch from the timeline, the Browser's Sketches folder, or **Edit sketch** on one of its picked curves.
 - On the AutoCAD command line a drawing command (`L`, `C`, `REC` …) typed outside a sketch opens one on the current construction plane, so typed coordinates keep working.
@@ -234,11 +242,11 @@ An extrude from a face sketch targets that body automatically (Join, or Cut into
 ## Fillet, chamfer and constraints
 - **Sketch fillet and chamfer** (Draw → Fillet tool, `F` / `CHA`): tap a corner where two lines meet, where a line meets an arc, or where two arcs meet. Rectangles are split into lines automatically. A fillet arc comes with tangent constraints.
 - **Edge fillet and chamfer** (CAD → Edge tool, then Fillet or Chamfer): works on straight edges between flat faces. Convex edges have material removed and concave edges have it added. A chamfer can use one distance or two (with a swap option). Several edges can be done in one operation, and the result stays editable.
-- **Constraint solver**: Horizontal, Vertical, Parallel, Perpendicular, Equal, Tangent, Concentric and Fix. Dimensions drive the geometry: point-to-point, line length, angle between lines, radius and diameter. Touching points stay joined, and the sketch origin is fixed.
+- **Constraint solver**: Horizontal, Vertical, Parallel, Perpendicular, Equal, Tangent, Concentric and Fix. Dimensions drive the geometry: point-to-point (aligned, horizontal or vertical), point to line, line length, angle between lines, radius and diameter; driven ones only report. Touching points stay joined, and the sketch origin is fixed.
   - The solver uses minimum-norm Gauss-Newton, so each edit moves the geometry as little as possible, to about 1e-12 mm.
   - Values you type are held exactly. When you drag to a position the constraints forbid, the point lands on the closest valid position.
   - The HUD shows the remaining degrees of freedom. Fully-constrained geometry turns white and free geometry stays blue.
-  - Tap a constraint glyph to remove it.
+  - Tap a constraint glyph, then Delete, to remove it — or remove it from the list under Constrain with its curve picked.
 
 ## Tests
 ```sh

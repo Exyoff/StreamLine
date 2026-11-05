@@ -53,7 +53,7 @@ view.THEMES = THEMES; view.LIGHTING = LIGHTING; view.FINISH = FINISH;
 view.theme = THEMES.midnight;
 // the selection colour as a number (overlays in app.js / draw.js use it)
 view.selHex = () => new THREE.Color(view.theme.sel).getHex();
-let renderer, scene, overlay, persp, ortho, container, canvas, labelsEl;
+let renderer, scene, overlay, persp, ortho, container, canvas, labelsEl, dimSvg, dimItems = [], dimHtml = '';
 let gridLines, gridKey = '';
 let needsRender = true, tween = null;
 const visuals = new Map(); // id -> { group, mesh, edges, points, meshRef }
@@ -136,6 +136,8 @@ view.init = function (el) {
   canvas = renderer.domElement;
   canvas.id = 'gl';
   container.appendChild(canvas);
+  // (sketch dimensions are drawn on screen, under the labels: their lines and arrows keep their size at any zoom)
+  dimSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); dimSvg.id = 'dimlayer'; container.appendChild(dimSvg);
   labelsEl = document.createElement('div'); labelsEl.id = 'labels'; container.appendChild(labelsEl);
 
   scene = new THREE.Scene();
@@ -625,6 +627,14 @@ view.label = (world, text, cls = '') => {
   el.style.transform = `translate(${s.x.toFixed(1)}px, ${s.y.toFixed(1)}px) translate(-50%, -130%)`;
 };
 
+// a dimension's lines (screen points [[x, y], …] per polyline) and filled arrowheads, drawn this frame
+view.dimPaths = (lines, arrows, cls = '') => {
+  const f = v => v.toFixed(1);
+  const d = lines.filter(l => l.length > 1).map(l => 'M' + l.map(q => f(q[0]) + ' ' + f(q[1])).join('L')).join('');
+  const a = arrows.map(t => 'M' + t.map(q => f(q[0]) + ' ' + f(q[1])).join('L') + 'Z').join('');
+  if (d) dimItems.push(`<path class="dl ${cls}" d="${d}"/>`);
+  if (a) dimItems.push(`<path class="da ${cls}" d="${a}"/>`);
+};
 view.labelAt = (x, y, text, cls = '') => {
   let el = labelPool[labelIdx];
   if (!el) { el = document.createElement('div'); labelsEl.appendChild(el); labelPool.push(el); }
@@ -669,9 +679,10 @@ function renderFrame() {
   updateCamera();
   syncScene();
   updateGrid();
-  labelIdx = 0;
+  labelIdx = 0; dimItems = [];
   for (const h of view.renderHooks) h();
   for (let i = labelIdx; i < labelPool.length; i++) labelPool[i].style.display = 'none';
+  const html = dimItems.join(''); if (html !== dimHtml && dimSvg) { dimHtml = html; dimSvg.innerHTML = html; }
   // fat-line materials need the drawing-buffer size
   const res = renderer.getDrawingBufferSize(new THREE.Vector2());
   // (model edges also take the Edges width setting, fixed on screen or scaled with zoom)
@@ -738,6 +749,9 @@ function bindPointer() {
     if (Math.hypot(q.x - p.sx, q.y - p.sy) > thr) { moved = true; if (multiTap && pts.size >= 2) multiTap = null; }
     p.x = q.x; p.y = q.y;
     if (mode === 'pending' && moved) { clearTimeout(holdT); if (cursorOn() && !view.cam.lock2D) { mode = 'cursor'; view.handlers.cursorStart(p.sx, p.sy); } else mode = view.cam.lock2D ? 'pan' : 'none'; }
+    // (a press on a dimension's value that slides moves the value: the dimension line follows)
+    if (mode === 'target' && moved && view.handlers.targetDrag?.('start', p.sx, p.sy)) mode = 'tdrag';
+    if (mode === 'tdrag') view.handlers.targetDrag('move', q.x, q.y);
     if (mode === 'cursor') view.handlers.cursorMove(q.x, q.y);
     else if (mode === 'pan') view.pan(dx, dy);
     else if (mode === 'gizmo') view.handlers.dragMove(q.x, q.y, e);
@@ -759,6 +773,7 @@ function bindPointer() {
     if (mode === 'gizmo') { const r = view.handlers.dragEnd(); mode = null; if (r === 'tap' && e.type === 'pointerup' && pts.size === 0) view.handlers.tap && view.handlers.tap(p.x, p.y, e); } // (a press on a gizmo that never dragged is a tap)
     else if (mode === 'pending' && pts.size === 0 && e.type === 'pointerup') { mode = null; view.handlers.tap && view.handlers.tap(p.x, p.y, e); }
     else if (mode === 'target' && pts.size === 0 && e.type === 'pointerup') { mode = null; view.handlers.tap && view.handlers.tap(p.sx, p.sy, e); }
+    else if (mode === 'tdrag') { mode = null; view.handlers.targetDrag(e.type === 'pointerup' ? 'end' : 'cancel', p.x, p.y); }
     if (pts.size === 0) {
       if (multiTap && performance.now() - multiTap.t < 350) emit(multiTap.n === 3 ? 'gestureRedo' : 'gestureUndo');
       multiTap = null; mode = null;

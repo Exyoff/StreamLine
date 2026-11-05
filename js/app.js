@@ -696,7 +696,7 @@ function onTap(x, y) {
   // drawn on top — then what is under the finger
   if (valueTap(x, y)) return;
   if (S.ed.mode === 'object' && Draw.tapLabel(x, y, true)) return;
-  if (S.ed.mode === 'object') { Draw.clearConsSel(); return smartTap(x, y); }
+  if (S.ed.mode === 'object') { Draw.clearConsSel(); Draw.clearDimSel(); return smartTap(x, y); }
   const o = activeObj(); if (!o) return;
   let verts = null;
   if (S.ed.selectMode === 'vert') { const v = view.pickVertex(x, y, { objs: [o] }); if (v) verts = [v.index]; }
@@ -1337,6 +1337,8 @@ function buildStatic() {
 function bindEvents() {
   view.handlers.tap = onTap;
   view.handlers.pressTarget = (x, y) => valueHit(x, y) || (S.ed.mode === 'object' && Draw.labelHit(x, y));
+  // (a press on a dimension's value that slides moves the value: the dimension line follows)
+  view.handlers.targetDrag = (phase, x, y) => S.ed.mode === 'object' && Draw.dimDragAt(phase, x, y);
   $('#btn-cmd').onclick = () => openPalette();
   $('#btn-undo').onclick = () => undo();
   $('#btn-redo').onclick = () => redo();
@@ -1448,7 +1450,7 @@ function renderViewButtons() {
 function act(icon, label, fn, cls = '') { return h('button', { class: 'act ' + cls, onclick: fn }, h('span', { html: icon }), h('span', {}, label)); }
 function renderActions() {
   const row = $('#actions');
-  const key = (S.ed.planePick ? 'pp' + !!S.ed.cplane : '') + (sketching() ? 'SK' : '') + (Draw.consSelected()?.cid ?? '') + '|' + (S.ed.pickLock || '') + (S.ed.consTool || '') + (S.ed.pendingRun ? 'pend' : '') + (S.ed.mateFrom ? 'mate' : '') + (S.ed.isolate ? 'iso' : '') + S.ed.workspace + S.ed.mode + S.ed.selectMode + S.ed.pick + (S.ed.editingSketch ?? '') + (getLast() && getLast().committed && !$('#lastop').hidden ? 'op' : '') + selectedObjs().map(o => o.id + (o.link ? (PJ.outOfDate(o.link.pid) ? 'L!' : 'L') : '')).join(':') + S.ed.faces.map(f => f.planar === false ? 'c' : 'f').join('') + [S.ed.drawSel.size, S.ed.profiles.length, S.ed.faces.length, S.ed.edges.length, S.ed.pick === 'solid' ? S.ed.selected.size : 0].join();
+  const key = (S.ed.planePick ? 'pp' + !!S.ed.cplane : '') + (sketching() ? 'SK' : '') + (Draw.consSelected()?.cid ?? '') + 'd' + (Draw.dimSelected() ? Draw.dimSelected().id + (Draw.dimSelected().driven ? 'r' : '') : '') + '|' + (S.ed.pickLock || '') + (S.ed.consTool || '') + (S.ed.pendingRun ? 'pend' : '') + (S.ed.mateFrom ? 'mate' : '') + (S.ed.isolate ? 'iso' : '') + S.ed.workspace + S.ed.mode + S.ed.selectMode + S.ed.pick + (S.ed.editingSketch ?? '') + (getLast() && getLast().committed && !$('#lastop').hidden ? 'op' : '') + selectedObjs().map(o => o.id + (o.link ? (PJ.outOfDate(o.link.pid) ? 'L!' : 'L') : '')).join(':') + S.ed.faces.map(f => f.planar === false ? 'c' : 'f').join('') + [S.ed.drawSel.size, S.ed.profiles.length, S.ed.faces.length, S.ed.edges.length, S.ed.pick === 'solid' ? S.ed.selected.size : 0].join();
   if (row.dataset.k === key) return;
   row.dataset.k = key;
   if (S.ed.workspace === 'draw') {
@@ -1515,6 +1517,8 @@ function renderActions() {
     }
     // a picked constraint glyph: remove it, or put it down
     if (Draw.consSelected()) { const cs = Draw.consSelected(); row.replaceChildren(act(I.trash, `Delete ${Draw.consName(cs.t)}`, () => Draw.deleteConsSel(), 'danger'), act(I.check, 'Done', () => { Draw.clearConsSel(); S.ed.drawSel = new Set(); selectionChanged(); })); return; }
+    // a picked dimension: its value, driving or driven, or delete it
+    if (Draw.dimSelected()) { const ds = Draw.dimSelected(); row.replaceChildren(...(ds.driven ? [] : [act(I.dim, 'Edit value', () => Draw.editDimSel(), 'primary')]), act(I.constrain, ds.driven ? 'Make driving' : 'Make driven', () => Draw.toggleDrivenSel()), act(I.trash, 'Delete', () => Draw.deleteDimSel(), 'danger'), act(I.check, 'Done', () => { Draw.clearDimSel(); selectionChanged(); })); return; }
     // a command or constraint waiting for picks: a way out
     if (S.ed.consTool) { row.replaceChildren(act(I.check, 'Done', () => { S.ed.consTool = null; S.ed.drawSel = new Set(); refresh(); }, 'primary')); return; }
     if (S.ed.pickLock && !curves && !prof && !faces && !edges && !solids) { row.replaceChildren(act(I.close, 'Cancel', () => { S.ed.pickLock = null; S.ed.pendingRun = null; refresh(); }, 'primary')); return; }
@@ -1630,6 +1634,7 @@ function renderHud() {
     const sel = [[S.ed.drawSel.size, 'curve'], [S.ed.profiles.length, 'profile'], [S.ed.faces.length, 'face'], [S.ed.edges.length, 'edge'], [S.ed.pick === 'solid' ? S.ed.selected.size : 0, 'body']].filter(q => q[0]).map(([n, w]) => plural(n, w));
     const bodyName = S.ed.pick === 'solid' && S.ed.selected.size === 1 ? objById([...S.ed.selected][0])?.name : null;
     if (Draw.consSelected()) parts.push(`<b>${Draw.consName(Draw.consSelected().t)} constraint</b>`, 'Delete removes it · the curves it ties are shown picked');
+    else if (Draw.dimSelected()) parts.push(`<b>${Draw.dimSelected().driven ? 'Driven dimension' : 'Dimension'}</b>`, Draw.dimSelected().driven ? 'it shows the size · Make driving to set it' : 'tap its value to type a new one · drag it to move it');
     else if (S.ed.consTool) parts.push(`<b>${CONS_NAME[S.ed.consTool]}</b> · tap ${CONS_NEED[S.ed.consTool] === 1 ? 'a curve' : `two curves (${S.ed.drawSel.size}/2)`}`, 'Pick another constraint, or Select to stop');
     else if (S.ed.pickLock && !hasPicks()) parts.push(`<b>Tap ${S.ed.pickLock === 'edge' ? 'edges' : S.ed.pickLock === 'face' ? 'a face' : 'a body'}</b>`, S.ed.pendingRun ? 'The command goes on once you tap it' : 'Then choose the command again');
     else if (drawing) parts.push(`<b>${{ dist: 'Distance', id: 'Point', list: 'List' }[S.ed.tool] || S.ed.tool[0].toUpperCase() + S.ed.tool.slice(1)}</b> · tap points on the model or the grid`);
@@ -1705,6 +1710,7 @@ function commands() {
 }
 function deleteSelection() {
   if (Draw.consSelected()) return Draw.deleteConsSel();
+  if (Draw.dimSelected()) return Draw.deleteDimSel();
   if (S.ed.mode === 'edit') return runOp(OPS.deleteGeom);
   if (S.ed.drawSel.size) return Draw.deleteSelected();
   if (S.ed.selected.size) return runOp(OPS.deleteObjs);
@@ -1745,12 +1751,17 @@ function openInquiryMenu(anchor) {
 }
 function openConstrainMenu(anchor) {
   const C = [['h', 'Horizontal', 'H'], ['v', 'Vertical', 'V'], ['par', 'Parallel', '∥'], ['perp', 'Perpendicular', '⊥'], ['eq', 'Equal', '='], ['tan', 'Tangent', 'T'], ['conc', 'Concentric', '◎'], ['fix', 'Fix', '⚓']];
+  // the constraints and dimensions already on the picked curves, each with a Delete (and all of them at once)
+  const on = Draw.consOn([...S.ed.drawSel]);
+  const row = it => h('div', { class: 'mi conrow' }, h('span', { class: 'k' }, it.tag), h('span', { class: 'cn' }, it.name),
+    h('button', { class: 'ib cdel', 'aria-label': 'Delete ' + it.name, html: I.trash, onclick: e => { e.stopPropagation(); closePopover(); Draw.removeCons([it]); } }));
   popover(anchor, h('div', {}, h('div', { class: 'mtitle' }, `Constrain selection · ${S.ed.drawSel.size}`),
     ...C.map(([t, l, g]) => menuItem('', l, () => Draw.constrain(t), g)),
     h('div', { class: 'msep' }),
     menuItem('', 'Construction (toggle)', () => Draw.toggleConstruction(), 'CONS'),
+    ...(on.length ? [h('div', { class: 'msep' }), h('div', { class: 'mtitle' }, `On the selection · ${on.length}`), ...on.map(row), ...(on.length > 1 ? [menuItem(I.trash, 'Remove all of them', () => Draw.removeCons(on))] : [])] : []),
     h('div', { class: 'msep' }),
-    h('div', { class: 'note', style: 'padding:6px 12px 8px;max-width:260px' }, 'Touching points stay joined automatically. Tap a glyph (Select tool) to remove a constraint.')), { above: true });
+    h('div', { class: 'note', style: 'padding:6px 12px 8px;max-width:260px' }, 'Touching points stay joined automatically. A constraint\'s glyph or a dimension can also be tapped to pick it, then deleted.')), { above: true });
 }
 function openSketchMenu(anchor) {
   const sks = S.doc.sketches || [];

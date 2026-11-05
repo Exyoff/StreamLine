@@ -119,6 +119,14 @@ input, select { font: inherit; }
 body.has-cmd #viewport { --cmdh: 128px; }
 #gl { position: absolute; inset: 0; touch-action: none; display: block; }
 #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 1; }
+/* sketch dimensions (Fusion-style): extension and dimension lines, arrows, the value on a small chip */
+#dimlayer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; z-index: 1; }
+#dimlayer .dl { fill: none; stroke: #7fb4ff; stroke-width: 1.15; stroke-linecap: round; }
+#dimlayer .da { fill: #7fb4ff; stroke: none; }
+#dimlayer .ref { stroke: #9aa6b4; } #dimlayer .da.ref { fill: #9aa6b4; }
+#dimlayer .on { stroke: #ffd60a; } #dimlayer .da.on { fill: #ffd60a; }
+#dimlayer .pend { stroke: #7fb4ff; stroke-dasharray: 4 3; } #dimlayer .da.pend { fill: #7fb4ff; }
+:root[data-theme="daylight"] #dimlayer .dl { stroke: #1f5fbf; } :root[data-theme="daylight"] #dimlayer .da { fill: #1f5fbf; }
 #hud, #nav, .vcol, #viewport > .card { z-index: 2; }
 .vlabel {
   position: absolute; left: 0; top: 0; white-space: nowrap; pointer-events: none;
@@ -127,7 +135,11 @@ body.has-cmd #viewport { --cmdh: 128px; }
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
 }
 .vlabel.readout { background: var(--accent); color: var(--accent-ink); border: 0; font-size: 13px; padding: 7px 10px; transform-origin: center; }
-.vlabel.dim { background: rgba(var(--blue-rgb),.88); border: 0; }
+.vlabel.dim { background: rgba(14,22,36,.9); color: #9cc9ff; border: 1px solid rgba(127,180,255,.6); font-size: 12px; padding: 4px 7px; }
+.vlabel.dim.ref { color: #aeb8c4; border-color: rgba(170,180,195,.45); }
+.vlabel.dim.on { background: #ffd60a; color: #1b1b1f; border-color: #ffd60a; }
+.vlabel.dim.pend { border-style: dashed; }
+:root[data-theme="daylight"] .vlabel.dim { background: rgba(255,255,255,.94); color: #1f5fbf; border-color: rgba(31,95,191,.5); }
 .vlabel.cons { background: rgba(58,58,64,.85); color: #ffd60a; font-size: 11px; padding: 4px 6px; min-width: 20px; text-align: center; border-color: rgba(255,214,10,.35); }
 .vlabel.edge { background: rgba(28,28,32,.6); font-size: 11px; padding: 4px 7px; }
 .vlabel.osnap { background: #fefcd2; color: #222; border: 1px solid #b9b06a; font: 600 11px var(--font); padding: 3px 6px; border-radius: 4px; transform-origin: left; }
@@ -264,10 +276,10 @@ body.ws-model #lastop .field .seg button { height: 36px; font-size: 13px; }
 #sheet {
   position: fixed; top: calc(var(--topH) - 2px); right: calc(var(--sar) + 8px); bottom: calc(var(--botH) + var(--sab) + 4px); width: min(360px, calc(100vw - 64px)); z-index: 20;
   background: var(--glass-strong); border-radius: 30px;
-  transform: translateX(calc(100% + 24px)); transition: transform .38s cubic-bezier(.2,.9,.2,1);
+  transform: translateX(calc(100% + 24px + var(--sar))); visibility: hidden; transition: transform .38s cubic-bezier(.2,.9,.2,1), visibility 0s linear .38s;
   display: flex; flex-direction: column; padding-bottom: max(8px, var(--sab)); overflow: hidden;
 }
-#sheet.open { transform: none; }
+#sheet.open { transform: none; visibility: visible; transition: transform .38s cubic-bezier(.2,.9,.2,1), visibility 0s; }
 .grab { width: 36px; height: 5px; border-radius: 3px; background: rgba(var(--tx),.3); margin: 8px auto 4px; flex: none; }
 .sheet-head { display: flex; align-items: center; gap: 8px; padding: 12px 10px 10px 12px; flex: none; }
 .sheet-head .seg { flex: 1; }
@@ -626,9 +638,12 @@ body.has-handle #toast.show { transform: translate(-50%, 0) scale(1); }
   position: fixed; z-index: 21; left: calc(var(--sal) + 86px); right: calc(var(--sar) + 8px); bottom: calc(var(--sab) + 70px);
   height: min(44%, 400px); border-radius: 26px; display: flex; flex-direction: column; overflow: hidden;
   background: var(--glass-sheen), var(--glass-strong);
-  transform: translateY(calc(100% + 90px)); transition: transform .34s cubic-bezier(.2,.9,.2,1); pointer-events: none;
+  /* (closed: below the screen's edge by the home-indicator inset too — on an iPhone a strip of it showed under the
+     bottom bar — and hidden once it has slid away) */
+  transform: translateY(calc(100% + 90px + var(--sab))); visibility: hidden; pointer-events: none;
+  transition: transform .34s cubic-bezier(.2,.9,.2,1), visibility 0s linear .34s;
 }
-#browser.open { transform: none; pointer-events: auto; }
+#browser.open { transform: none; pointer-events: auto; visibility: visible; transition: transform .34s cubic-bezier(.2,.9,.2,1), visibility 0s; }
 #browser.tall { height: min(72%, 620px); }
 #browser .br-grab { position: absolute; left: 50%; top: 5px; width: 36px; height: 5px; margin-left: -18px; border-radius: 3px; background: var(--faint); opacity: .7; }
 .br-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 8px 6px 18px; }
@@ -738,3 +753,13 @@ body.has-handle #toast.show { transform: translate(-50%, 0) scale(1); }
 @media (orientation: landscape) and (max-height: 500px) { #skbar { top: calc(var(--sat) + 52px); height: 38px; } #btn-finish { height: 32px; } }
 body.sketching #toolsets .tset.on { background: var(--accent-soft); }
 .vlabel.plane { background: rgba(20,24,34,.75); font: 700 11px var(--font); letter-spacing: .04em; }
+
+/* a keypad's extra buttons (a dimension's Delete) */
+#keypad .kx { flex: none; height: 30px; padding: 0 12px; border-radius: 999px; background: var(--fill-2); color: var(--text); font: 600 13px var(--font); margin-left: 6px; }
+#keypad .kx.danger { background: rgba(255,69,58,.18); color: #ff6b61; }
+
+/* the Constrain menu's list of what is on the selection: tag, name, delete */
+#popover .conrow { display: flex; align-items: center; gap: 10px; cursor: default; }
+#popover .conrow .k { min-width: 30px; text-align: center; color: #ffd60a; font: 700 12px var(--mono); }
+#popover .conrow .cn { flex: 1; }
+#popover .conrow .cdel { width: 34px; height: 34px; background: rgba(255,69,58,.14); color: #ff6b61; }

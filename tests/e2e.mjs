@@ -311,9 +311,10 @@ try {
   // Dim on a rectangle side dimensions that side
   const dimOk = await st(() => { const L = StreamLine; L.runOp(L.F.sketchOpNew('r', { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }, null, k => { L.F.addEntity(k, { t: 'rect', x: 500, y: 0, w: 30, h: 10 }); })); const sk = L.S.doc.sketches.at(-1); L.view.cam.ortho = true; L.view.lookAlong([0, 0, 1], [515, 5, 0], 80); return sk.id; });
   await p.waitForTimeout(700);
-  const dimOk2 = await st(() => { const L = StreamLine; const sk = L.S.doc.sketches.at(-1); L.S.ed.tool = 'dim'; const q = L.view.project(L.SK.toW(sk.plane, [515, 0])); L.Draw.tap(q.x, q.y); const d = L.S.doc.sketches.find(k => k.id === sk.id).ents.find(e => e.t === 'dim'); L.Draw.resetTool && 0; L.S.ed.tool = 'select'; return d ? d.kind === 'hor' && d.value === 30 : JSON.stringify([L.S.ed.sketch, sk.id, q, L.SK.pickEntity(sk, [515, 0], 1)?.t, document.querySelector('#toast').textContent, L.Draw.st.dimA, L.Draw.st.dimLine]); });
+  // (Fusion-style: the side, then where the dimension goes)
+  const dimOk2 = await st(async () => { const L = StreamLine, UI = await import('./js/ui.js'); const sk = L.S.doc.sketches.at(-1); L.S.ed.tool = 'dim'; let q = L.view.project(L.SK.toW(sk.plane, [515, 0])); L.Draw.tap(q.x, q.y); q = L.view.project(L.SK.toW(sk.plane, [515, -8])); L.Draw.tap(q.x, q.y); UI.closeKeypad(false); const d = L.S.doc.sketches.find(k => k.id === sk.id).ents.find(e => e.t === 'dim'); L.Draw.resetTool(); L.S.ed.tool = 'select'; return d ? d.kind === 'hor' && d.value === 30 && Math.abs(d.at[1] + 8) < 1e-6 : JSON.stringify([L.S.ed.sketch, sk.id, q, L.SK.pickEntity(sk, [515, 0], 1)?.t, document.querySelector('#toast').textContent, L.Draw.st.dimPend]); });
   if (dimOk2 !== true) console.log('DBG dim', dimOk2);
-  check(dimOk2 === true, 'Dim: tapping a rectangle side dimensions its width');
+  check(dimOk2 === true, 'Dim: a rectangle side, then a tap where it goes, dimensions its width there');
   // Push/Pull and Shell follow their faces when an earlier extrude changes
   const ppOk = await st(async () => {
     const L = StreamLine;
@@ -1319,6 +1320,71 @@ try {
   const card2 = await p.evaluate(() => document.querySelectorAll('#lastop .fields > .field').length);
   check(cardA && card1.n === 2 && card1.more && card2 === 4, `On a phone the op card shows its first two settings, the rest behind More (${card1.n} → ${card2})`);
   await closeCard();
+  // Fusion-style dimensions: a line, then a tap where it goes → its length there, typed; a circle → Ø; two points put
+  // to their right → vertical; two lines the sketch already squares → a driven angle (in brackets); a dimension's value
+  // dragged moves it; a tap on it → its keypad, with Delete; a picked curve's constraints are listed in Constrain, each
+  // with a Delete. And the closed Browser stays out of sight under a home-indicator inset
+  const X5 = 85000;
+  const dimIds = await p.evaluate(X5 => {
+    const L = StreamLine, F = L.F, XY = { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }; let r = {};
+    L.runOp(F.sketchOpNew('fd', XY, null, k => {
+      const a = F.addEntity(k, { t: 'line', a: [X5, 0], b: [X5 + 60, 0] }), b = F.addEntity(k, { t: 'line', a: [X5 + 60, 0], b: [X5 + 60, 30] }), c = F.addEntity(k, { t: 'line', a: [X5 + 60, 30], b: [X5, 30] }), d = F.addEntity(k, { t: 'line', a: [X5, 30], b: [X5, 0] });
+      const ci = F.addEntity(k, { t: 'circle', c: [X5 + 20, 15], r: 6 });
+      k.cons = [{ id: ++k.nextEnt, t: 'h', a: a.id }, { id: ++k.nextEnt, t: 'v', a: b.id }, { id: ++k.nextEnt, t: 'h', a: c.id }, { id: ++k.nextEnt, t: 'v', a: d.id }];
+      r = { a: a.id, b: b.id, d: d.id, ci: ci.id };
+    }));
+    const sk = L.S.ed.sketch; L.S.ed.sketch = null; L.activateSketch(sk); L.S.ed.tool = 'dim'; L.Draw.resetTool(); L.refresh(); return { ...r, sk };
+  }, X5);
+  await p.waitForTimeout(900); await frame([X5 - 20, -25, 0], [X5 + 80, 55, 0]); await p.waitForTimeout(500);
+  const P2 = pt => projW([pt[0], pt[1], 0]);
+  const kpad = async str => { await p.waitForTimeout(500); for (const ch of str) await p.tap(`#keypad [data-k="${ch}"]`); await p.tap('#keypad [data-k="ok"]'); await p.waitForTimeout(300); };
+  const sdims = () => p.evaluate(() => { const L = StreamLine, k = L.SK.sketchById(L.S.ed.editingSketch); return k.ents.filter(e => e.t === 'dim').map(d => ({ id: d.id, kind: d.kind, value: d.value == null ? null : +(+d.value).toFixed(3), at: d.at && d.at.map(v => +v.toFixed(1)) })); });
+  let qd = await P2([X5 + 30, 0]); await tapV(qd.x, qd.y);
+  const fd1 = await p.evaluate(() => StreamLine.Draw.st.dimPend?.kind || null);
+  qd = await P2([X5 + 30, -12]); await tapV(qd.x, qd.y);
+  const fdKey = { del: await p.locator('#keypad .kx.danger').count(), driven: await p.locator('#keypad .kx', { hasText: 'Driven' }).count() };
+  await kpad('70');
+  const fdLen = await p.evaluate(id => { const L = StreamLine, k = L.SK.sketchById(L.S.ed.editingSketch), e = L.SK.entById(k, id); return +Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1]).toFixed(6); }, dimIds.a);
+  qd = await P2([X5 + 26, 15]); await tapV(qd.x, qd.y); qd = await P2([X5 + 34, 22]); await tapV(qd.x, qd.y); await kpad('20');
+  const fdDia = await p.evaluate(id => { const L = StreamLine, k = L.SK.sketchById(L.S.ed.editingSketch); return 2 * L.SK.entById(k, id).r; }, dimIds.ci);
+  const corner = await p.evaluate(id => { const L = StreamLine, k = L.SK.sketchById(L.S.ed.editingSketch), e = L.SK.entById(k, id); return [e.a, e.b]; }, dimIds.b);
+  qd = await P2(corner[0]); await tapV(qd.x, qd.y); qd = await P2(corner[1]); await tapV(qd.x, qd.y);
+  qd = await P2([corner[1][0] + 14, (corner[0][1] + corner[1][1]) / 2]); await tapV(qd.x, qd.y); await kpad('40');
+  const fdV = (await sdims()).find(d => d.kind === 'ver');
+  const midD = await p.evaluate(id => { const L = StreamLine, k = L.SK.sketchById(L.S.ed.editingSketch), e = L.SK.entById(k, id); return [(e.a[0] + e.b[0]) / 2, (e.a[1] + e.b[1]) / 2]; }, dimIds.d);
+  qd = await P2(midD); await tapV(qd.x, qd.y); qd = await P2([X5 + 17.5, 0]); await tapV(qd.x, qd.y);
+  const fdAngPend = await p.evaluate(() => StreamLine.Draw.st.dimPend?.kind || null);
+  qd = await P2([X5 + 8, 8]); await tapV(qd.x, qd.y);
+  const fdAng = (await sdims()).find(d => d.kind === 'ang');
+  check(fd1 === 'lin' && fdKey.del === 1 && fdKey.driven === 1 && Math.abs(fdLen - 70) < 1e-6 && Math.abs(fdDia - 20) < 1e-9 && fdV?.value === 40 && fdAngPend === 'ang' && fdAng && fdAng.value === null,
+    `Dimensions like Fusion: a line then where it goes (${fd1} → ${fdLen}), a circle (Ø ${fdDia}), two points put to their right (${fdV?.kind} ${fdV?.value}), and an angle the sketch already fixes goes in driven (${fdAngPend}, ${fdAng?.value}); the keypad offers Driven and Delete (${JSON.stringify(fdKey)})`);
+  // the length's value dragged down 40 px moves it; the Ø's value tapped → Delete removes it
+  await p.evaluate(() => { StreamLine.S.ed.tool = 'select'; StreamLine.Draw.resetTool(); StreamLine.refresh(); }); await p.waitForTimeout(400);
+  const chip = re => p.evaluate(re => { const el = [...document.querySelectorAll('#labels .vlabel.dim')].find(e => e.style.display !== 'none' && new RegExp(re).test(e.textContent)); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }, re);
+  const at0 = (await sdims()).find(d => d.kind === 'lin' && d.value === 70)?.at, lc = await chip('^70');
+  if (lc) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: lc.x, y: lc.y, id: 1 }] }); for (let i = 1; i <= 8; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: lc.x, y: lc.y + i * 5, id: 1 }] }); await p.waitForTimeout(20); } await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await p.waitForTimeout(400); }
+  const at1 = (await sdims()).find(d => d.kind === 'lin' && d.value === 70)?.at;
+  const dc = await chip('Ø'); if (dc) { await p.touchscreen.tap(dc.x, dc.y); await p.waitForTimeout(600); }
+  const kpOpen = await p.locator('#keypad').isVisible(); if (kpOpen) { await p.tap('#keypad .kx.danger'); await p.waitForTimeout(400); }
+  const diaLeft = (await sdims()).filter(d => d.kind === 'dia').length;
+  check(at0 && at1 && at1[1] < at0[1] - 5 && kpOpen && diaLeft === 0, `A dimension's value dragged moves it (${JSON.stringify(at0)} → ${JSON.stringify(at1)}), and tapped it offers Delete, which removes it (${kpOpen}, ${diaLeft} left)`);
+  // the right-hand line picked: Constrain lists its Vertical and its distance, each with a Delete
+  qd = await p.evaluate(id => { const L = StreamLine, k = L.SK.sketchById(L.S.ed.editingSketch), e = L.SK.entById(k, id); return L.view.project([e.a[0] * 0.1 + e.b[0] * 0.9, e.a[1] * 0.1 + e.b[1] * 0.9, 0]); }, dimIds.b);
+  await tapV(qd.x, qd.y);
+  await p.locator('#actions .act', { hasText: 'Constrain' }).tap(); await p.waitForTimeout(300);
+  const conRows = (await p.locator('#popover .conrow').allTextContents()).map(t => t.trim());
+  await p.locator('#popover .conrow').filter({ hasText: /^VVertical$/ }).locator('.cdel').tap(); await p.waitForTimeout(400);
+  const consLeft = await p.evaluate(() => { const L = StreamLine, k = L.SK.sketchById(L.S.ed.editingSketch); return (k.cons || []).map(c => c.t).join(); });
+  check(conRows.length === 2 && conRows.some(t => /Vertical$/.test(t)) && conRows.some(t => /Vertical distance/.test(t)) && consLeft === 'h,h,v', `A picked line's constraints and dimensions are listed in Constrain, each with a Delete (${JSON.stringify(conRows)} → ${consLeft})`);
+  await p.evaluate(() => { const L = StreamLine; L.S.ed.drawSel = new Set(); L.S.ed.tool = 'select'; L.finishSketchEdit(); });
+  // the closed Browser is below the screen and hidden, whatever the bottom inset
+  const brw = await p.evaluate(async () => {
+    document.documentElement.style.setProperty('--vvb', '34px');
+    const b = document.querySelector('#browser'); let last = null; // (the inset's change slides it a little further: let it settle)
+    for (let i = 0; i < 40; i++) { await new Promise(r => setTimeout(r, 100)); const t = Math.round(b.getBoundingClientRect().top); if (t === last) break; last = t; }
+    const out = { top: Math.round(b.getBoundingClientRect().top), h: innerHeight, vis: getComputedStyle(b).visibility };
+    document.documentElement.style.removeProperty('--vvb'); return out; });
+  check(brw.top >= brw.h && brw.vis === 'hidden', `The closed Browser stays out of sight under a home-indicator inset (top ${brw.top} of ${brw.h}, ${brw.vis})`);
   // closed loops: a four-bar (two links on one ground, a bracket across their far ends) moves as one — turning either
   // link turns the other about its hinge, the bracket stays on both pins, and no mate is left in conflict
   const fb = await p.evaluate(async () => {

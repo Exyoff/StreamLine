@@ -76,6 +76,7 @@ function residuals(sk, ctx) {
     if (d.t !== 'dim' || d.value == null) continue;
     if (d.kind === 'lin') { const p = pt(sk, d.A), q = pt(sk, d.B); if (p && q) r.push(d2(p, q) - d.value); }
     else if (d.kind === 'hor' || d.kind === 'ver') { const p = pt(sk, d.A), q = pt(sk, d.B); if (p && q) r.push((d.kind === 'hor' ? q[0] - p[0] : q[1] - p[1]) - d.value); }
+    else if (d.kind === 'pl') { const p = pt(sk, d.P), l = ent(sk, d.l); if (p && l && l.t === 'line') r.push((d.side || 1) * -lineDist(l, p) - d.value); } // (lineDist is signed the other way round from the side it was made on)
     else if (d.kind === 'ang') {
       const a = ent(sk, d.la), b = ent(sk, d.lb); if (!a || !b) continue;
       const da = lineDir(a), db = lineDir(b);

@@ -36,11 +36,13 @@ const rawNumber = (kind, v) => {
 };
 function trimNum(v) { let s = (+v.toPrecision(12)).toString(); if (s.includes('e')) s = v.toFixed(8).replace(/0+$/, '').replace(/\.$/, ''); return s === '-0' ? '0' : s; }
 
-export function openKeypad({ label, kind = 'len', value = 0, min = null, max = null, onCommit, anchor = null }) {
+// (extra: [{ label, cls, onClick }] — buttons beside the label, e.g. a dimension's Delete)
+// (onClose: called when it closes, done or not)
+export function openKeypad({ label, kind = 'len', value = 0, min = null, max = null, onCommit, anchor = null, extra = [], onClose = null }) {
   closeKeypad(false);
   openedAt = performance.now();
   const el = $('#keypad');
-  kp = { kind, expr: rawNumber(kind, value), fresh: true, onCommit, min, max, anchor };
+  kp = { kind, expr: rawNumber(kind, value), fresh: true, onCommit, min, max, anchor, onClose };
   anchor && anchor.classList.add('editing');
   const units = kind === 'len' ? ['mm', 'cm', 'm', 'in', 'ft'] : kind === 'ang' ? ['deg', 'rad', 'pi'] : [];
   const keys = [
@@ -61,7 +63,9 @@ export function openKeypad({ label, kind = 'len', value = 0, min = null, max = n
   grid.append(h('button', { class: 'cancel', 'data-k': 'esc' }, 'Cancel'));
   grid.append(h('button', { class: 'ok', 'data-k': 'ok' }, 'Done'));
   el.replaceChildren(
-    h('div', { class: 'kd' }, h('span', { class: 'kl' }, label || ''), h('div', { class: 'kexpr' })),
+    h('div', { class: 'kd' }, h('span', { class: 'kl' }, label || ''),
+      ...extra.map(x => h('button', { class: 'kx ' + (x.cls || ''), onclick: e => { e.stopPropagation(); if (performance.now() - openedAt < 450) return; /* (the ghost click of the tap that opened it) */ closeKeypad(false); x.onClick(); } }, x.label)),
+      h('div', { class: 'kexpr' })),
     h('div', { class: 'kprev' }), grid);
   el.hidden = false;
   // keep the field being edited visible: lift its card above the keypad
@@ -111,12 +115,13 @@ export function closeKeypad(commit) {
   if (k.lifted) k.lifted.style.transform = '';
   if (commit) {
     let v = k.value;
-    if (v == null || !isFinite(v)) { toast('Invalid value'); return; }
+    if (v == null || !isFinite(v)) { toast('Invalid value'); k.onClose && k.onClose(); return; }
     if (k.kind === 'int') v = Math.round(v);
     if (k.min != null && v < k.min) v = k.min;
     if (k.max != null && v > k.max) v = k.max;
     k.onCommit && k.onCommit(v);
   }
+  k.onClose && k.onClose();
 }
 export const keypadOpen = () => !!kp;
 export function keypadKey(e) {
