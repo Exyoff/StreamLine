@@ -1554,6 +1554,9 @@ OPS.setPivotHook(o => {
   if (!r) return null;
   const g = F.mateGeom(r.params.b), b = K.worldShape(o).boundingBox.bounds, mid = [0, 1, 2].map(k => (b[0][k] + b[1][k]) / 2);
   return M.add(g.c, M.mul(g.d, M.dot(M.sub(mid, g.c), g.d)));
+}, o => {
+  const r = H.hist().slice(0, H.markerIndex()).filter(x => x.op === 'F.mateOp' && !x.off && !x.err && x.params?.a?.obj === o.id).map(x => F.mateGeom(x.params.b)).find(g => g?.kind === 'axis');
+  return r ? { c: r.c, d: r.d } : null;
 });
 window.StreamLine = { K, S, view, OPS, F, SK, Draw, Cmd, runOp, undo, redo, getLast, M, serialize, setWorkspace, H, BR, isShown, addSketchedPrim, refresh: () => selectionChanged() };
 

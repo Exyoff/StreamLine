@@ -716,6 +716,23 @@ try {
     return { errs: L.H.hist().filter(r => r.op === 'F.mateOp').map(r => r.err || ''), first: L.H.hist().filter(r => r.op === 'F.mateOp').at(-2).err || '' };
   });
   check(/loop/.test(loop.errs.at(-1)) && !loop.first, `A mate that would make a loop is flagged on the new step, the first one stays (“${loop.errs.at(-1)}”)`);
+  // Rotate about the mate axis: an exact turn about a hinge that isn't a world axis
+  const ma = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, K = L.K, PJ = await import('./js/projects.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    await PJ.newProject();
+    L.runOp(F.sketchOpNew('blk', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: -10, y: -10, w: 20, h: 20 }); F.addEntity(k, { t: 'circle', c: [0, 0], r: 2 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [-8, -8] }], distance: 10, mode: 'new', target: null }); const A = L.S.doc.objects.at(-1).id;
+    L.S.ed.selected = new Set([A]); L.S.ed.active = A; L.runOp(L.OPS.transform, { mode: 'rotate', axis: 'y', angle: 45, pivot: [0, 0, 0] });
+    L.runOp(F.sketchOpNew('bar', XY(30), null, k => { F.addEntity(k, { t: 'rect', x: 95, y: -5, w: 105, h: 10 }); F.addEntity(k, { t: 'circle', c: [100, 0], r: 2 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [150, 0] }], distance: 4, mode: 'new', target: null }); const B = L.S.doc.objects.at(-1).id;
+    const s2 = Math.SQRT1_2;
+    L.runOp(F.mateOp, { a: { obj: B, n: [1, 0, 0], p: [102, 0, 32], planar: false }, b: { obj: A, n: [s2, 0, -s2], p: [2 * s2 + 5 * s2, 0, -2 * s2 + 5 * s2], planar: false }, gap: 0 });
+    L.S.ed.selected = new Set([B]); L.S.ed.active = B;
+    L.runOp(L.OPS.transform, { mode: 'rotate', axis: 'm', angle: 30 });
+    const last = L.getLast(), fields = L.OPS.transform.fields(last.params).find(f => f.key === 'axis').options.map(o => o[0]);
+    return { fields, held: !!last.heldByMate, errs: L.H.hist().filter(r => r.err).map(r => r.err), ax: last.params._mateAx };
+  });
+  check(ma.fields.includes('m') && !ma.held && ma.ax && !ma.errs.length, `Rotate offers the mate axis and turns about it without the mate pulling back (axis ${ma.ax?.d.map(v => +v.toFixed(4)).join(', ')})`);
   await shot('5-timeline');
 } catch (e) {
   await p.screenshot({ path: OUT + 'crash.png' }).catch(() => {});

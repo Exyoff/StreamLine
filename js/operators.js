@@ -40,8 +40,8 @@ export function selectedWorldPoints() {
   // objects: the middle of each body's bounds (a solid's placement origin is usually the world origin)
   return selectedObjs().map(o => { const W = o.mesh.v.length ? o.mesh.v.map(xfFor(o).toW) : [o.loc]; const b = M.bbox(W); return M.mul(M.add(b.min, b.max), 0.5); });
 }
-let pivotHook = null;
-export const setPivotHook = fn => { pivotHook = fn; };
+let pivotHook = null, axisHook = null;
+export const setPivotHook = (fn, ax) => { pivotHook = fn; axisHook = ax || null; };
 export function computePivot() {
   const pts = selectedWorldPoints();
   if (!pts.length) return null;
@@ -121,21 +121,23 @@ export const transform = {
     if (!hasSelection()) return 'Nothing selected';
     p.pivot ??= computePivot();
     p._edit = S.ed.mode === 'edit';
+    // a part on a round mate can turn about that axis exactly (a hinge, a fan on its tilted shaft)
+    if (p.mode === 'rotate' && p._mateAx === undefined) { const objs = selectedObjs(); p._mateAx = (objs.length === 1 && axisHook?.(objs[0])) || null; }
     if (p.mode === 'scale') { const l = [...S.ed.selected].map(id => S.doc.objects.find(o => o.id === id)).find(o => o && o.link); if (l) return `“${l.name}” is a linked component — it keeps its size (change it in its own project, then Sync)`; }
     if (!p._edit && p._sub === undefined) { const sb = subSelection(); p._sub = sb ? { obj: sb.obj, idx: sb.idx } : null; }
   },
   touch: p => (p._sub ? { ids: [p._sub.obj], mesh: true } : p._edit ? { ids: [S.ed.active], mesh: true } : { ids: [...S.ed.selected], mesh: false }),
   fields(p) {
     if (p.mode === 'move') return xyz();
-    if (p.mode === 'rotate') return [{ key: 'axis', label: 'Axis', kind: 'choice', options: [['x', 'X'], ['y', 'Y'], ['z', 'Z']] }, { key: 'angle', label: 'Angle', kind: 'ang' }];
+    if (p.mode === 'rotate') return [{ key: 'axis', label: 'Axis', kind: 'choice', options: [['x', 'X'], ['y', 'Y'], ['z', 'Z'], ...(p._mateAx ? [['m', 'Mate axis']] : [])] }, { key: 'angle', label: 'Angle', kind: 'ang' }];
     return [{ key: 'sx', label: 'X', kind: 'num' }, { key: 'sy', label: 'Y', kind: 'num' }, { key: 'sz', label: 'Z', kind: 'num' }];
   },
   apply(p) {
-    const pv = p.pivot;
+    const pv = p.axis === 'm' && p._mateAx ? p._mateAx.c : p.pivot;
     let fn;
     let R = null;
     if (p.mode === 'move') fn = w => [w[0] + p.x, w[1] + p.y, w[2] + p.z];
-    else if (p.mode === 'rotate') { R = rotationMatrix(p.axis, p.angle); fn = w => M.add(pv, apply3(R, M.sub(w, pv))); }
+    else if (p.mode === 'rotate') { R = p.axis === 'm' && p._mateAx ? new THREE.Matrix4().makeRotationAxis(new THREE.Vector3(...p._mateAx.d).normalize(), p.angle * Math.PI / 180) : rotationMatrix(p.axis, p.angle); fn = w => M.add(pv, apply3(R, M.sub(w, pv))); }
     else fn = w => [pv[0] + (w[0] - pv[0]) * p.sx, pv[1] + (w[1] - pv[1]) * p.sy, pv[2] + (w[2] - pv[2]) * p.sz];
     if (p._sub) {
       // move / rotate / scale a face or edge; the neighbouring faces stretch to follow (direct modelling)
