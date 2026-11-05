@@ -51,7 +51,7 @@ export async function saveNow() {
       // the version only moves when the exported solids changed, so assemblies only see real updates. A rebuild can
       // serialize the same solids a little differently, so compare their geometry (volume, area per part, placement),
       // measured once per shape — and only build and serialize the export when that changed (big assemblies are slow)
-      const sig = S.doc.objects.filter(o => o.shape && !o.hidden).map(o => [...shapeSig(o.shape), ...o.loc, ...o.rot, ...o.scl].map(v => { const t = (+v).toFixed(5); return /^-0\.?0*$/.test(t) ? t.slice(1) : t; }).join(',')).join('|');
+      const sig = S.doc.objects.filter(o => o.shape && !o.hidden).map(o => [o.name, o.color, ...[...shapeSig(o.shape), ...o.loc, ...o.rot, ...o.scl].map(v => { const t = (+v).toFixed(5); return /^-0\.?0*$/.test(t) ? t.slice(1) : t; })].join(',')).join('|');
       const changed = !prev || prev.sig !== sig;
       const shp = changed ? exportShape() : null, brep = changed ? (shp ? K.serialize(shp) : null) : prev.exportBrep;
       const parts = changed ? exportParts() : prev.parts || null;
