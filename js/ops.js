@@ -117,6 +117,7 @@ function afterApply(op) {
     const i = H.hist().indexOf(op.rec);
     if (op.rec.op === '_xf') Object.assign(op.rec, H.bakeXf(d.xfIds, label) || {});
     else if (op.rec.op === '_bake') Object.assign(op.rec, H.bakeAdded(op.base.list, label) || {});
+    else op.rec.label = label; // the step's name follows its edited values (Hole Ø5 → Ø4)
     if (i >= 0) H.invalidate(i + 1);
     emit('timeline');
     return;

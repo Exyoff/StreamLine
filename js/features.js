@@ -1,5 +1,5 @@
 // CAD operators: sketches, extrude, revolve, body booleans. All re-adjustable via the last-op card.
-import { S, objById, selectedObjs } from './state.js';
+import { S, emit, objById, selectedObjs } from './state.js';
 import * as SK from './sketch.js';
 import * as M from './mesh.js';
 import { toPolys, boolean, polysToMesh } from './csg.js';
@@ -78,8 +78,18 @@ export function addEntity(sk, ent) { sk.nextEnt = (sk.nextEnt || 1) + 1; const e
 export function facePlane(obj, fi, camRight) {
   // exact solids: only flat faces carry a sketch plane (a curved face has no single plane)
   if (obj.brep && obj.faceOf) { const bf = obj.brep.faces[obj.faceOf[fi]]; if (!bf || bf.type !== 'PLANE') return null; }
-  const xf = xfFor(obj), P = obj.mesh.f[fi].map(i => xf.toW(obj.mesh.v[i]));
-  const n = M.faceNormal(P);
+  const xf = xfFor(obj);
+  let P = obj.mesh.f[fi].map(i => xf.toW(obj.mesh.v[i])), n = M.faceNormal(P);
+  // exact solids: the plane from the B-rep face in double precision (the display mesh is float32,
+  // which would put the sketch a hair under the face and hide it)
+  if (obj.shape && obj.faceOf) {
+    try {
+      const f = obj.shape.faces[obj.faceOf[fi]], c0 = f.center, c = typeof c0 === 'function' ? c0() : c0, fn = f.normalAt();
+      const pl = [c.x, c.y, c.z], nl = M.norm([fn.x, fn.y, fn.z]), nw = M.norm(M.sub(xf.toW(M.add(pl, nl)), xf.toW(pl)));
+      if (M.dot(nw, n) < 0) nw.forEach((v, k) => { nw[k] = -v; });
+      P = [xf.toW(pl)]; n = nw;
+    } catch (e) { /* keep the mesh plane */ }
+  }
   if (M.len(n) < 0.5) return null;
   // u: the world axis (projected into the face) best aligned with the camera's right vector;
   // origin: the world origin projected onto the face plane, so sketch coordinates match world ones.
@@ -696,7 +706,7 @@ function patternFields(p) {
   if (p.pattern === 'circle') f.push(cnt, lenF('radius', 'Circle radius'), { key: 'pAngle', label: 'Start angle', kind: 'ang' });
   return f;
 }
-const patternDefaults = { pattern: 'one', count: 4, spacing: 10, rows: 2, rowSpacing: 10, radius: 10, pAngle: 0 };
+const patternDefaults = { pattern: 'one', count: 2, spacing: 10, rows: 2, rowSpacing: 10, radius: 10, pAngle: 0 };
 function patternOffsets(p, fr) {
   const at = (x, y, rot = 0) => ({ d: M.add(M.mul(fr.a, x), M.mul(fr.b, y)), rot });
   const ang = (p.pAngle || 0) * Math.PI / 180, ca = Math.cos(ang), sa = Math.sin(ang);
@@ -716,6 +726,13 @@ function patternCheck(p) {
   if (p.pattern === 'grid' && p.rows > 1 && !(Math.abs(p.rowSpacing) > 0)) return 'Row spacing must not be 0';
   if (p.pattern === 'circle' && !(p.radius > 0)) return 'Circle radius must be > 0';
   if ((p.count || 1) * (p.pattern === 'grid' ? p.rows || 1 : 1) > 400) return 'That is more than 400 copies';
+}
+// pattern copies whose centre is not on the tapped face (they may miss the part, or cut somewhere else)
+function offFaceCheck(face, c, offs, what) {
+  let off = 0;
+  for (const { d } of offs) { try { if (K.R.measureDistanceBetween(face, K.R.makeVertex(M.add(c, d))) > 1e-4) off++; } catch (e) {} }
+  if (off === offs.length && offs.length > 1) return `None of the ${what}s land on the face — check the spacing and direction`;
+  if (off) emit('toast', `${off} of ${offs.length} ${what}s fall outside the face`);
 }
 // cut every tool at once; a tool that misses the body is fine, an empty result is not
 function cutTools(o, tools, msg) {
@@ -746,7 +763,8 @@ export const holeOp = {
     else if (p.kind === 'csink') { if (!(p.csDia > p.dia)) return 'Countersink Ø must be larger than the hole'; const h = (p.csDia / 2 - r) / Math.tan((p.csAngle / 2) * Math.PI / 180); prof.push([p.csDia / 2 + 0.01, -0.01], [r, h]); }
     else prof.push([r, -0.01]);
     prof.push([r, D], [0, D]);
-    const tools = patternOffsets(p, fr).map(({ d }) => K.revolveProfile(M.add(c, d), n, fr.a, prof));
+    const offs = patternOffsets(p, fr), oe = offFaceCheck(f, c, offs, 'hole'); if (oe) return oe;
+    const tools = offs.map(({ d }) => K.revolveProfile(M.add(c, d), n, fr.a, prof));
     return cutTools(o, tools, 'Could not drill this hole');
   },
 };
@@ -779,8 +797,8 @@ export const recessOp = {
     else if (p.kind === 'hex') { const R0 = s / Math.sqrt(3); poly = [...Array(6)].map((_, i) => [R0 * Math.cos(i * Math.PI / 3), R0 * Math.sin(i * Math.PI / 3)]); }
     else poly = [[hw, hw], [hs, hw], [hs, -hw], [hw, -hw], [hw, -hs], [-hw, -hs], [-hw, -hw], [-hs, -hw], [-hs, hw], [-hw, hw], [-hw, hs], [hw, hs]];
     const tipR = p.kind === 'hex' ? s / Math.sqrt(3) : p.kind === 'square' ? hs * Math.SQRT2 : hs;
-    const tools = [];
-    for (const { d, rot } of patternOffsets(p, fr)) {
+    const tools = [], offs = patternOffsets(p, fr), oe = offFaceCheck(f, c0, offs, 'recess'); if (oe) return oe;
+    for (const { d, rot } of offs) {
       const t = (p.rot || 0) * Math.PI / 180 + rot, ct = Math.cos(t), st = Math.sin(t), c = M.add(c0, d);
       const P = poly.map(([x, y]) => M.add(M.add(c, M.mul(fr.a, x * ct - y * st)), M.mul(fr.b, x * st + y * ct)));
       const top = P.map(q => M.sub(q, M.mul(n, 0.01))); // start just outside the face so the cut is clean

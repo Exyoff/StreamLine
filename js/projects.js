@@ -9,6 +9,7 @@ import * as F from './features.js';
 import * as LIB from './library.js';
 import { I } from './icons.js';
 import { h, toast, popover, closePopover, menuItem } from './ui.js';
+import { askText, confirmPop } from './browser.js';
 
 let ctx = null; // { view, refresh, frameAll, afterLoad, toggleSheet, renderSheet }
 let known = new Map(); // pid → { version, name, updated } (the library, for "update available")
@@ -51,7 +52,7 @@ export async function openProject(id) {
   deserialize(rec.data);
   if (S.doc.objects.some(o => o.regen)) { H.resetCache(); H.regenerate(0); for (const o of S.doc.objects) delete o.regen; }
   S.doc.project = { id: rec.id, name: rec.name, created: rec.created };
-  resetHistory(); ctx.afterLoad(); toast(`Opened “${rec.name}”`);
+  resetHistory(); ctx.closeSheet?.(); ctx.afterLoad(); toast(`Opened “${rec.name}”`);
 }
 export async function newProject() {
   await saveNow();
@@ -69,7 +70,7 @@ export async function insertProject(id) {
   if (rec.data && S.doc.project && rec.data.includes(`"${S.doc.project.id}":{`)) { toast('That project already contains this one — inserting it would loop'); return; }
   const def = { ...F.insertComponent, prepare(p) { S.doc.components = { ...(S.doc.components || {}), [id]: { name: rec.name, version: rec.version, brep: rec.exportBrep } }; return F.insertComponent.prepare(p); } };
   def.opName = F.insertComponent.opName; // recorded as the normal insert step
-  if (runOp(def, { pid: id })) { toast(`Inserted “${rec.name}” — drag it with Move, or type its position`); ctx.refresh(); }
+  if (runOp(def, { pid: id })) { ctx.closeSheet?.(); toast(`Inserted “${rec.name}” — drag it with Move, or type its position`); ctx.refresh(); }
 }
 // bring a linked component up to its source project's latest saved version
 export async function syncComponent(pid) {
@@ -128,9 +129,9 @@ function projectMenu(anchor, r, isCur) {
     h('div', { class: 'mtitle' }, r.name),
     !isCur ? menuItem(I.folder, 'Open', () => openProject(r.id)) : null,
     !isCur ? menuItem(I.plus, r.hasSolids ? 'Insert into this project' : 'Insert (no solids yet)', () => insertProject(r.id)) : null,
-    menuItem(I.sliders, 'Rename…', () => { const n = prompt('Project name', r.name); if (n) LIB.rename(r.id, n).then(() => { if (isCur) S.doc.project.name = n; refreshKnown(); ctx.renderSheet(); }); }),
+    menuItem(I.sliders, 'Rename…', () => setTimeout(() => askText(anchor, 'Rename project', r.name, n => LIB.rename(r.id, n).then(() => { if (isCur) S.doc.project.name = n; refreshKnown(); ctx.renderSheet(); })), 0)),
     menuItem(I.dup, 'Duplicate', () => LIB.duplicate(r.id).then(() => { refreshKnown(); ctx.renderSheet(); })),
     !isCur ? h('div', { class: 'msep' }) : null,
-    !isCur ? menuItem(I.trash, 'Delete…', () => { if (confirm(`Delete “${r.name}” from this device? Assemblies that use it keep their last synced copy.`)) LIB.remove(r.id).then(() => { refreshKnown(); ctx.renderSheet(); }); }) : null,
+    !isCur ? menuItem(I.trash, 'Delete…', () => setTimeout(() => confirmPop(anchor, `Delete “${r.name}”?`, 'It is removed from this device. Assemblies that use it keep their last synced copy.', 'Delete', () => LIB.remove(r.id).then(() => { refreshKnown(); ctx.renderSheet(); })), 0)) : null,
   ));
 }

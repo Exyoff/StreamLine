@@ -99,7 +99,7 @@ export function toggleStep(id) {
   });
 }
 // in-app confirmation (iOS action-sheet style)
-function confirmPop(anchor, title, note, okLabel, onOk) {
+export function confirmPop(anchor, title, note, okLabel, onOk) {
   popover(anchor, h('div', { class: 'askform' }, h('div', { class: 'mtitle' }, title), note ? h('div', { class: 'mnote' }, note) : null,
     h('div', { class: 'btnrow' }, h('button', { class: 'btn', onclick: () => closePopover() }, 'Cancel'), h('button', { class: 'btn danger', onclick: () => { closePopover(); onOk(); } }, okLabel))), { above: true });
 }
@@ -180,7 +180,7 @@ function setLayerOf(kind, id, layer) {
   presOp('Move to layer', () => { const x = kind === 'sketch' ? SK.sketchById(id) : S.doc.objects.find(o => o.id === id); if (x) x.layer = layer; });
 }
 // in-app text entry (native prompt() looks foreign and is unreliable in iOS home-screen apps)
-function askText(anchor, title, value, done) {
+export function askText(anchor, title, value, done) {
   const inp = h('input', { class: 'textin', value, enterkeyhint: 'done', autocomplete: 'off', autocorrect: 'off', spellcheck: 'false' });
   const ok = () => { const v = inp.value.trim(); closePopover(); if (v) done(v); };
   inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Escape') closePopover(); }); // Enter submits the form once
