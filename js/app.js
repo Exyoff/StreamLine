@@ -25,6 +25,20 @@ import { featureEdges, straightRun, edgeLoop } from './edges.js';
 H.registerOps('F.', F); H.setPostSolve(recs => F.solveMates(recs)); H.registerOps('O.', OPS); H.registerFactory('setMedianOp', OPS.setMedianOp);
 
 const DOC_KEY = 'streamline.doc.v1';
+
+// iOS Safari: its bottom toolbar can cover the bottom of the page (the layout viewport runs underneath it). Measure
+// the part of the window that is really visible and lift the bottom controls by what is hidden (--vvb, added to
+// the safe-area inset). Not while typing: the on-screen keyboard is not a bar to dodge.
+function fitVisibleViewport() {
+  const vv = window.visualViewport; if (!vv) return;
+  const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || '');
+  const hidden = typing || vv.scale > 1.01 ? 0 : Math.max(0, Math.round(document.documentElement.clientHeight - vv.height - vv.offsetTop));
+  document.documentElement.style.setProperty('--vvb', Math.min(hidden, 140) + 'px');
+}
+window.visualViewport?.addEventListener('resize', fitVisibleViewport);
+window.visualViewport?.addEventListener('scroll', fitVisibleViewport);
+window.addEventListener('orientationchange', () => setTimeout(fitVisibleViewport, 300));
+fitVisibleViewport();
 const AXC = ['ax-x', 'ax-y', 'ax-z'];
 
 // =====================================================================
@@ -64,6 +78,14 @@ async function boot() {
     afterLoad: () => { S.ed.drawSel = new Set(); S.ed.edges = []; S.ed.faces = []; S.ed.profiles = []; S.ed.isolate = null; S.ed.mateFrom = null; S.ed.editingSketch = null; Draw.clearTarget(); Draw.resetTool(); S.ed.workspace = 'model'; S.ed.tool = 'select'; view.markSelDirty(); refresh(); view.cam.lock2D = false; view.frame(S.doc.objects.flatMap(worldVerts).concat(allSketchPoints())); if (sheetOpen) renderSheet(); scheduleSave(); },
   });
   PJ.ensureProject();
+  // in iOS Safari (not installed) its toolbar takes the bottom of the screen: say once how to get it full screen
+  try {
+    const ios = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (ios && !navigator.standalone && !matchMedia('(display-mode: standalone)').matches && !localStorage.getItem('streamline.tip.a2hs')) {
+      localStorage.setItem('streamline.tip.a2hs', '1');
+      setTimeout(() => toast('Tip: Share → Add to Home Screen opens StreamLine full screen, without Safari’s bar', 4500), 2500);
+    }
+  } catch (e) {}
   on('library', () => refreshSoon());
   BR.initBrowser({
     closePanel() { if (sheetOpen && !document.body.classList.contains('sheet-docked')) toggleSheet(false); },
