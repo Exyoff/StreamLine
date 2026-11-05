@@ -733,6 +733,61 @@ try {
     return { fields, held: !!last.heldByMate, errs: L.H.hist().filter(r => r.err).map(r => r.err), ax: last.params._mateAx };
   });
   check(ma.fields.includes('m') && !ma.held && ma.ax && !ma.errs.length, `Rotate offers the mate axis and turns about it without the mate pulling back (axis ${ma.ax?.d.map(v => +v.toFixed(4)).join(', ')})`);
+  // round 14: a multi-part STEP import keeps every part's solid in its history step; an axis mate on a threaded
+  // bore follows the bore when its sketch moves; Loop takes the face toward the viewer and cycles; hole grids on
+  // a bottom face run toward +Y; a hole row across two bosses is all on the part
+  const stepTxt = await p.evaluate(async () => { const K = StreamLine.K; return K.R.exportSTEP([0, 1, 2].map(i => ({ shape: K.R.makeBox([i * 20, 0, 0], [i * 20 + 10, 10, 10 + i]), name: 'P' + i, color: '#9fb6cf' })), { unit: 'MM' }).text(); });
+  await p.evaluate(async () => { const PJ = await import('./js/projects.js'); await PJ.newProject(); });
+  await p.setInputFiles('#file-input', { name: 'three.step', mimeType: 'application/octet-stream', buffer: Buffer.from(stepTxt) });
+  await p.waitForFunction(() => StreamLine.S.doc.objects.length >= 3, null, { timeout: 120000 });
+  const r14 = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, K = L.K, XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    const add = L.H.hist().at(-1).params.add, baked = add.filter(j => j.brepData).length;
+    const back = JSON.parse(JSON.stringify(L.serialize(false))).doc.history.at(-1).params.add.map(j => j.brepData ? +K.volume(K.deserialize(j.brepData)).toFixed(3) : 0);
+    const vol = id => K.volume(L.S.doc.objects.find(o => o.id === id).shape);
+    // threaded bore + pin mated to it, then the bore moves in its sketch
+    L.runOp(F.sketchOpNew('blk', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 9500, y: 0, w: 20, h: 20 }); F.addEntity(k, { t: 'circle', c: [9510, 10], r: 3.4 }); }));
+    const sk = L.S.ed.sketch;
+    L.runOp(F.extrude, { pts: [{ sk, pt: [9501, 1] }], distance: 10, mode: 'new', target: null }); const blk = L.S.doc.objects.at(-1).id;
+    L.S.ed.faces = [{ obj: blk, n: [-1, 0, 0], w: -9513.4, p: [9513.4, 10, 5], planar: false }];
+    L.runOp(F.threadOp, {});
+    const t = L.S.doc.objects.find(x => x.id === blk).brep; let pt = null;
+    for (let k = 0; k < t.faceOf.length && !pt; k++) { const ty = t.faces[t.faceOf[k]]?.type; if (ty && ty !== 'PLANE' && ty !== 'CYLINDRE') pt = [0, 1, 2].map(j => t.mesh.v[t.mesh.f[k][0]][j]); }
+    L.runOp(F.sketchOpNew('pin', XY(0), null, k => { F.addEntity(k, { t: 'circle', c: [9600, 0], r: 3 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [9600, 0] }], distance: 30, mode: 'new', target: null }); const pin = L.S.doc.objects.at(-1).id;
+    const rad = [pt[0] - 9510, pt[1] - 10, 0], rl = Math.hypot(...rad);
+    L.runOp(F.mateOp, { a: { obj: pin, n: [1, 0, 0], p: [9603, 0, 15], planar: false }, b: { obj: blk, n: rad.map(v => -v / rl), p: pt, planar: false } });
+    const ax = () => { const bb = K.worldShape(L.S.doc.objects.find(x => x.id === pin)).boundingBox.bounds; return [(bb[0][0] + bb[1][0]) / 2, (bb[0][1] + bb[1][1]) / 2].map(v => +v.toFixed(3)); };
+    const a1 = ax(); L.runOp(F.sketchOp('move bore', sk, k => { k.ents.find(e => e.t === 'circle').c = [9512, 10]; })); const a2 = ax();
+    const terrs = L.H.hist().filter(r => r.err).map(r => r.err);
+    // Loop on a plate's top edge, seen from above: the top outline first, then the side face's loop
+    L.runOp(F.sketchOpNew('pl', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 9700, y: 0, w: 20, h: 20 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [9701, 1] }], distance: 4, mode: 'new', target: null }); const pl = L.S.doc.objects.at(-1).id;
+    const cam = { p: L.view.cam.pitch, y: L.view.cam.yaw }; L.view.cam.pitch = 1.2; L.view.cam.yaw = -1.2;
+    L.S.ed.pick = 'edge'; L.S.ed.selected = new Set(); L.S.ed.edges = [{ obj: pl, p: [9710, 0, 4], pts: [[9700, 0, 4], [9720, 0, 4]] }]; L.refresh();
+    const loop = () => { [...document.querySelectorAll('#actions button')].find(b => /Loop/.test(b.textContent)).click(); return L.S.ed.edges.map(q => +q.p[2].toFixed(3)); };
+    const l1 = loop(), l2 = loop();
+    L.view.cam.pitch = cam.p; L.view.cam.yaw = cam.y; L.S.ed.edges = []; L.S.ed.pick = 'solid';
+    // hole grid on a bottom face; a hole row across two bosses
+    L.runOp(F.sketchOpNew('bt', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 9800, y: 0, w: 10, h: 10 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [9801, 1] }], distance: 5, mode: 'new', target: null }); const bt = L.S.doc.objects.at(-1).id;
+    const v0 = vol(bt); L.S.ed.faces = [{ obj: bt, n: [0, 0, -1], w: 0, p: [9805, 2, 0], planar: true }];
+    L.runOp(F.holeOp, { dia: 2, depth: 3, pattern: 'grid', count: 1, rows: 2, rowSpacing: 6 }); const cut1 = v0 - vol(bt);
+    L.runOp(F.sketchOpNew('bb', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 9900, y: 0, w: 30, h: 10 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [9901, 1] }], distance: 5, mode: 'new', target: null }); const bb = L.S.doc.objects.at(-1).id;
+    L.runOp(F.sketchOpNew('bs', XY(5), null, k => { F.addEntity(k, { t: 'circle', c: [9905, 5], r: 3 }); F.addEntity(k, { t: 'circle', c: [9925, 5], r: 3 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [9905, 5] }, { sk: L.S.ed.sketch, pt: [9925, 5] }], distance: 5, mode: 'join', target: bb });
+    const v1 = vol(bb); document.querySelector('#toast').textContent = '';
+    L.S.ed.faces = [{ obj: bb, n: [0, 0, 1], w: 10, p: [9905, 5, 10], planar: true }];
+    L.runOp(F.holeOp, { dia: 2, depth: 3, pattern: 'row', count: 2, spacing: 20 }); L.S.ed.faces = [];
+    const cut2 = v1 - vol(bb), toast2 = document.querySelector('#toast').textContent;
+    return { baked, n: add.length, back, a1, a2, terrs, l1, l2, cut1, cut2, toast2, hole: Math.PI * 3 };
+  });
+  check(r14.baked === 3 && r14.n === 3 && r14.back.join() === '1000,1100,1200', `A 3-part STEP import keeps every part's exact solid in its history step (survives save / reload: ${r14.back.join(', ')})`);
+  check(r14.a1.join() === '9510,10' && r14.a2.join() === '9512,10' && !r14.terrs.length, `A pin mated into a threaded bore follows the bore when it moves (${r14.a1} → ${r14.a2})${r14.terrs.length ? ' · ' + r14.terrs.join('; ') : ''}`);
+  check(r14.l1.length === 4 && r14.l1.every(z => z === 4) && r14.l2.length === 4 && r14.l2.some(z => z !== 4), `Loop takes the face toward the viewer (top outline), Loop again the side face (${r14.l1} / ${r14.l2})`);
+  check(Math.abs(r14.cut1 - 2 * r14.hole) < 1e-6, `A hole grid on a bottom face runs toward +Y (both holes cut: ${r14.cut1.toFixed(3)} mm³)`);
+  check(Math.abs(r14.cut2 - 2 * r14.hole) < 1e-6 && !/outside/.test(r14.toast2), `A hole row across two bosses' tops counts both as on the part (${r14.toast2 || 'no warning'})`);
   await shot('5-timeline');
 } catch (e) {
   await p.screenshot({ path: OUT + 'crash.png' }).catch(() => {});

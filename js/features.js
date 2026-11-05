@@ -788,8 +788,9 @@ function coaxialCylinder(shape, ax) {
   for (const f of shape.faces) {
     const cy = K.cylinderOf(f); if (!cy || Math.abs(M.dot(cy.d, ax.d)) < 0.9999) continue;
     const dc = M.sub(cy.c, ax.c), off = M.len(M.sub(dc, M.mul(ax.d, M.dot(dc, ax.d))));
-    if (off > 1e-5) continue;
-    const sc = Math.abs(cy.R - ax.R); if (!best || sc < best.sc) best = { sc, cy };
+    // same axis (the hole or shaft changed size), else the same size moved a little (its sketch moved)
+    const sc = off <= 1e-5 ? Math.abs(cy.R - ax.R) : Math.abs(cy.R - ax.R) < 1e-6 && off < Math.max(5, 2 * ax.R) ? 1e3 + off : Infinity;
+    if (sc < Infinity && (!best || sc < best.sc)) best = { sc, cy };
   }
   return best?.cy || null;
 }
@@ -819,7 +820,7 @@ export const threadOp = {
     if (!(p.pitch > 0.05)) return 'Pitch must be at least 0.05 mm';
     const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
     let cy = (() => { const f = findFaces(o, p.faces)?.[0]; return f && K.cylinderOf(f); })();
-    if (!cy && p._axis) cy = coaxialCylinder(o.shape, p._axis); // the hole or shaft changed size: same axis
+    if (!cy && p._axis) cy = coaxialCylinder(o.shape, p._axis); // the hole or shaft changed size or moved
     if (!cy) return 'The cylindrical face it used no longer exists';
     p._axis = { c: cy.c, d: cy.d, R: cy.R };
     const span = cy.t1 - cy.t0, L = Math.min(Math.max(p.length, p.pitch * 2), span);
@@ -863,7 +864,9 @@ export const threadOp = {
 function faceFrame(o, f0) {
   const xf = xfFor(o), n = M.mul(locDir(xf, f0.p, f0.n), -1);
   const ref = Math.abs(n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
-  const a = M.norm(M.sub(ref, M.mul(n, M.dot(n, ref)))), b = M.cross(a, n);
+  const a = M.norm(M.sub(ref, M.mul(n, M.dot(n, ref))));
+  // rows go toward +Y (or +Z on a wall) on any face, also one facing down (no mirrored patterns)
+  let b = M.cross(a, n); const up = Math.abs(n[2]) > 0.9 ? [0, 1, 0] : [0, 0, 1]; if (M.dot(b, up) < 0) b = M.mul(b, -1);
   return { xf, n, a, b };
 }
 // the exact centre a tap means: a round face's circle centre (a boss, a standoff, a screw head), or the
@@ -965,11 +968,18 @@ function ontoFace(p, fr) {
   if (Math.abs(d) < 1e-9) return c;
   const cc = M.sub(c, M.mul(n, d)); [p.x, p.y, p.z] = fr.xf.toW(cc).map(v => +v.toFixed(9)); return cc;
 }
-function offFaceCheck(face, c, offs, what) {
+// (a copy that lands on another face in the same plane — the next standoff's top — is on the part; the warning is
+// only shown while the step is made or edited, not on every rebuild)
+function offFaceCheck(o, face, c, offs, what, quiet) {
   let off = 0;
-  for (const { d } of offs) { try { if (K.R.measureDistanceBetween(face, K.R.makeVertex(M.add(c, d))) > 1e-4) off++; } catch (e) {} }
-  if (off === offs.length) return offs.length > 1 ? `None of the ${what}s land on the face — check the spacing and direction` : `The ${what} centre is off the face — check its X / Y / Z`;
-  if (off) emit('toast', `${off} of ${offs.length} ${what}s fall outside the face`);
+  for (const { d } of offs) {
+    try {
+      const v = K.R.makeVertex(M.add(c, d));
+      if (K.R.measureDistanceBetween(face, v) > 1e-4 && (offs.length === 1 || K.R.measureDistanceBetween(o.shape, v) > 1e-4)) off++;
+    } catch (e) {}
+  }
+  if (off === offs.length) return offs.length > 1 ? `None of the ${what}s land on the part — check the spacing and direction` : `The ${what} centre is off the face — check its X / Y / Z`;
+  if (off && !quiet) emit('toast', `${off} of ${offs.length} ${what}s fall outside the part`);
 }
 // how deep a drill of radius r from c along n must go to come out of the material it starts in
 function firstExit(shape, c, n, r, len) {
@@ -1003,7 +1013,7 @@ export const holeOp = {
   fields: p => [lenF('dia', 'Diameter'), lenF('depth', 'Depth (0 = through)'), ...(p.depth > 0 ? [] : [{ key: 'thru', label: 'Through', kind: 'choice', options: [['wall', 'This wall'], ['all', 'Everything']], wide: true }]), { key: 'kind', label: 'Type', kind: 'choice', options: [['simple', 'Simple'], ['cbore', 'Counterbore'], ['csink', 'Countersink']], wide: true },
     ...(p.kind === 'cbore' ? [lenF('cbDia', 'Counterbore Ø'), lenF('cbDepth', 'Counterbore depth')] : p.kind === 'csink' ? [lenF('csDia', 'Countersink Ø'), { key: 'csAngle', label: 'Countersink angle', kind: 'ang' }] : []),
     lenF('x', 'Centre X'), lenF('y', 'Centre Y'), lenF('z', 'Centre Z'), ...patternFields(p)],
-  apply(p) {
+  apply(p, ctx) {
     if (!(p.dia > 0)) return 'Diameter must be > 0';
     // counterbore / countersink sizes follow the hole until typed (ISO-ish: Ø×1.8 counterbore, Ø×2 countersink)
     p._auto ??= {};
@@ -1025,7 +1035,7 @@ export const holeOp = {
     else if (p.kind === 'csink') { if (!(p.csDia > p.dia)) return 'Countersink Ø must be larger than the hole'; const h = (p.csDia / 2 - r) / Math.tan((p.csAngle / 2) * Math.PI / 180); prof.push([p.csDia / 2 + 0.01, -0.01], [r, h]); }
     else prof.push([r, -0.01]);
     prof.push([r, D], [0, D]);
-    const offs = patternOffsets(p, fr), oe = offFaceCheck(f, c, offs, 'hole'); if (oe) return oe;
+    const offs = patternOffsets(p, fr), oe = offFaceCheck(o, f, c, offs, 'hole', ctx?.replay); if (oe) return oe;
     const tools = offs.map(({ d }) => K.revolveProfile(M.add(c, d), n, fr.a, prof));
     return cutTools(o, tools, 'Could not drill this hole');
   },
@@ -1044,7 +1054,7 @@ export const recessOp = {
     lenF('depth', 'Depth'), { key: 'rot', label: 'Rotation', kind: 'ang' },
     ...(p.kind !== 'slot' ? [{ key: 'tip', label: 'Cone at the bottom', kind: 'bool' }] : []),
     lenF('x', 'Centre X'), lenF('y', 'Centre Y'), lenF('z', 'Centre Z'), ...patternFields(p)],
-  apply(p) {
+  apply(p, ctx) {
     if (!(p.size > 0) || !(p.depth > 0)) return 'Size and depth must be > 0';
     if ((p.kind === 'slot' || p.kind === 'cross') && !(p.width > 0 && p.width < p.size)) return 'Slot width must be > 0 and smaller than the length';
     const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
@@ -1062,7 +1072,7 @@ export const recessOp = {
     else if (p.kind === 'hex') { const R0 = s / Math.sqrt(3); poly = [...Array(6)].map((_, i) => [R0 * Math.cos(i * Math.PI / 3), R0 * Math.sin(i * Math.PI / 3)]); }
     else poly = [[hw, hw], [hs, hw], [hs, -hw], [hw, -hw], [hw, -hs], [-hw, -hs], [-hw, -hw], [-hs, -hw], [-hs, hw], [-hw, hw], [-hw, hs], [hw, hs]];
     const tipR = p.kind === 'hex' ? s / Math.sqrt(3) : p.kind === 'square' ? hs * Math.SQRT2 : hs;
-    const tools = [], offs = patternOffsets(p, fr), oe = offFaceCheck(f, c0, offs, 'recess'); if (oe) return oe;
+    const tools = [], offs = patternOffsets(p, fr), oe = offFaceCheck(o, f, c0, offs, 'recess', ctx?.replay); if (oe) return oe;
     for (const { d, rot } of offs) {
       const t = (p.rot || 0) * Math.PI / 180 + rot, ct = Math.cos(t), st = Math.sin(t), c = M.add(c0, d);
       const P = poly.map(([x, y]) => M.add(M.add(c, M.mul(fr.a, x * ct - y * st)), M.mul(fr.b, x * st + y * ct)));
@@ -1094,7 +1104,16 @@ function mateLocal(o, f, pl, nl) {
   const r = mateLocalFind(o, f, pl, nl); m.set(key, r); return r;
 }
 function mateLocalFind(o, f, pl, nl) {
-  if (f.edgeAxis) return circleAxisNear(o, pl, Infinity);
+  if (f.edgeAxis) { // (the rim nearest the tap; once known, a rim on that same axis line wins, so a changed part keeps its hole)
+    let r = null;
+    if (f._ax) for (const e of o.brep?.edges || []) {
+      if (e.type !== 'CIRCLE' || !e.closed || e.seam) continue;
+      const a = circleOfEdge(e.pts); if (Math.abs(M.dot(a.d, f._ax.d)) < 0.999) continue;
+      const dc = M.sub(a.c, f._ax.c); if (M.len(M.sub(dc, M.mul(f._ax.d, M.dot(dc, f._ax.d)))) > 1e-3) continue;
+      const d = K.polyDist(pl, e.pts); if (!r || d < r.dd) r = { kind: 'axis', q: null, ...a, dd: d };
+    }
+    r = r || circleAxisNear(o, pl, Infinity); return r && { kind: 'axis', q: null, c: r.c, d: r.d, ax: { c: r.c, d: r.d, R: r.R } };
+  }
   let hit = K.faceAt(o.shape, pl, f.planar === false ? null : nl, f.planar === false ? null : f._fh);
   if (!hit && f.planar !== false) hit = K.faceAt(o.shape, pl, nl, f._fh);
   if (hit && f.planar !== false && hit.f.geomType === 'PLANE') f._fh = K.faceHint(hit.f);
@@ -1106,6 +1125,16 @@ function mateLocalFind(o, f, pl, nl) {
       if (!best || off < best.off) best = { off, i, f: fc };
     });
     if (best) hit = { i: best.i, f: best.f };
+    else { // a thread (no cylinder left): the round edge on the same axis line, nearest the old radius
+      let be = null;
+      for (const a of circleAxes(o)) {
+        if (Math.abs(M.dot(a.d, f._ax.d)) < 0.999) continue;
+        const dc = M.sub(a.c, f._ax.c), off = M.len(M.sub(dc, M.mul(f._ax.d, M.dot(dc, f._ax.d))));
+        const sc = off + 0.1 * Math.abs(a.R - (f._ax.R || 0));
+        if (!be || sc < be.sc) be = { sc, a };
+      }
+      if (be && be.sc < Math.max(5, 2 * (f._ax.R || 0))) return { kind: 'axis', q: null, c: be.a.c, d: be.a.d, ax: { c: be.a.c, d: be.a.d, R: be.a.R } };
+    }
   }
   if (!hit) return null;
   const q = hit.q || null;
@@ -1115,7 +1144,15 @@ function mateLocalFind(o, f, pl, nl) {
   }
   const cy = K.cylinderOf(hit.f) || K.coneAxis(hit.f) || K.revolutionAxis(hit.f);
   if (cy) return { kind: 'axis', q, c: cy.c, d: cy.d, ax: cy.R ? { c: cy.c, d: cy.d, R: cy.R } : null };
-  const r = circleAxisNear(o, pl, Infinity); return r ? { ...r, q } : null;
+  const r = circleAxisNear(o, pl, Infinity); return r ? { ...r, q, ax: { c: r.c, d: r.d, R: r.R } } : null;
+}
+// every round (closed circular) edge's axis, in the part's coordinates
+function circleAxes(o) {
+  return (o.brep?.edges || []).filter(e => e.type === 'CIRCLE' && e.closed && !e.seam).map(e => circleOfEdge(e.pts));
+}
+function circleOfEdge(pts) {
+  const qq = pts.slice(0, -1), c = [0, 1, 2].map(k => qq.reduce((s, v) => s + v[k], 0) / qq.length);
+  return { c, d: M.norm(M.cross(M.sub(qq[0], c), M.sub(qq[Math.floor(qq.length / 4)], c))), R: M.len(M.sub(qq[0], c)) };
 }
 // the axis of the round (closed circular) edge nearest a point in the part's coordinates, within maxD
 export function circleAxisNear(o, pl, maxD) {
@@ -1125,8 +1162,7 @@ export function circleAxisNear(o, pl, maxD) {
     const d = K.polyDist(pl, e.pts); if (d <= maxD && (!best || d < best.d)) best = { d, e };
   }
   if (!best) return null;
-  const qq = best.e.pts.slice(0, -1), c = [0, 1, 2].map(k => qq.reduce((s, v) => s + v[k], 0) / qq.length);
-  return { kind: 'axis', q: null, c, d: M.norm(M.cross(M.sub(qq[0], c), M.sub(qq[Math.floor(qq.length / 4)], c))) };
+  return { kind: 'axis', q: null, ...circleOfEdge(best.e.pts) };
 }
 export function mateGeom(f) {
   const o = objById(f.obj); if (!o || !o.shape) return null;

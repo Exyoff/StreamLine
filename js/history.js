@@ -56,7 +56,7 @@ const BAKED = {
 };
 export function bakeAdded(baseList, label) {
   const ids = new Set(baseList.map(o => o.id));
-  const add = S.doc.objects.filter(o => !ids.has(o.id)).map(objJSON);
+  const add = S.doc.objects.filter(o => !ids.has(o.id)).map(o => objJSON(o)); // (not .map(objJSON): the index would be its "light" flag)
   return add.length ? { op: '_bake', label, params: { add } } : null;
 }
 export function bakeXf(ids, label) {

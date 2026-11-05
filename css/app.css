@@ -529,3 +529,4 @@ body.has-handle #toast.show { transform: translate(-50%, 0) scale(1); }
 /* choice rows with many options wrap instead of pushing the dialog sideways */
 .field .seg:has(> button:nth-child(4)) { flex-wrap: wrap; height: auto; row-gap: 4px; }
 .field .seg:has(> button:nth-child(4)) > button { flex: 1 0 auto; min-width: 30%; }
+#lastop .cardwarn { color: var(--danger); font-size: 12px; line-height: 1.35; padding: 2px 4px 6px; }
