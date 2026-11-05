@@ -35,6 +35,17 @@ export function transformShape(shape, m) {
 let objMatrixFn = null;
 export function setMatrixFn(fn) { objMatrixFn = fn; }
 export function worldShape(o) { return isIdentity(o) ? o.shape : transformShape(o.shape, objMatrixFn(o)); }
+// a part's exact world bounds, kept per shape and placement: the gizmo asks for its pivot every frame, and moving a
+// copy of a big part (threads, an inserted assembly) for each ask made it crawl
+const worldBoxMemo = new WeakMap();
+export function worldBounds(o) {
+  const key = isIdentity(o) ? '' : objMatrixFn(o).elements.join(',');
+  const m = worldBoxMemo.get(o.shape);
+  if (m && m.key === key) return m.b;
+  const b = worldShape(o).boundingBox.bounds;
+  worldBoxMemo.set(o.shape, { key, b });
+  return b;
+}
 export function toLocal(shape, o) { return isIdentity(o) ? shape : transformShape(shape, objMatrixFn(o).clone().invert()); }
 export const translated = (shape, v) => shape.clone().translate(v);
 export const rotated = (shape, deg, c, axis) => shape.clone().rotate(deg, c, axis);
@@ -376,6 +387,21 @@ export function isValid(shape) {
   let a = null;
   try { a = new oc.BRepCheck_Analyzer(shape.wrapped, true, false); return a.IsValid_2 ? a.IsValid_2() : a.IsValid_1 ? a.IsValid_1() : a.IsValid(); }
   catch (e) { return true; } finally { try { a && a.delete(); } catch (e) {} }
+}
+// Draft (taper) faces about a neutral plane through `origin`, pulling along the unit `dir`. OCCT tilts planes and
+// turns a cylinder whose axis runs along the pull into a cone; faces tangent to a picked one (a fillet) go with it.
+export function draft(shape, faces, deg, origin, dir) {
+  let b = null, p0 = null, d = null, pln = null;
+  try {
+    b = new oc.BRepOffsetAPI_DraftAngle(shape.wrapped);
+    p0 = new oc.gp_Pnt(origin[0], origin[1], origin[2]); d = new oc.gp_Dir(dir[0], dir[1], dir[2]); pln = new oc.gp_Pln(p0, d);
+    for (const f of faces) { b.Add(f.wrapped, d, deg * Math.PI / 180, pln, true); if (!b.AddDone()) throw new Error('A picked face cannot be drafted along this pull'); }
+    b.Build();
+    if (!b.IsDone()) throw new Error('Draft failed');
+    const r = R.cast(b.Shape());
+    if (isEmpty(r) || !isValid(r)) throw new Error('Draft gave a broken solid');
+    return r;
+  } finally { for (const x of [b, pln, d, p0]) try { x && x.delete(); } catch (e) { /* freed */ } }
 }
 // Shell (hollow a solid, removing `faces`, wall `t` inward). OCCT's thick-solid builder is picky on some
 // surfaces (lofted cones, swept tubes), so try its join variants, then fall back to cutting an inward

@@ -341,6 +341,8 @@ function glyphTap(s, x, y) {
   return true;
 }
 export const entName = e => entTitle(e);
+// a press on a dimension label or a constraint glyph is a tap on it, held or not (no precision cursor there)
+export const labelHit = (x, y) => (st.dimLabels || []).some(L => Math.hypot(L.x - x, L.y - y) < 28) || (st.consLabels || []).some(G => Math.hypot(G.x - x, G.y - y) < 18);
 export function tapLabel(x, y, glyphs = true) {
   const s = sk(); if (!s || s.pending) return false;
   for (const L of st.dimLabels || []) if (Math.hypot(L.x - x, L.y - y) < 28) { editDim(L.dim); return true; }
@@ -610,8 +612,11 @@ export function cardContent() {
     const c = ensureCmd(), n = acad.polySides, flats = acad.polyBy === 'flats';
     const place = size => { const ctr = c.center; const v = flats ? polyCorner(ctr, size, acad.polyRot, n) : [ctr[0] + size * Math.cos(acad.polyRot * D), ctr[1] + size * Math.sin(acad.polyRot * D)]; editSketch(`Polygon (${n})`, k => { const r = SK.addPolygon(k, ctr, v, n); if (typeof r === 'string') return r; }); c.stage = 'center'; emit('drawcard'); view.render(); };
     const cur = c.stage === 'vertex' && pv() ? SK.d2(c.center, pv()) * (flats ? 2 * Math.cos(Math.PI / n) : 1) : 0;
-    return h('div', {}, title(`Polygon · ${n} sides`, c.stage === 'vertex' ? (flats ? 'tap the middle of a flat, or type the size' : 'tap a corner, or type the size') : 'tap the centre'),
+    // the centre can be typed too (X then Y), like a circle's
+    const typedCentre = c.stage === 'vertex' ? null : xyFields('Centre', (p, k) => { if (k === 0) { st.typed.x = p[0]; st.preview = p; emit('drawcard'); view.render(); return; } c.center = p; c.stage = 'vertex'; st.typed = {}; st.preview = p; emit('drawcard'); view.render(); });
+    return h('div', {}, title(`Polygon · ${n} sides`, c.stage === 'vertex' ? (flats ? 'tap the middle of a flat, or type the size' : 'tap a corner, or type the size') : 'tap the centre, or type it'),
       h('div', { class: 'seg modebar' }, ...[['flats', 'Across flats'], ['corner', 'To corner']].map(([k, l]) => h('button', { class: acad.polyBy === k ? 'on' : '', onclick: () => { acad.polyBy = k; emit('drawcard'); } }, l))),
+      typedCentre,
       h('div', { class: 'fields' },
         field({ label: 'Sides', kind: 'int', value: n, min: 3, max: 64, onCommit: v => { acad.polySides = Math.max(3, Math.min(64, Math.round(v))); emit('drawcard'); } }),
         field({ label: 'Rotation', kind: 'ang', value: acad.polyRot, onCommit: v => { acad.polyRot = v; emit('drawcard'); } }),

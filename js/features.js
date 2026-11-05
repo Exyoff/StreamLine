@@ -213,8 +213,9 @@ function touchedBody(tool) {
   const tb = tool.boundingBox.bounds; let best = null;
   for (const o of S.doc.objects) {
     if (!o.shape || o.link || o.hidden || !isShown(o)) continue;
-    const w = K.worldShape(o), b = w.boundingBox.bounds;
+    const b = K.worldBounds(o); // (the box first: moving a copy of every part to test it is slow)
     if ([0, 1, 2].some(k => b[1][k] < tb[0][k] - 1e-6 || b[0][k] > tb[1][k] + 1e-6)) continue;
+    const w = K.worldShape(o);
     let v = 0; try { const i = w.intersect(tool); v = K.isEmpty(i) ? 0 : K.volume(i); } catch (e) { continue; }
     // a join only needs to touch; a cut needs overlap
     const touch = v > 1e-9 || (() => { try { return R0dist(w, tool) < 1e-6; } catch (e) { return false; } })();
@@ -811,7 +812,9 @@ export const draftOp = {
     const along = p.faces.find(f => f.n && Math.abs(M.dot(M.norm(f.n), d)) > 0.99);
     if (along) return `This face looks along the pull direction (+${p.pull.toUpperCase()}) — Draft tilts the side walls that run along it: pick ${['x', 'y', 'z'].filter(k => k !== p.pull).map(k => '+' + k.toUpperCase()).join(' or ')}`;
     const round = p.faces.some(f => f.planar === false);
-    const res = guard(() => o.shape.draft(p.angle, () => ({ find: () => faces, delete() {} }), new R.Plane(M.mul(d, p.neutral), x, d)), round ? 'Draft failed on a round wall — draw the taper into its profile instead (a revolve, or a loft)' : 'Draft failed');
+    // (OCCT's draft with tangent faces carried along handles round walls too; the plain one is the fallback)
+    const res = guard(() => { try { return K.draft(o.shape, faces, p.angle, M.mul(d, p.neutral), d); } catch (e) { return o.shape.draft(p.angle, () => ({ find: () => faces, delete() {} }), new R.Plane(M.mul(d, p.neutral), x, d)); } },
+      round ? `Draft failed on a round wall — its axis must run along the pull direction (+${p.pull.toUpperCase()})` : 'Draft failed');
     if (typeof res === 'string') return res;
     K.setShape(o, res); S.ed.faces = [];
   },
@@ -972,6 +975,22 @@ function flatFacePrep(p, what) {
   const e0 = solidOnly(objById(p.obj)); if (e0) return e0;
   snapCentre(p);
 }
+// a bolt circle on a round face (a disc, a ring, a flange) goes round the face's centre, through the tapped spot's
+// radius; once set, a typed centre or radius is kept
+function boltCentre(o, p) {
+  if (p.pattern !== 'circle' || p._bolt) return;
+  p._bolt = true;
+  if (p._centred) return; // (already centred on the face: a disc tapped near its middle)
+  try {
+    const xf = xfFor(o), f = p.faces[0], hit = K.faceAt(o.shape, xf.toL(f.p)), ca = hit && K.circleAxisOf(hit.f); if (!ca) return;
+    // only a face bounded by circles round one centre (not a hole in a bigger face)
+    const b = hit.f.boundingBox.bounds, mid = [0, 1, 2].map(k => (b[0][k] + b[1][k]) / 2);
+    if (!hit.f.edges.every(e => e.geomType === 'CIRCLE') || M.dist(mid, ca.c) > 1e-6 * Math.max(1, ca.R)) return;
+    const cw = xf.toW(ca.c), d = M.sub(f.p, cw), r = M.len(M.sub(d, M.mul(M.norm(f.n), M.dot(d, M.norm(f.n)))));
+    [p.x, p.y, p.z] = cw.map(v => +v.toFixed(9)); p._centred = 'circle'; p._circ = { c: ca.c, R: ca.R, n: locDir(xf, f.p, f.n) };
+    if (r > 1e-6 && p.radius === patternDefaults.radius) p.radius = +r.toFixed(S.settings.snap ? 1 : 3);
+  } catch (e) { /* stays where it was tapped */ }
+}
 // pattern offsets in the face plane (local coordinates): one, a row, a grid or a bolt circle
 const PATTERNS = [['one', 'Single'], ['row', 'Row'], ['grid', 'Grid'], ['circle', 'Circle']];
 function patternFields(p) {
@@ -1067,6 +1086,7 @@ export const holeOp = {
     for (const [k, f] of [['cbDia', 1.8], ['cbDepth', 1], ['csDia', 2]]) if (p[k] == null || p._auto[k]) { p[k] = +(p.dia * f).toFixed(2); p._auto[k] = true; }
     p.csAngle ??= 90;
     const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
+    boltCentre(o, p);
     if (p._centred === 'circle') reanchorCircle(o, p);
     const before = p.faces[0].p.slice();
     const f = findFaces(o, p.faces)?.[0]; if (!f) return 'The face it was drilled into no longer exists';
@@ -1105,6 +1125,7 @@ export const recessOp = {
     if (!(p.size > 0) || !(p.depth > 0)) return 'Size and depth must be > 0';
     if ((p.kind === 'slot' || p.kind === 'cross') && !(p.width > 0 && p.width < p.size)) return 'Slot width must be > 0 and smaller than the length';
     const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
+    boltCentre(o, p);
     if (p._centred === 'circle') reanchorCircle(o, p);
     const before = p.faces[0].p.slice();
     const f = findFaces(o, p.faces)?.[0]; if (!f) return 'The face for the recess no longer exists';
