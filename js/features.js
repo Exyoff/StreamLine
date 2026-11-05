@@ -917,6 +917,69 @@ export const recessOp = {
   },
 };
 
+// ---------- assemblies: Mate (solved again on every rebuild) ----------
+// what a picked face offers for mating: a plane (normal + a point on it) or an axis (cylinder, cone, or for a
+// thread / free-form round face, the nearest round edge of the body). World coordinates.
+export function mateGeom(f) {
+  const o = objById(f.obj); if (!o || !o.shape) return null;
+  const xf = xfFor(o), pl = xf.toL(f.p), nl = locDir(xf, f.p, f.n);
+  let hit = K.faceAt(o.shape, pl, f.planar === false ? null : nl);
+  if (!hit && f.planar !== false) hit = K.faceAt(o.shape, pl, nl);
+  if (!hit && f._ax) { // a round face that moved (its sketch changed): the parallel cylinder of the same radius nearest its old axis
+    let best = null;
+    o.shape.faces.forEach((fc, i) => {
+      const cy = K.cylinderOf(fc); if (!cy || Math.abs(M.dot(cy.d, f._ax.d)) < 0.9999) return;
+      const dc = M.sub(cy.c, f._ax.c), off = M.len(M.sub(dc, M.mul(f._ax.d, M.dot(dc, f._ax.d)))) + 1000 * Math.abs(cy.R - f._ax.R);
+      if (!best || off < best.off) best = { off, i, f: fc };
+    });
+    if (best) hit = { i: best.i, f: best.f };
+  }
+  if (!hit) return null;
+  if (hit.q) { const pw = xf.toW(hit.q); Object.assign(f, { p: pw, w: M.dot(f.n, pw) }); } // follow a moved face
+  const toWd = d => M.norm(M.sub(xf.toW(M.add(pl, d)), xf.toW(pl)));
+  if (hit.f.geomType === 'PLANE') { // the exact plane (not the float32 tap point)
+    const fn = hit.f.normalAt(), c0 = hit.f.center, c = typeof c0 === 'function' ? c0() : c0;
+    return { kind: 'plane', o, n: toWd(M.norm([fn.x, fn.y, fn.z])), p: xf.toW([c.x, c.y, c.z]) };
+  }
+  const cy = K.cylinderOf(hit.f) || K.coneAxis(hit.f);
+  if (cy) { if (cy.R) f._ax = { c: cy.c, d: cy.d, R: cy.R }; return { kind: 'axis', o, c: xf.toW(cy.c), d: toWd(cy.d) }; }
+  let best = null;
+  for (const e of o.brep.edges) {
+    if (e.type !== 'CIRCLE' || !e.closed || e.seam) continue;
+    const d = K.polyDist(pl, e.pts); if (!best || d < best.d) best = { d, e };
+  }
+  if (best) {
+    const q = best.e.pts.slice(0, -1), c = [0, 1, 2].map(k => q.reduce((s, v) => s + v[k], 0) / q.length);
+    const n = M.norm(M.cross(M.sub(q[0], c), M.sub(q[Math.floor(q.length / 4)], c)));
+    return { kind: 'axis', o, c: xf.toW(c), d: toWd(n) };
+  }
+  return null;
+}
+// the move that puts face a onto face b: { v, kind } or an error message
+export function mateSolve(a, b) {
+  const A = mateGeom(a), B = mateGeom(b);
+  if (!A || !B) return 'Mate works with flat and round faces';
+  if (A.kind === 'plane' && B.kind === 'plane') {
+    if (Math.abs(M.dot(A.n, B.n)) < 0.9999) return 'Those faces are not parallel (rotate the part first)';
+    return { kind: 'plane', v: M.mul(B.n, M.dot(B.n, M.sub(B.p, A.p))) }; // slide along the normal onto the other plane
+  }
+  if (A.kind === 'axis' && B.kind === 'axis') {
+    if (Math.abs(M.dot(A.d, B.d)) < 0.9999) return 'Those axes are not parallel (rotate the part first)';
+    const dc = M.sub(B.c, A.c); return { kind: 'axis', v: M.sub(dc, M.mul(B.d, M.dot(dc, B.d))) }; // onto the same axis
+  }
+  return 'Mate a flat face to a flat face, or a round face to a round face';
+}
+export const mateOp = {
+  label: p => `Mate ${objById(p.a.obj)?.name || 'part'} → ${objById(p.b.obj)?.name || 'part'}`,
+  touch: p => ({ ids: [p.a.obj], mesh: false }),
+  apply(p) {
+    const o = objById(p.a.obj); if (!o) return 'The part it moves no longer exists';
+    if (!objById(p.b.obj)) return 'The part it mates to no longer exists';
+    const r = mateSolve(p.a, p.b); if (typeof r === 'string') return r;
+    o.loc = M.add(o.loc, r.v).map(v => (Math.abs(v - Math.round(v * 1e9) / 1e9) < 1e-9 ? Math.round(v * 1e9) / 1e9 : v));
+  },
+};
+
 // ---------- assemblies: linked components ----------
 // S.doc.components[pid] = { name, version, brep } — a copy of another project's solids. An inserted
 // component is a solid object with o.link = { pid }; it is placed with Move/Rotate and stays read-only
