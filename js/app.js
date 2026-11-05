@@ -9,7 +9,7 @@ import * as BR from './browser.js';
 import { view, camera } from './viewport.js';
 import { initGizmo, gizmoActive } from './gizmo.js';
 import * as OPS from './operators.js';
-import { runOp, undo, redo, canUndo, canRedo, getLast, clearLast, updateOp, resetHistory } from './ops.js';
+import { runOp, undo, redo, canUndo, canRedo, getLast, clearLast, updateOp, resetHistory, mergeLastUndo } from './ops.js';
 import { serialize, deserialize, newObject, xfFor, worldVerts, objMatrix } from './scene.js';
 import * as M from './mesh.js';
 import { fmtLen, fmtAng, fmtArea, fmtNum, unitFactor } from './units.js';
@@ -631,7 +631,10 @@ function mateTap(x, y) {
   if (!to) { S.ed.faces = prev; toast('Mate cancelled'); return refresh(); }
   if (to.obj === from.obj) { S.ed.faces = prev; S.ed.mateFrom = from; toast('Pick a face on the other body'); return refresh(); }
   const retry = m => { S.ed.mateFrom = from; S.ed.faces = prev; toast(m + ' — tap another face, or Cancel mate'); refresh(); };
-  const err = F.mateSolve(from, to); if (typeof err === 'string') return retry(err);
+  const gA = F.mateGeom(from), gB = F.mateGeom(to);
+  if (!gA || !gB) return retry('Mate works with flat and round faces');
+  if (gA.kind !== gB.kind) return retry('Mate a flat face to a flat face, or a round face to a round face');
+  const err = { kind: gA.kind }; // (not parallel is fine: the Mate step turns the part to line them up)
   const A = objById(from.obj);
   S.ed.faces = []; S.ed.selected = new Set([A.id]); S.ed.active = A.id; // (stays in Face mode for the next mate)
   // a Mate step in the history: it is solved again whenever the parts change (e.g. after Sync)
@@ -1542,7 +1545,7 @@ function addSketchedPrim(type) {
   if (S.ed.mode === 'edit') setMode('object');
   if (!runOp(F.sketchOpNew(`${name} profile`, base, null, sk => { for (const e of P.ents) F.addEntity(sk, e); }))) return;
   const skId = S.ed.sketch;
-  runOp(P.op, { pts: [{ sk: skId, pt: P.seed }], mode: 'new', target: null, ...P.params });
+  if (runOp(P.op, { pts: [{ sk: skId, pt: P.seed }], mode: 'new', target: null, ...P.params })) mergeLastUndo(); // one Undo takes both away
   S.ed.pick = 'solid'; S.ed.drawSel = new Set(); refresh();
 }
 

@@ -21,6 +21,16 @@ export function eulerFromMatrix(m) {
   return r;
 }
 
+// turn an object so direction `from` (world) points along `to`, about the world point `pivot` (for Mate)
+export function turnObject(o, from, to, pivot) {
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(...from).normalize(), new THREE.Vector3(...to).normalize());
+  const cur = new THREE.Quaternion().setFromEuler(new THREE.Euler(o.rot[0] * D2R, o.rot[1] * D2R, o.rot[2] * D2R, EULER_ORDER));
+  const e = new THREE.Euler().setFromQuaternion(q.clone().multiply(cur), EULER_ORDER);
+  const snap = v => { const d = v / D2R, r = Math.round(d * 1e6) / 1e6; return Math.abs(r - d) < 1e-6 ? r : d; };
+  o.rot = [snap(e.x), snap(e.y), snap(e.z)].map(v => (Math.abs(v) < 1e-9 ? 0 : v));
+  const rel = new THREE.Vector3(o.loc[0] - pivot[0], o.loc[1] - pivot[1], o.loc[2] - pivot[2]).applyQuaternion(q);
+  o.loc = [pivot[0] + rel.x, pivot[1] + rel.y, pivot[2] + rel.z].map(v => { const r = Math.round(v * 1e9) / 1e9; return Math.abs(r - v) < 1e-9 ? r : v; });
+}
 // Transform helpers in double precision (Matrix4.elements is a plain Array)
 export function xfFor(o) {
   const M = objMatrix(o), Mi = M.clone().invert();

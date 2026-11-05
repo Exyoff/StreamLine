@@ -433,6 +433,33 @@ try {
     return K.volume(L.S.doc.objects.find(o => o.id === base).shape);
   });
   check(Math.abs(vents - (20000 - 1500)) < 1e-6, `Linear Pattern: five vent cutters subtracted in one step (${vents.toFixed(2)} mm³)`);
+  // Mate turns a part to line up axes; Subtract follows a polar pattern whose count changes
+  const turn = await st(async () => {
+    const L = StreamLine, F = L.F, K = L.K, ops = await import('./js/ops.js');
+    const XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }), XZ = { o: [0, 0, 0], u: [1, 0, 0], v: [0, 0, 1], n: [0, -1, 0] };
+    L.runOp(F.sketchOpNew('blk', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 7000, y: 0, w: 30, h: 20 }); F.addEntity(k, { t: 'circle', c: [7010, 10], r: 3 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [7002, 2] }], distance: 10, mode: 'new', target: null }); const blk = L.S.doc.objects.at(-1).id;
+    // a pin lying along Y (sketched on XZ, extruded along −Y)
+    L.runOp(F.sketchOpNew('pin', XZ, null, k => { F.addEntity(k, { t: 'circle', c: [7060, 40], r: 3 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [7060, 40] }], distance: 30, mode: 'new', target: null }); const pin = L.S.doc.objects.at(-1).id;
+    const a = { obj: pin, n: [1, 0, 0], w: 7063, p: [7063, -15, 40], planar: false }, b = { obj: blk, n: [0, -1, 0], w: -13, p: [7010, 13, 5], planar: false };
+    const ok = L.runOp(F.mateOp, { a, b });
+    const o = L.S.doc.objects.find(x => x.id === pin), bb = K.worldShape(o).boundingBox.bounds;
+    const axis = [(bb[0][0] + bb[1][0]) / 2, (bb[0][1] + bb[1][1]) / 2], vertical = bb[1][2] - bb[0][2];
+    // polar pattern of cutters → subtract → count 6 → 8
+    L.runOp(F.sketchOpNew('disc', XY(0), null, k => { F.addEntity(k, { t: 'circle', c: [8000, 0], r: 20 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [8000, 0] }], distance: 5, mode: 'new', target: null }); const disc = L.S.doc.objects.at(-1).id;
+    L.runOp(F.sketchOpNew('cut', XY(0), null, k => { F.addEntity(k, { t: 'circle', c: [8018, 0], r: 3 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [8018, 0] }], distance: 5, mode: 'new', target: null });
+    L.S.ed.selected = new Set([L.S.doc.objects.at(-1).id]); L.runOp(F.polarPattern, { count: 6, angle: 360, axis: 'z', cx: 8000, cy: 0, cz: 0 });
+    L.S.ed.selected = new Set([...L.S.ed.selected, disc]); L.runOp(F.bodyBoolean, { kind: 'subtract' });
+    const dv = () => K.volume(L.S.doc.objects.find(x => x.id === disc).shape), v6 = dv();
+    const pr = L.H.hist().find(r => r.op === 'F.polarPattern'); L.BR.editStep(pr.id); ops.updateOp({ count: 8 }); ops.commit();
+    return { ok, axis, vertical, rot: o.rot, v6, v8: dv(), left: L.S.doc.objects.filter(x => x.patternOf != null).length, errs: L.H.hist().filter(r => r.err).map(r => r.err) };
+  });
+  check(turn.ok && Math.abs(turn.axis[0] - 7010) < 1e-6 && Math.abs(turn.axis[1] - 10) < 1e-6 && Math.abs(turn.vertical - 30) < 1e-6, `Mate turns a pin lying on its side upright into the hole (axis at ${turn.axis.map(v => +v.toFixed(6)).join(', ')}, rotation ${turn.rot.join(', ')})`);
+  const per6 = (Math.PI * 400 * 5 - turn.v6) / 6, per8 = (Math.PI * 400 * 5 - turn.v8) / 8; // each cutter removes the same amount
+  check(per6 > 1 && Math.abs(per6 - per8) < 1e-6 && turn.left === 0 && !turn.errs.length, `Subtract follows its polar pattern: 6 → 8 cutters all cut, none left over (v6 ${turn.v6.toFixed(2)}, v8 ${turn.v8.toFixed(2)}, left ${turn.left})${turn.errs.length ? ' · ' + turn.errs.join('; ') : ''}`);
   // Mate: a pin's round face onto a hole's round face (same axis), by touch
   {
     const ids = await st(() => {

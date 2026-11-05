@@ -35,10 +35,12 @@ export async function saveNow() {
     try {
       const prev = await LIB.get(pr.id);
       const shp = exportShape(), brep = shp ? K.serialize(shp) : null;
-      // the version only moves when the exported solids changed, so assemblies only see real updates
-      const changed = !prev || prev.exportBrep !== brep;
+      // the version only moves when the exported solids changed, so assemblies only see real updates. A rebuild can
+      // serialize the same solids a little differently, so compare their geometry (volume, area, bounds), not the text
+      const sig = shp ? (() => { const b = shp.boundingBox.bounds; return [K.volume(shp), K.area(shp), ...b[0], ...b[1]].map(v => v.toFixed(5)).join('|'); })() : '';
+      const changed = !prev || (prev.sig != null ? prev.sig !== sig : prev.exportBrep !== brep);
       const rec = { id: pr.id, name: pr.name, created: prev?.created || pr.created || Date.now(), updated: changed || !prev ? Date.now() : prev.updated, version: changed ? (prev?.version || 0) + 1 : prev.version,
-        data: JSON.stringify(serialize(true)), exportBrep: brep, thumb: ctx?.view?.thumbnail?.() || prev?.thumb || null,
+        data: JSON.stringify(serialize(true)), exportBrep: changed || !prev ? brep : prev.exportBrep, sig, thumb: ctx?.view?.thumbnail?.() || prev?.thumb || null,
         bodies: S.doc.objects.filter(o => o.shape).length };
       await LIB.put(rec);
       known.set(rec.id, { id: rec.id, name: rec.name, version: rec.version, updated: rec.updated, thumb: rec.thumb });

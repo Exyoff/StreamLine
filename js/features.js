@@ -3,7 +3,7 @@ import { S, emit, objById, selectedObjs, isShown } from './state.js';
 import * as SK from './sketch.js';
 import * as M from './mesh.js';
 import { toPolys, boolean, polysToMesh } from './csg.js';
-import { newObject, xfFor, worldVerts } from './scene.js';
+import { newObject, xfFor, worldVerts, turnObject } from './scene.js';
 import { defSize } from './operators.js';
 import { fmtLen } from './units.js';
 
@@ -309,17 +309,27 @@ export const revolve = {
 };
 
 export const bodyBoolean = {
-  label: p => ({ union: 'Union', subtract: 'Subtract', intersect: 'Intersect' })[p.kind],
+  label: p => `${({ union: 'Union', subtract: 'Subtract', intersect: 'Intersect' })[p.kind]}${p.kind === 'subtract' && objById(p.ids?.[0]) ? ' from ' + objById(p.ids[0]).name : ''}`,
   defaults: () => ({ kind: 'union', keep: false }),
   prepare(p) {
     if (S.ed.selected.size < 2) return 'Select 2+ bodies (turn on multi-select). The first one tapped is the target.';
-    p.ids ??= [...S.ed.selected];
+    if (!p.ids) {
+      const sel = [...S.ed.selected].map(objById).filter(Boolean);
+      // subtract: the target is the biggest body (cutters are smaller) — so a pattern of cutters selected
+      // first, then the blank, still cuts the blank
+      if (p.kind === 'subtract' && sel.every(o => o.shape)) sel.sort((a, b) => Math.abs(K.volume(K.worldShape(b))) - Math.abs(K.volume(K.worldShape(a))));
+      p.ids = sel.map(o => o.id);
+    }
+    // tools that came from a pattern follow the pattern (its copies are made again when its count changes)
+    p._pat ??= [...new Set(p.ids.slice(1).map(id => objById(id)?.patternOf).filter(x => x != null))];
   },
   touch: p => ({ ids: p.ids, mesh: true }),
   fields: () => [{ key: 'kind', label: 'Operation', kind: 'choice', options: [['union', 'Union'], ['subtract', 'Subtract'], ['intersect', 'Intersect']], wide: true }, { key: 'keep', label: 'Keep tools', kind: 'bool' }],
   apply(p) {
-    const [tid, ...tools] = p.ids;
+    const [tid, ...listed] = p.ids;
     const t = objById(tid); if (!t) return 'Target missing';
+    const pat = new Set(p._pat || []);
+    const tools = [...new Set([...listed.filter(id => !pat.has(objById(id)?.patternOf)), ...S.doc.objects.filter(o => pat.has(o.patternOf)).map(o => o.id)])].filter(id => id !== tid && objById(id));
     if (t.link) return `“${t.name}” is a linked component — tap another body first to make it the target`;
     const objs = tools.map(objById).filter(Boolean);
     if (t.shape && objs.every(o => o.shape)) {
@@ -510,18 +520,20 @@ export const polarPattern = {
   defaults: () => ({ count: 6, angle: 360, axis: 'z', cx: 0, cy: 0, cz: 0 }),
   prepare(p) { if (!S.ed.selected.size) return 'Select a body'; p.ids ??= [...S.ed.selected]; p._base ??= S.doc.nextId; },
   touch: () => ({ ids: [] }),
+  reserve: 2000, // ids kept free for its copies, so a bigger count never collides with later bodies
   fields: () => [{ key: 'count', label: 'Count', kind: 'int', min: 2, max: 360 }, { key: 'angle', label: 'Total angle', kind: 'ang' }, { key: 'axis', label: 'Axis', kind: 'choice', options: [['x', 'X'], ['y', 'Y'], ['z', 'Z']], wide: true }, lenF('cx', 'Centre X'), lenF('cy', 'Centre Y'), lenF('cz', 'Centre Z')],
   apply(p) {
     const n = Math.max(2, Math.min(360, Math.round(p.count)));
     const full = Math.abs(Math.abs(p.angle) - 360) < 1e-9, step = full ? p.angle / n : p.angle / (n - 1);
     const a = AX[p.axis], c = [p.cx, p.cy, p.cz];
     let id = p._base; const made = [...p.ids];
+    if (S.doc.nextId < p._base + 2000) S.doc.nextId = p._base + 2000;
     for (let k = 1; k < n; k++) for (const oid of p.ids) {
       const o = objById(oid); if (!o) continue;
       let q;
       if (o.shape) { const s = guard(() => K.rotated(K.worldShape(o), step * k, c, a), 'Pattern failed'); if (typeof s === 'string') return s; q = newObject(o.name, null, [0, 0, 0], id++); K.setShape(q, s); }
       else { const W = rotateMesh(worldVerts(o), c, a, step * k), anchor = M.centroid(W); q = newObject(o.name, new M.PolyMesh(W.map(w => M.sub(w, anchor)), o.mesh.f.map(f => f.slice())), anchor, id++); }
-      q.color = o.color; S.doc.objects.push(q); made.push(q.id);
+      q.color = o.color; q.patternOf = p._base; S.doc.objects.push(q); made.push(q.id);
     }
     S.ed.selected = new Set(made);
   },
@@ -532,6 +544,7 @@ export const linearPattern = {
   defaults: () => ({ count: 3, spacing: 10, dir: 'x', count2: 1, spacing2: 10, dir2: 'y' }),
   prepare(p) { if (!S.ed.selected.size) return 'Select a body'; p.ids ??= [...S.ed.selected]; p._base ??= S.doc.nextId; },
   touch: () => ({ ids: [] }),
+  reserve: 2000,
   fields: p => [{ key: 'count', label: 'Count', kind: 'int', min: 1, max: 500 }, lenF('spacing', 'Spacing (− flips)'), { key: 'dir', label: 'Direction', kind: 'choice', options: [['x', 'X'], ['y', 'Y'], ['z', 'Z']], wide: true },
     { key: 'count2', label: 'Rows', kind: 'int', min: 1, max: 500 }, ...(p.count2 > 1 ? [lenF('spacing2', 'Row spacing'), { key: 'dir2', label: 'Row direction', kind: 'choice', options: [['x', 'X'], ['y', 'Y'], ['z', 'Z']], wide: true }] : [])],
   apply(p) {
@@ -540,13 +553,14 @@ export const linearPattern = {
     if (n1 * n2 > 1000) return 'That is more than 1000 copies';
     if (n2 > 1 && p.dir2 === p.dir) return 'Rows need a different direction';
     let id = p._base; const made = [...p.ids];
+    if (S.doc.nextId < p._base + 2000) S.doc.nextId = p._base + 2000;
     for (let j = 0; j < n2; j++) for (let i = 0; i < n1; i++) {
       if (!i && !j) continue;
       const d = M.add(M.mul(AX[p.dir], i * p.spacing), M.mul(AX[p.dir2], j * (p.spacing2 || 0)));
       for (const oid of p.ids) {
         const o = objById(oid); if (!o) continue;
         const q = newObject(o.name, o.shape ? null : new M.PolyMesh(o.mesh.v.map(v => v.slice()), o.mesh.f.map(f => f.slice())), M.add(o.loc, d), id++);
-        q.rot = o.rot.slice(); q.scl = o.scl.slice(); q.color = o.color; q.layer = o.layer;
+        q.rot = o.rot.slice(); q.scl = o.scl.slice(); q.color = o.color; q.layer = o.layer; q.patternOf = p._base;
         if (o.shape) K.setShape(q, o.shape); // same local shape, shifted placement (shapes are shared values)
         S.doc.objects.push(q); made.push(q.id);
       }
@@ -744,6 +758,7 @@ function coaxialCylinder(shape, ax) {
 }
 // Thread: a true helical thread on a cylindrical face — external (shaft) or internal (hole), detected from the face
 export const threadOp = {
+  shrink: 'length', shrinkTries: 3, // a thread that cannot be cut over the default length is tried shorter
   label: p => `Thread ${p._internal ? 'internal ' : ''}M${fmtD(p.size || p._d || 0)}×${fmtD(p.pitch || 0)}`,
   prepare(p) {
     p.faces ??= JSON.parse(JSON.stringify((S.ed.faces || []).slice(0, 1)));
@@ -757,10 +772,12 @@ export const threadOp = {
     p._d = 2 * cy.R; p._axis = { c: cy.c, d: cy.d, R: cy.R };
     // nominal size: a shaft is threaded at its diameter; a hole at its tap-drill size becomes that thread (Ø6.8 → M8)
     p.size ??= p._internal ? (tapNominal(p._d) ?? p._d) : p._d;
-    p.pitch ??= isoPitch(p.size); p.length ??= +(cy.t1 - cy.t0).toFixed(6); p.fromEnd ??= true; p.left ??= false;
+    // start at the end nearest the tap, over a typical length (2·d + 6, or the whole face if shorter)
+    const tl = M.dot(M.sub(pl, cy.c), cy.d); p._tapEnd = Math.abs(cy.t1 - tl) <= Math.abs(tl - cy.t0);
+    p.pitch ??= isoPitch(p.size); p.length ??= +Math.min(cy.t1 - cy.t0, 2 * p.size + 6).toFixed(6); p.fromEnd ??= p._tapEnd; p.left ??= false;
   },
   touch: p => ({ ids: [p.obj], mesh: true }),
-  fields: p => [...(p._internal ? [lenF('size', 'Thread size (M)')] : []), lenF('pitch', 'Pitch'), lenF('length', 'Length'), { key: 'fromEnd', label: 'Starts at', kind: 'choice', options: [[true, 'Far end (from the tip)'], [false, 'Near end']], wide: true }, { key: 'left', label: 'Left-hand', kind: 'bool' }],
+  fields: p => [...(p._internal ? [lenF('size', 'Thread size (M)')] : []), lenF('pitch', 'Pitch'), lenF('length', 'Length'), { key: 'fromEnd', label: 'Starts at', kind: 'choice', options: p._tapEnd == null ? [[true, 'One end'], [false, 'Other end']] : [[p._tapEnd, 'The end you tapped'], [!p._tapEnd, 'The other end']], wide: true }, { key: 'left', label: 'Left-hand', kind: 'bool' }],
   apply(p) {
     if (!(p.pitch > 0.05)) return 'Pitch must be at least 0.05 mm';
     const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
@@ -1079,7 +1096,22 @@ export const mateOp = {
   apply(p) {
     const o = objById(p.a.obj); if (!o) return 'The part it moves no longer exists';
     if (!objById(p.b.obj)) return 'The part it mates to no longer exists';
-    const r = mateSolve(p.a, p.b); if (typeof r === 'string') return r;
+    // not parallel: turn the moving part first (about its own face / axis) so they line up
+    const A0 = mateGeom(p.a), B0 = mateGeom(p.b);
+    let a = p.a;
+    if (A0 && B0 && A0.kind === B0.kind) {
+      const da = A0.kind === 'plane' ? A0.n : A0.d, db = B0.kind === 'plane' ? B0.n : B0.d, k = M.dot(da, db);
+      if (Math.abs(k) < 0.9999) {
+        // planes: face to face (normals opposite); axes: whichever way is the smaller turn
+        const target = A0.kind === 'plane' ? M.mul(db, -1) : (k >= 0 ? db : M.mul(db, -1));
+        const x0 = xfFor(o), lp = x0.toL(p.a.p), ln = locDir(x0, p.a.p, p.a.n);
+        turnObject(o, da, target, A0.kind === 'plane' ? A0.p : A0.c);
+        // the picked point and its normal turn with the part (a copy: the stored pick stays as tapped)
+        const x1 = xfFor(o), pw = x1.toW(lp), nw = M.norm(M.sub(x1.toW(M.add(lp, ln)), pw));
+        a = { ...p.a, p: pw, n: nw, w: M.dot(nw, pw) };
+      }
+    }
+    const r = mateSolve(a, p.b); if (typeof r === 'string') return r;
     o.loc = M.add(o.loc, r.v).map(v => (Math.abs(v - Math.round(v * 1e9) / 1e9) < 1e-9 ? Math.round(v * 1e9) / 1e9 : v));
   },
 };

@@ -50,7 +50,7 @@ export function runOp(def, params = {}, { interactive = false } = {}) {
   let r = apply(op);
   // a default size that does not fit (a fillet on a thin wall): try smaller ones before giving up
   if (typeof r === 'string' && def.shrink && params[def.shrink] == null) {
-    for (let k = 0; k < 8 && typeof r === 'string'; k++) { op.params[def.shrink] /= 2; restore(op.base); r = apply(op); }
+    for (let k = 0; k < (def.shrinkTries ?? 8) && typeof r === 'string'; k++) { op.params[def.shrink] /= 2; restore(op.base); r = apply(op); }
     if (typeof r !== 'string') emit('toast', `Size reduced to ${+op.params[def.shrink].toFixed(3)} so it fits — type a value to change it`);
   }
   if (typeof r === 'string') { restore(op.base); emit('toast', r); emit('change', { reason: 'op-fail' }); return false; }
@@ -104,6 +104,8 @@ export function redo() {
   last = null;
   emit('change', { reason: 'redo' }); emit('lastop', null); emit('history'); emit('dirty');
 }
+// fold the last committed step into the one before it (one Undo removes both: a sketch and the solid made from it)
+export function mergeLastUndo() { if (undoStack.length >= 2) { undoStack.pop(); emit('history'); } }
 export function canUndo() { return undoStack.length > 0 || (last && !last.committed); }
 export function canRedo() { return redoStack.length > 0; }
 export function resetHistory() { H.resetCache(); undoStack.length = 0; redoStack.length = 0; last = null; emit('history'); emit('lastop', null); }
