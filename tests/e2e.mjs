@@ -877,6 +877,26 @@ try {
   await p.waitForFunction(n => StreamLine.S.doc.objects.length >= n + 3, n16, { timeout: 120000 });
   const names16 = await p.evaluate(() => StreamLine.S.doc.objects.slice(-3).map(o => o.name).join(', '));
   check(names16 === 'Halves, Halves (2), Trigger', `STEP: a part made of two solids keeps its name, and so do the others (${names16})`);
+  // sketches on faces, Fusion-style: editing one keeps the part solid and puts the grid on the face; a sketch on a
+  // free plane still ghosts the bodies
+  const skf = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    L.runOp(F.sketchOpNew('slab', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 30000, y: 0, w: 40, h: 30 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [30005, 5] }], distance: 6, mode: 'new', target: null }); const id = L.S.doc.objects.at(-1).id;
+    L.runOp(F.sketchOpNew('on top', XY(6), { obj: id }, k => { F.addEntity(k, { t: 'circle', c: [30020, 15], r: 5 }); }));
+    const fsk = L.S.ed.sketch, ground = L.S.doc.sketches.find(k => k.name.startsWith('Sketch') && k.plane.n[2] === 1 && k.plane.o[2] === 0 && !k.face)?.id;
+    L.BR.editStep(L.H.hist().find(r => r.kind === 'sketch' && r.sk === fsk).id); L.refresh();
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const onFace = { xray: L.view.xrayFor, grid: L.view.gridPlane?.o?.[2], dark: L.view.gridDark };
+    document.querySelector('#actions .act.primary')?.click(); L.refresh();
+    const r2 = L.H.hist().find(r => r.kind === 'sketch' && r.sk === ground);
+    if (r2) { L.BR.editStep(r2.id); L.refresh(); }
+    const free = { xray: L.view.xrayFor, dark: L.view.gridDark };
+    document.querySelector('#actions .act.primary')?.click(); L.refresh();
+    return { onFace, free, after: L.S.ed.editingSketch, hadGround: !!r2 };
+  });
+  check(skf.onFace.xray === false && skf.onFace.grid === 6 && skf.onFace.dark === true && (!skf.hadGround || (skf.free.xray === true && skf.free.dark === false)) && skf.after == null,
+    `Editing a sketch on a face keeps the part solid with the grid on the face; a sketch on a free plane ghosts the bodies (${JSON.stringify(skf)})`);
   // Look: theme, lighting, surface and edge width from the top bar's Look button
   await p.tap('#btn-look'); await p.waitForTimeout(400);
   const lookBtn = async txt => { await p.locator('#popover .swatch', { hasText: txt }).first().tap(); await p.waitForTimeout(250); };

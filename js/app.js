@@ -1113,7 +1113,12 @@ function refresh() {
   // picked curves only count while their sketch is there and shown
   if (S.ed.drawSel.size) { const k = SK.sketchById(S.ed.sketch); if (!k || !isShown(k)) S.ed.drawSel = new Set(); else if ([...S.ed.drawSel].some(id => !SK.entById(k, id))) S.ed.drawSel = new Set([...S.ed.drawSel].filter(id => SK.entById(k, id))); }
   document.body.classList.toggle('editing-sketch', S.ed.editingSketch != null);
-  if (view.xrayFor !== (S.ed.editingSketch != null)) { view.xrayFor = S.ed.editingSketch != null; view.applyXray(); }
+  // editing a sketch: on a face the part stays solid with the sketch drawn on it (Fusion); a sketch on a free plane
+  // ghosts the bodies so it shows through them. The grid moves onto the sketch's plane (or the drawing plane).
+  const eds0 = S.ed.editingSketch != null ? SK.sketchById(S.ed.editingSketch) : null;
+  const ghost = !!eds0 && !eds0.face;
+  if (view.xrayFor !== ghost) { view.xrayFor = ghost; view.applyXray(); }
+  view.gridPlane = eds0 ? eds0.plane : S.ed.cplane || null; view.gridDark = !!eds0?.face;
   document.body.classList.toggle('ws-model', S.ed.workspace === 'model');
   document.body.classList.toggle('ws-draw', S.ed.workspace === 'draw');
   document.body.classList.toggle('ws-cad', S.ed.workspace === 'cad');

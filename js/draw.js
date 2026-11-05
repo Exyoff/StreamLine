@@ -661,7 +661,7 @@ function entFields(s, e) {
 
 // ---------- rendering ----------
 let sketchGroup, previewGroup, renderKey = '';
-const C = { proj: new THREE.Color('#c58cff'), constr: new THREE.Color('#d8a25a'), fixed: new THREE.Color('#9fe39a'), line: new THREE.Color('#f2f2f2'), dim: new THREE.Color('#9aa3b3'), sel: new THREE.Color('#6fb4ff'), other: new THREE.Color('#8d93a0'), prev: new THREE.Color('#4fd1ff') };
+const C = { proj: new THREE.Color('#c27cff'), constr: new THREE.Color('#ff9b3d'), fixed: new THREE.Color('#9fe39a'), line: new THREE.Color('#f2f2f2'), dim: new THREE.Color('#9aa3b3'), sel: new THREE.Color('#6fb4ff'), other: new THREE.Color('#8d93a0'), prev: new THREE.Color('#4fd1ff') };
 const matL = (col, top, op = 1) => new THREE.LineBasicMaterial({ color: col, depthTest: !top, transparent: true, opacity: op });
 export function initDraw() {
   sketchGroup = new THREE.Group(); view.scene.add(sketchGroup);
@@ -677,6 +677,24 @@ export function fatLine(pts3, color, width, closed) {
   const fm = view.fatMat({ color, depthTest: true, width }); fm.polygonOffset = true; fm.polygonOffsetFactor = -6; fm.polygonOffsetUnits = -20;
   const front = new Line2(g, fm); front.renderOrder = 6;
   grp.add(back, front); return grp;
+}
+// a sketch curve, Fusion-style: a crisp line in its state colour (dashed for construction) over a soft dark halo,
+// so it reads on light faces as well as on the dark backdrop; it lies on its plane and wins over the face under it
+function skCurve(pts3, { color, width = 1.8, dashed = false, halo = view.theme.halo, closed = false }) {
+  const pts = closed ? [...pts3, pts3[0]] : pts3;
+  const grp = new THREE.Group(), g = new LineGeometry(); g.setPositions(pts.flat());
+  if (halo && !dashed) {
+    // (opaque: a translucent halo darkens where its short segments overlap — dotted rings round circles)
+    // (and it writes no depth: the line drawn after it always wins, with no stripes where segments meet)
+    const hm = view.fatMat({ color: halo, width: width + 1.6 }); hm.depthWrite = false; hm.transparent = true; hm.polygonOffset = true; hm.polygonOffsetFactor = -3; hm.polygonOffsetUnits = -10;
+    const hl = new Line2(g, hm); hl.renderOrder = 1; grp.add(hl);
+  }
+  // (drawn in the transparent pass, after the profile shading under it: renderOrder fill 0 → halo 1 → line 2 → points 4)
+  const fm = view.fatMat({ color, width, dashed, dashSize: 1, gapSize: 0.6 }); fm.transparent = true; fm.polygonOffset = true; fm.polygonOffsetFactor = -5; fm.polygonOffsetUnits = -16;
+  const ln = new Line2(g, fm); ln.renderOrder = 2;
+  if (dashed) { ln.computeLineDistances(); ln.userData.fatDash = true; }
+  grp.add(ln);
+  return grp;
 }
 function lineObj(pts3, mat, closed) {
   if (mat && mat.isLineBasicMaterial && !mat.isLineDashedMaterial) {
@@ -727,7 +745,7 @@ function dimGeom(s, d) {
 function renderSketches() {
   const ws = S.ed.workspace, act = studio() ? sk() : SK.activeSketch(), stu = studio();
   const key = [ws, S.ed.sketch, S.ed.editingSketch, H.hist().length, H.markerIndex(), (S.doc.sketches || []).map(s => isShown(s)).join(), [...S.ed.drawSel].join(), JSON.stringify(S.ed.profiles), S.settings.showSketches, view.theme.name].join('|');
-  C.line.set(view.theme.sketch);
+  C.line.set(view.theme.sketch); C.fixed.set(view.theme.skFixed || '#9fe39a'); C.sel.set(view.theme.act || '#6fb4ff');
   const sketches = S.doc.sketches || [];
   const entsArr = sketches.map(s => s.ents), prevEnts = sketchGroup.userData.ents || [];
   const changed = key !== renderKey || entsArr.length !== prevEnts.length || entsArr.some((e, i) => e !== prevEnts[i]);
@@ -737,6 +755,9 @@ function renderSketches() {
       clearGroup(sketchGroup);
       for (const s of sketches) {
         if (!isShown(s)) continue;
+        // (each sketch in its own group, lifted a couple of pixels off its plane every frame: thick screen-space
+        // lines lying exactly on a tilted face would be partly hidden by it)
+        const sg = new THREE.Group(); sg.userData.lift = { n: s.plane.n, o: s.plane.o }; sketchGroup.add(sg);
         // sketches a feature has used draw muted (their curves now sit on body edges) unless being edited
         const used = stu && S.ed.editingSketch !== s.id && H.firstUsing([s.id]) >= 0;
         const usedRegs = used ? new Set(H.hist().flatMap(r => (r.params?.pts || []).filter(it => it.sk === s.id).map(it => SK.regionAt(s, it.pt))).filter(Boolean)) : null;
@@ -746,21 +767,36 @@ function renderSketches() {
         const fixedSet = isAct ? constrainedEntities(s) : null;
         for (const e of s.ents) {
           if (e.t === 'dim') continue;
-          if (e.t === 'text') { sketchGroup.add(textMesh(s, e, mine && S.ed.drawSel.has(e.id) ? '#6fb4ff' : isAct ? view.theme.sketch : '#8d93a0')); continue; }
+          if (e.t === 'text') { sg.add(textMesh(s, e, mine && S.ed.drawSel.has(e.id) ? '#6fb4ff' : isAct ? view.theme.sketch : '#8d93a0')); continue; }
           if (e.t === 'hatch') {
             const hl = SK.hatchLines(s, e); if (!hl) continue;
             const col = mine && S.ed.drawSel.has(e.id) ? C.sel : isAct ? new THREE.Color('#b9c3cf') : C.other;
-            if (e.pattern === 'SOLID') sketchGroup.add(fillObj(s, hl.region, col, 0.75));
-            else if (hl.lines.length) { const pos = hl.lines.flatMap(([a, b]) => [...SK.toW(s.plane, a), ...SK.toW(s.plane, b)]); const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); sketchGroup.add(new THREE.LineSegments(g, matL(col, top, 0.7))); }
+            if (e.pattern === 'SOLID') sg.add(fillObj(s, hl.region, col, 0.75));
+            else if (hl.lines.length) { const pos = hl.lines.flatMap(([a, b]) => [...SK.toW(s.plane, a), ...SK.toW(s.plane, b)]); const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); sg.add(new THREE.LineSegments(g, matL(col, top, 0.7))); }
             continue;
           }
           const pl = SK.entPolyline(e);
           const sel = isAct && mine && S.ed.drawSel.has(e.id);
+          // Fusion's colours: blue while free to move, white (black on the light theme) once fully constrained,
+          // dashed orange construction, purple projected geometry; the picked curve brighter and thicker
           const col = isAct ? (sel ? C.sel : e.construction ? C.constr : e.proj ? C.proj : fixedSet.has(e.id) ? C.fixed : C.line) : C.other;
-          const dashed = sel || e.construction;
-          const obj = lineObj(pl.pts.map(p => SK.toW(s.plane, p)), dashed ? new THREE.LineDashedMaterial({ color: col, depthTest: false, dashSize: 1, gapSize: 0.6, transparent: true, opacity: e.construction && !sel ? 0.8 : 1 }) : matL(col, top, 1), pl.closed);
-          if (dashed) { obj.userData.dashed = true; obj.computeLineDistances(); }
-          sketchGroup.add(obj);
+          const W3 = pl.pts.map(p => SK.toW(s.plane, p));
+          if (top) { sg.add(lineObj(W3, matL(col, top, 1), pl.closed)); continue; } // (2D drafting view)
+          sg.add(skCurve(W3, { color: col, width: sel ? 2.8 : isAct ? 1.8 : 1.2, dashed: !!e.construction, halo: isAct ? view.theme.halo : null, closed: pl.closed }));
+        }
+        // Fusion's sketch points: a small square at every curve end while the sketch is being edited
+        if (stu && S.ed.editingSketch === s.id) {
+          const pf = [], pc = [];
+          for (const e of s.ents) {
+            if (e.t === 'dim' || e.t === 'text' || e.t === 'hatch' || e.construction) continue;
+            const fixed = fixedSet.has(e.id), c3 = fixed ? C.fixed : C.line;
+            for (const kp of SK.keyPoints(e)) if (kp.m || kp.center) { pf.push(...SK.toW(s.plane, kp.p)); pc.push(c3.r, c3.g, c3.b); }
+          }
+          if (pf.length) {
+            const pg = new THREE.BufferGeometry(); pg.setAttribute('position', new THREE.Float32BufferAttribute(pf, 3)); pg.setAttribute('color', new THREE.Float32BufferAttribute(pc, 3));
+            const pm = new THREE.Points(pg, new THREE.PointsMaterial({ vertexColors: true, size: 6 * Math.min(devicePixelRatio, 2.5), sizeAttenuation: false, depthTest: false, transparent: true }));
+            pm.renderOrder = 4; sg.add(pm);
+          }
         }
         if (isAct && mine) {
           // endpoints
@@ -768,20 +804,22 @@ function renderSketches() {
           for (const e of s.ents) if (S.ed.drawSel.has(e.id)) for (const kp of SK.keyPoints(e)) if (kp.m || kp.center || kp.k === 'mid') pts.push(...SK.toW(s.plane, kp.p));
           const pg = new THREE.BufferGeometry(); pg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
           const pm = new THREE.Points(pg, new THREE.PointsMaterial({ color: 0x2f7dff, size: 9 * Math.min(devicePixelRatio, 2.5), sizeAttenuation: false, depthTest: false }));
-          pm.renderOrder = 5; sketchGroup.add(pm);
+          pm.renderOrder = 5; sg.add(pm);
           // dims
-          for (const d of s.ents) if (d.t === 'dim') { const g = dimGeom(s, d); if (g) sketchGroup.add(lineObj(g.pts.map(p => SK.toW(s.plane, p)), matL(0x4f8ff7, true, g.noLine ? 0.35 : 0.9))); }
+          for (const d of s.ents) if (d.t === 'dim') { const g = dimGeom(s, d); if (g) sg.add(lineObj(g.pts.map(p => SK.toW(s.plane, p)), matL(0x4f8ff7, true, g.noLine ? 0.35 : 0.9))); }
         }
         if (ws === 'draw' && isAct || ws === 'cad' || stu) {
           const selRegs = new Set(S.ed.profiles.filter(q => q.sk === s.id).map(q => SK.regionAt(s, q.pt)).filter(Boolean));
-          for (const r of SK.regions(s)) if (!usedRegs || !usedRegs.has(r) || selRegs.has(r)) sketchGroup.add(fillObj(s, r, selRegs.has(r) ? view.selHex() : 0x4f8ff7, selRegs.has(r) ? 0.55 : ws === 'cad' || stu ? 0.14 : 0.08));
+          const prof = new THREE.Color(view.theme.profile).getHex();
+          for (const r of SK.regions(s)) if (!usedRegs || !usedRegs.has(r) || selRegs.has(r)) sg.add(fillObj(s, r, selRegs.has(r) ? view.selHex() : prof, selRegs.has(r) ? 0.5 : stu ? view.theme.profA : 0.1));
         }
       }
     }
   }
+  for (const sg of sketchGroup.children) { const L = sg.userData.lift; if (!L) continue; const k = view.worldPerPixel(L.o) * 2; sg.position.set(L.n[0] * k, L.n[1] * k, L.n[2] * k); }
   // keep selection dashes a constant size on screen
   const dash = act ? view.worldPerPixel(act.plane.o) * 6 : 1;
-  sketchGroup.traverse(o => { if (o.userData.dashed && Math.abs(o.material.dashSize - dash) > dash * 0.05) { o.material.dashSize = dash; o.material.gapSize = dash * 0.6; } });
+  sketchGroup.traverse(o => { if ((o.userData.dashed || o.userData.fatDash) && Math.abs(o.material.dashSize - dash) > dash * 0.05) { o.material.dashSize = dash; o.material.gapSize = dash * 0.6; } });
   // per-frame labels for dims + preview
   st.dimLabels = []; st.consLabels = []; // (a hidden sketch keeps no tappable labels)
   if ((ws === 'draw' || stu) && act && !act.pending && isShown(act)) {
