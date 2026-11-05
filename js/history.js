@@ -119,7 +119,8 @@ export function firstUsing(skIds) {
   for (let i = 0; i < end; i++) {
     const r = h[i]; if (r.kind === 'sketch' || !r.params) continue;
     const s = JSON.stringify(r.params);
-    if ([...skIds].some(id => new RegExp(`"sk":${id}[,}]`).test(s))) return i;
+    // profiles ("sk"), and sketches used as a sweep path ("path")
+    if ([...skIds].some(id => new RegExp(`"sk":${id}[,}]`).test(s) || (r.op === 'F.sweepOp' && r.params.path === id))) return i;
   }
   return -1;
 }

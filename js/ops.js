@@ -63,6 +63,7 @@ export function updateOp(params) {
   if (!last) return;
   const prev = Object.fromEntries(Object.keys(params).map(k => [k, last.params[k]]));
   Object.assign(last.params, params);
+  if (last.params._auto) for (const k of Object.keys(params)) delete last.params._auto[k]; // a typed value stops following
   restore(last.base);
   const r = apply(last);
   if (typeof r === 'string') { // keep the last values that worked

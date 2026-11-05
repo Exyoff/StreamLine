@@ -212,7 +212,7 @@ function growEdges(all) {
     const hc = o.shape.edges[e0.i].hashCode;
     const faces = o.shape.faces.filter(f => f.edges.some(x => x.hashCode === hc));
     const f = faces.find(x => x.geomType === 'PLANE') || faces[0]; if (!f) return;
-    let wire; try { wire = f.outerWire(); } catch (e) { wire = null; }
+    let wire; try { wire = f.clone().outerWire(); } catch (e) { wire = null; }
     let hs = new Set((wire ? wire.edges : f.edges).map(x => x.hashCode));
     if (!hs.has(hc)) hs = new Set(f.edges.map(x => x.hashCode)); // the edge is on an inner loop (a hole rim)
     pick = E.filter(e => hs.has(o.shape.edges[e.i].hashCode));
@@ -429,7 +429,14 @@ function regionOrFaceTap(x, y) {
   const hit = S.ed.editingSketch != null ? null : view.pickObject(x, y); // bodies are ghosted while a sketch is edited
   // a sketch a feature already used (its lines run along the body's edges) yields to a body edge under the finger
   if (best && S.ed.editingSketch == null && H.firstUsing([best.k.id]) >= 0 && edgeTap(x, y, true) <= 16) best = null;
-  if (best && (!hit || best.t <= hit.distance + view.worldPerPixel(hit.point) * 8)) {
+  // a region a feature already built from, lying on the body's face, yields to that face; and tapping the
+  // picked region again (without Multi) goes through to the face under it
+  if (best && hit && S.ed.editingSketch == null) {
+    const used = H.hist().some(r => (r.params?.pts || []).some(it => it.sk === best.k.id && SK.regionAt(best.k, it.pt) === best.r));
+    const again = !S.ed.multi && S.ed.profiles.length === 1 && S.ed.profiles[0].sk === best.k.id && SK.regionAt(best.k, S.ed.profiles[0].pt) === best.r;
+    if ((used && Math.abs(best.t - hit.distance) < view.worldPerPixel(hit.point) * 8) || again) best = null;
+  }
+  if (best && (!hit || S.settings.xray || best.t <= hit.distance + view.worldPerPixel(hit.point) * 8)) {
     const i = S.ed.profiles.findIndex(q => q.sk === best.k.id && SK.regionAt(best.k, q.pt) === best.r);
     if (i >= 0) { if (S.ed.multi) S.ed.profiles.splice(i, 1); } // a second tap keeps the pick (multi-select toggles)
     else if (S.ed.multi) S.ed.profiles.push({ sk: best.k.id, pt: best.p2 });
@@ -955,6 +962,7 @@ function renderActions() {
     const linked = solids === 1 ? selectedObjs().find(o => o.link) : null;
     if (linked) c.push(act(I.history, PJ.outOfDate(linked.link.pid) ? 'Sync ●' : 'Sync', () => PJ.syncComponent(linked.link.pid), PJ.outOfDate(linked.link.pid) ? 'primary' : ''), act(I.folder, 'Open source', () => PJ.openSource(linked.link.pid)));
     if (linked) c.push(act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; refresh(); } }), act(I.array, 'Array', () => runOp(OPS.arrayOp)), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'));
+    else if (solids && selectedObjs().some(o => o.link)) c.push(act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; refresh(); } }), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger')); // linked parts are read-only
     else if (solids) c.push(act(I.union, 'Boolean', e => openBoolMenu(e.currentTarget), c.length ? '' : 'primary'), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.inset, 'Shell', () => runOp(F.shellOp)), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)), act(I.revolve, 'Pattern', () => runOp(F.polarPattern)), act(I.plane, 'Thicken', () => runOp(F.thickenOp)),
       act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; toast('Duplicated — drag the gizmo or type an offset'); refresh(); } }), act(I.array, 'Array', () => runOp(OPS.arrayOp)), act(I.join, 'Join', () => runOp(OPS.joinObjs)), act(I.apply, 'Apply', () => runOp(OPS.applyXf)), act(I.origin, 'Origin', () => runOp(OPS.setOrigin)), act(I.subdiv, 'Edit mesh', () => setPick('mesh')), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'));
     if (!c.length || (c.length === 1 && S.ed.isolate)) c.push(act(I.plus, 'Add solid', e => openAddMenu(e.currentTarget), 'primary'), act(I.line, 'Line', () => setTool('line')), act(I.rect, 'Rectangle', () => setTool('rect')), act(I.circle, 'Circle', () => setTool('circle')), act(I.plane, `Plane ${planeLabel()}`, e => openPlaneMenu(e.currentTarget)), act(I.measure, 'Inquiry', e => openInquiryMenu(e.currentTarget)));
@@ -1235,8 +1243,9 @@ function itemTab() {
     onCommit: v => { if (!ro) setProp(`${o.name} · ${label} ${'XYZ'[k]}`, id, ob => { ob[key][k] = v; }); },
   })));
   const linked = !!o.link; // a linked part can be placed (location, rotation) but not resized
-  const local = M.bbox(o.mesh.v);
-  const size = [0, 1, 2].map(k => (o.mesh.v.length ? local.max[k] - local.min[k] : 0));
+  // exact solids: the B-rep bounding box (the display mesh is a few µm inside curved faces)
+  const local = o.shape ? (() => { const b = o.shape.boundingBox.bounds; return { min: b[0], max: b[1] }; })() : M.bbox(o.mesh.v);
+  const size = [0, 1, 2].map(k => (o.shape || o.mesh.v.length ? local.max[k] - local.min[k] : 0));
   const dims = size.map((s, k) => s * Math.abs(o.scl[k]));
   const edges = M.meshEdges(o.mesh);
   const closed = !!o.shape || isClosed(o.mesh);

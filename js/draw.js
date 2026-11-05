@@ -759,7 +759,7 @@ function renderSketches() {
   const dash = act ? view.worldPerPixel(act.plane.o) * 6 : 1;
   sketchGroup.traverse(o => { if (o.userData.dashed && Math.abs(o.material.dashSize - dash) > dash * 0.05) { o.material.dashSize = dash; o.material.gapSize = dash * 0.6; } });
   // per-frame labels for dims + preview
-  st.dimLabels = [];
+  st.dimLabels = []; st.consLabels = []; // (a hidden sketch keeps no tappable labels)
   if ((ws === 'draw' || stu) && act && !act.pending && isShown(act)) {
     for (const d of act.ents) if (d.t === 'dim') {
       const g = dimGeom(act, d); if (!g) continue;

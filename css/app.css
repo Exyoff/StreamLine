@@ -526,3 +526,6 @@ body.has-tl #toast { bottom: calc(var(--botH) + var(--sab) + var(--tlh) + 14px);
 /* while a drag arrow is on screen the hint moves to the top, off the arrow */
 body.has-handle #toast { bottom: auto; top: calc(var(--topH) + 10px); transform: translate(-50%, -10px) scale(.96); }
 body.has-handle #toast.show { transform: translate(-50%, 0) scale(1); }
+/* choice rows with many options wrap instead of pushing the dialog sideways */
+.field .seg:has(> button:nth-child(4)) { flex-wrap: wrap; height: auto; row-gap: 4px; }
+.field .seg:has(> button:nth-child(4)) > button { flex: 1 0 auto; min-width: 30%; }
