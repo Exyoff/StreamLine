@@ -319,18 +319,27 @@ function gripUp() { commit(); st.grip = null; st.preview = null; st.snap = null;
 // tapping a dimension label edits it; tapping a constraint glyph removes it
 // a constraint glyph needs two taps to go: the first names it, the second (within 3 s) removes it
 let armed = null;
-function glyphTap(s, x, y) {
-  const G = (st.consLabels || []).filter(G => Math.hypot(G.x - x, G.y - y) < 12).sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y))[0];
-  if (!G) return false;
-  const cid = G.c.id, name = SK.CONS_LABEL[G.c.t];
-  if (armed && armed.cid === cid && performance.now() - armed.t < 3000) {
-    armed = null;
-    runOp(F.sketchOp('Remove constraint', s.id, k => { k.cons = (k.cons || []).filter(c => c.id !== cid); }));
-    toast(`Removed ${name} constraint`); return true;
-  }
-  armed = { cid, t: performance.now() };
-  toast(`${name} constraint — tap it again to remove it`); return true;
+// a constraint glyph is picked like anything else: it lights up with the curves it ties, and Delete removes it
+let consSel = null; // { sk, cid, t }
+const CONS_NAMES = { h: 'Horizontal', v: 'Vertical', par: 'Parallel', perp: 'Perpendicular', eq: 'Equal', tan: 'Tangent', conc: 'Concentric', fix: 'Fix', mid: 'Midpoint' };
+export const consSelected = () => consSel;
+export const consName = t => CONS_NAMES[t] || 'Constraint';
+export function clearConsSel() { if (consSel) { consSel = null; renderKey = ''; } }
+export function deleteConsSel() {
+  if (!consSel) return;
+  const { sk: id, cid, t } = consSel; consSel = null; S.ed.drawSel = new Set();
+  runOp(F.sketchOp('Remove constraint', id, k => { k.cons = (k.cons || []).filter(c => c.id !== cid); }));
+  toast(`${consName(t)} constraint removed · ${dofText()}`);
 }
+function glyphTap(s, x, y) {
+  const G = (st.consLabels || []).filter(G => Math.hypot(G.x - x, G.y - y) < 18).sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y))[0];
+  if (!G) return false;
+  consSel = { sk: s.id, cid: G.c.id, t: G.c.t };
+  S.ed.sketch = s.id; S.ed.drawSel = new Set([G.c.a, G.c.b].filter(v => v != null && SK.entById(s, v)));
+  emit('selection');
+  return true;
+}
+export const entName = e => entTitle(e);
 export function tapLabel(x, y, glyphs = true) {
   const s = sk(); if (!s || s.pending) return false;
   for (const L of st.dimLabels || []) if (Math.hypot(L.x - x, L.y - y) < 28) { editDim(L.dim); return true; }
@@ -838,7 +847,7 @@ function renderSketches() {
       const n = seen.get(e.id) || 0; seen.set(e.id, n + 1);
       const w = SK.toW(act.plane, anchor), q = view.project(w);
       const lab = SK.CONS_LABEL[c.t] + (c.b != null ? '' : '');
-      view.labelAt(q.x + 14 + n * 20, q.y + 16, lab, 'cons');
+      view.labelAt(q.x + 14 + n * 20, q.y + 16, lab, 'cons' + (consSel && consSel.cid === c.id && consSel.sk === act.id ? ' on' : ''));
       st.consLabels.push({ c, x: q.x + 14 + n * 20, y: q.y + 16 });
     }
     if (stu) clearGroup(previewGroup); else drawAxes(act);
