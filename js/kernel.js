@@ -271,6 +271,40 @@ export function cylinderOf(face) {
   for (let i = 0; i < m.vertices.length; i += 3) { const t = (m.vertices[i] - c[0]) * d[0] + (m.vertices[i + 1] - c[1]) * d[1] + (m.vertices[i + 2] - c[2]) * d[2]; t0 = Math.min(t0, t); t1 = Math.max(t1, t); }
   return { c, d, R: R0, t0, t1 };
 }
+// a valid closed solid (fillets that overrun a thin wall can give self-intersecting junk)
+export function isValid(shape) {
+  let a = null;
+  try { a = new oc.BRepCheck_Analyzer(shape.wrapped, true, false); return a.IsValid_2 ? a.IsValid_2() : a.IsValid_1 ? a.IsValid_1() : a.IsValid(); }
+  catch (e) { return true; } finally { try { a && a.delete(); } catch (e) {} }
+}
+// Shell (hollow a solid, removing `faces`, wall `t` inward). OCCT's thick-solid builder is picky on some
+// surfaces (lofted cones, swept tubes), so try its join variants, then fall back to cutting an inward
+// offset of the whole body (open faces get the cavity pushed out through them).
+export function shell(shape, faces, t) {
+  const tries = [[false, oc.GeomAbs_JoinType.GeomAbs_Arc], [true, oc.GeomAbs_JoinType.GeomAbs_Intersection], [false, oc.GeomAbs_JoinType.GeomAbs_Intersection], [true, oc.GeomAbs_JoinType.GeomAbs_Arc]];
+  const v0 = Math.abs(volume(shape));
+  const sane = r => { if (!r || isEmpty(r)) return false; const v = volume(r); return v > 1e-9 && v < v0 - 1e-9; };
+  for (const [inter, join] of tries) {
+    let b = null, list = null;
+    try {
+      list = new oc.NCollection_List_TopoDS_Shape(); for (const f of faces) list.Append(f.wrapped);
+      b = new oc.BRepOffsetAPI_MakeThickSolid();
+      b.MakeThickSolidByJoin(shape.wrapped, list, -t, 1e-3, oc.BRepOffset_Mode.BRepOffset_Skin, inter, false, join, false, new oc.Message_ProgressRange());
+      if (b.IsDone()) { const r = R.cast(b.Shape()); if (sane(r)) return r; }
+    } catch (e) { /* next variant */ } finally { try { b && b.delete(); list && list.delete(); } catch (e) {} }
+  }
+  // fallback: body minus its inward offset; each open face lets the cavity out through it
+  const inner = R.cast((() => { const m = new oc.BRepOffsetAPI_MakeOffsetShape(); m.PerformByJoin(shape.wrapped, -t, 1e-3, oc.BRepOffset_Mode.BRepOffset_Skin, false, false, oc.GeomAbs_JoinType.GeomAbs_Intersection, false, new oc.Message_ProgressRange()); const sh = m.Shape(); return sh; })());
+  if (isEmpty(inner)) throw new Error('offset failed');
+  let cavity = inner;
+  for (const f of faces) {
+    const n = f.normalAt(); const d = [n.x * t * 1.5, n.y * t * 1.5, n.z * t * 1.5];
+    cavity = cavity.fuse(inner.clone().translate(d));
+  }
+  const r = shape.cut(cavity);
+  if (!sane(r)) throw new Error('shell fallback failed');
+  return r;
+}
 // axis of a cone face (chamfered hole or boss): { c, d } in local coordinates, or null
 export function coneAxis(face) {
   if (face.geomType !== 'CONE') return null;

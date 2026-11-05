@@ -378,6 +378,27 @@ try {
   });
   check(Math.abs(fol.removed - Math.sqrt(3) / 2 * 16 * 2) < 1e-6 && fol.cz === 8 && fol.cx === 3000, `A hex socket snaps to the head's centre and follows its face when the head grows (centre z ${fol.cz})`);
   check(/internal M8×1\.25/.test(fol.label) && fol.cut > 10 && !fol.errs.length, `A Ø6.8 tap-drill hole is threaded as M8 (opens to the major Ø, ${fol.cut.toFixed(1)} mm³ removed) and survives a hole edit${fol.errs.length ? ' · ' + fol.errs.join('; ') : ''}`);
+  // curved features: a sweep along line + true arc + line is exact and follows path edits; a lofted cone shells
+  const crv = await st(() => {
+    const L = StreamLine, F = L.F, K = L.K;
+    const XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }), XZ = { o: [0, 0, 0], u: [1, 0, 0], v: [0, 0, 1], n: [0, -1, 0] };
+    L.runOp(F.sketchOpNew('path', XZ, null, k => { F.addEntity(k, { t: 'line', a: [4000, 0], b: [4000, 50] }); F.addEntity(k, { t: 'arc', c: [4030, 50], r: 30, a0: Math.PI / 2, a1: Math.PI }); F.addEntity(k, { t: 'line', a: [4030, 80], b: [4080, 80] }); }));
+    const ps = L.S.doc.sketches.at(-1);
+    L.runOp(F.sketchOpNew('prof', XY(0), null, k => { F.addEntity(k, { t: 'circle', c: [4000, 0], r: 5 }); }));
+    L.S.ed.profiles = [{ sk: L.S.ed.sketch, pt: [4000, 0] }];
+    L.runOp(F.sweepOp, { path: ps.id }); const sid = L.S.doc.objects.at(-1).id, sv = () => K.volume(L.S.doc.objects.find(o => o.id === sid).shape);
+    const v1 = sv();
+    L.runOp(F.sketchOp('len', ps.id, k => { k.ents[2].b = [4100, 80]; })); const v2 = sv();
+    L.runOp(F.sketchOpNew('c1', XY(0), null, k => { F.addEntity(k, { t: 'circle', c: [4300, 0], r: 20 }); })); const a = L.S.ed.sketch;
+    L.runOp(F.sketchOpNew('c2', XY(70), null, k => { F.addEntity(k, { t: 'circle', c: [4300, 0], r: 55 }); })); const b = L.S.ed.sketch;
+    L.S.ed.profiles = [{ sk: a, pt: [4300, 0] }, { sk: b, pt: [4300, 0] }];
+    L.runOp(F.loftOp, {}); const lid = L.S.doc.objects.at(-1).id;
+    L.S.ed.faces = [{ obj: lid, n: [0, 0, 1], w: 70, p: [4300, 0, 70], planar: true }];
+    const ok = L.runOp(F.shellOp, { t: 1.5 }), lv = K.volume(L.S.doc.objects.find(o => o.id === lid).shape);
+    return { v1, v2, e1: Math.PI * 25 * (100 + 15 * Math.PI), e2: Math.PI * 25 * (120 + 15 * Math.PI), ok, lv };
+  });
+  check(Math.abs(crv.v1 - crv.e1) < 1e-3 && Math.abs(crv.v2 - crv.e2) < 1e-3, `Sweep along line + arc + line is exact (${crv.v1.toFixed(2)} mm³) and rebuilds when the path is edited`);
+  check(crv.ok && crv.lv > 20000 && crv.lv < 35000, `A lofted cone shells to a 1.5 mm wall (${crv.lv.toFixed(0)} mm³)`);
   // Mate: a pin's round face onto a hole's round face (same axis), by touch
   {
     const ids = await st(() => {

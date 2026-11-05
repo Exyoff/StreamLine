@@ -247,7 +247,9 @@ export const revolve = {
     const e = prepFeature(p); if (e) return e;
     const sk = SK.sketchById(p.pts[0].sk);
     const lines = sk ? sk.ents.filter(x => x.t === 'line').sort((a, b) => (b.construction ? 1 : 0) - (a.construction ? 1 : 0)).slice(0, 8) : [];
-    p._lines = lines.map((l, i) => ({ v: 'l:' + l.id, label: `${l.construction ? 'Constr.' : 'Line'} ${i + 1}` }));
+    // name each candidate axis by what it looks like: length and direction (↔ along the sketch's X, ↕ along Y)
+    p._lines = lines.map(l => { const dx = l.b[0] - l.a[0], dy = l.b[1] - l.a[1], L = Math.hypot(dx, dy), dir = Math.abs(dy) < 1e-9 ? '↔' : Math.abs(dx) < 1e-9 ? '↕' : '⟋';
+      return { v: 'l:' + l.id, label: `${l.construction ? '┄ ' : ''}${dir} ${fmtLen(L)}` }; });
     p.axis ??= lines.find(l => l.construction) ? 'l:' + lines.find(l => l.construction).id : 'y';
   },
   touch: touchFeature,
@@ -367,6 +369,7 @@ export const edgeBlendOp = {
       }, `${p.kind === 'fillet' ? 'Radius' : 'Distance'} ${fmtLen(p.size)} does not fit ${p.edges.length === 1 ? 'this edge' : 'these edges'}`);
       if (typeof res === 'string') return res;
       if (K.isEmpty(res)) return 'Result is empty';
+      if (!K.isValid(res) || K.volume(res) <= 0) return `${p.kind === 'fillet' ? 'Radius' : 'Distance'} ${fmtLen(p.size)} is too big here (the rounds would overlap)`;
       // the drag handle: from the first edge, into the corner
       if (id === p._objs[0]) {
         const e = p.edges.find(x => x.obj === id), xf = xfFor(o), mid = xf.toL(e.p);
@@ -441,7 +444,7 @@ export const shellOp = {
     const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
     const faces = findFaces(o, p.faces); if (!faces) return 'The face it opened no longer exists';
     const bb = o.shape.boundingBox.bounds, minDim = Math.min(...[0, 1, 2].map(k => bb[1][k] - bb[0][k]));
-    const res = guard(() => o.shape.clone().shell({ thickness: p.t, filter: { find: () => faces, delete() {} } }), p.t * 2 >= minDim ? 'The wall is too thick for this body' : 'Shell failed near rounded edges — try a thinner wall, or shell before filleting');
+    const res = guard(() => K.shell(o.shape, faces, p.t), p.t * 2 >= minDim ? 'The wall is too thick for this body' : 'Shell failed near rounded edges — try a thinner wall, or shell before filleting');
     if (typeof res === 'string') return res;
     if (K.isEmpty(res)) return 'Result is empty';
     K.setShape(o, res);
@@ -572,20 +575,55 @@ export const loftOp = {
   fields: () => [{ key: 'ruled', label: 'Straight sections', kind: 'bool' }, { key: 'mode', label: 'Operation', kind: 'choice', options: MODES, wide: true }],
   apply(p) {
     const wires = [];
-    for (const it of p.pts) { const sk = SK.sketchById(it.sk), f = sk && K.regionFace(sk, it.pt); if (!f) return 'A profile no longer exists'; wires.push(f.outerWire()); }
+    for (const it of p.pts) { const sk = SK.sketchById(it.sk), f = sk && K.regionFace(sk, it.pt); if (!f) return 'A profile no longer exists'; wires.push(f.clone().outerWire()); } // outerWire consumes its face: work on a copy (the face is cached)
     const tool = guard(() => R.loft(wires, { ruled: !!p.ruled }), 'Loft failed — check the profiles face the same way');
     if (typeof tool === 'string') return tool;
     return applyBody(p, tool, 'Loft');
   },
 };
 // path sketch → spine wire: exact lines/arcs where possible
+// the sweep path as exact edges: lines stay lines, arcs stay true circular arcs (three points on the arc),
+// splines become B-splines through their own points — chained end to end, longest chain, starting near `near`
 function pathWire(ps, near) {
-  const pts = sketchPath(ps, near); if (!pts || pts.length < 2) return null;
-  const allLines = ps.ents.filter(e => !e.construction && e.t !== 'dim').every(e => e.t === 'line');
-  const W = q => SK.toW(ps.plane, q);
-  const P = pts.map(q => (q.length === 3 ? q : W(q)));
-  if (allLines) { const es = []; for (let i = 1; i < P.length; i++) if (M.dist(P[i - 1], P[i]) > 1e-9) es.push(R.makeLine(P[i - 1], P[i])); return R.assembleWire(es); }
-  return R.assembleWire([R.makeBSplineApproximation(P, { tolerance: 1e-4, degMax: 3, degMin: 3 })]);
+  const W = q => SK.toW(ps.plane, q), d2 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const segs = [];
+  for (const e of ps.ents) {
+    if (e.construction || !['line', 'arc', 'spline'].includes(e.t)) continue;
+    const pl = SK.entPolyline(e); if (!pl || pl.closed || pl.pts.length < 2) continue;
+    const P = pl.pts;
+    segs.push({ a: P[0], b: P[P.length - 1], make: rev => {
+      const Q = rev ? P.slice().reverse() : P;
+      if (e.t === 'line') return R.makeLine(W(Q[0]), W(Q[Q.length - 1]));
+      if (e.t === 'arc') return R.makeThreePointArc(W(Q[0]), W(Q[Math.floor(Q.length / 2)]), W(Q[Q.length - 1]));
+      return R.makeBSplineApproximation(Q.map(W), { tolerance: 1e-4, degMax: 3, degMin: 3 });
+    }, len: P.reduce((t, q, i) => (i ? t + d2(q, P[i - 1]) : 0), 0) });
+  }
+  if (!segs.length) return null;
+  const used = new Set(), chains = [];
+  for (let i = 0; i < segs.length; i++) {
+    if (used.has(i)) continue;
+    used.add(i); let chain = [{ s: segs[i], rev: false }], grew = true;
+    const head = () => (chain[0].rev ? chain[0].s.b : chain[0].s.a), tail = () => { const c = chain[chain.length - 1]; return c.rev ? c.s.a : c.s.b; };
+    while (grew) {
+      grew = false;
+      for (let j = 0; j < segs.length; j++) {
+        if (used.has(j)) continue;
+        const g = segs[j];
+        if (d2(tail(), g.a) < 1e-6) chain.push({ s: g, rev: false });
+        else if (d2(tail(), g.b) < 1e-6) chain.push({ s: g, rev: true });
+        else if (d2(head(), g.b) < 1e-6) chain.unshift({ s: g, rev: false });
+        else if (d2(head(), g.a) < 1e-6) chain.unshift({ s: g, rev: true });
+        else continue;
+        used.add(j); grew = true;
+      }
+    }
+    chains.push(chain);
+  }
+  const L = c => c.reduce((t, x) => t + x.s.len, 0);
+  let best = chains.sort((a, b) => L(b) - L(a))[0];
+  const start = W(best[0].rev ? best[0].s.b : best[0].s.a), endC = best[best.length - 1], end = W(endC.rev ? endC.s.a : endC.s.b);
+  if (near && M.dist(end, near) < M.dist(start, near)) best = best.slice().reverse().map(x => ({ s: x.s, rev: !x.rev }));
+  return R.assembleWire(best.map(x => x.s.make(x.rev)));
 }
 export const sweepOp = {
   label: p => `Sweep${targetLabel(p)}`,
@@ -607,7 +645,7 @@ export const sweepOp = {
     const ps = SK.sketchById(p.path); if (!ps) return 'Path sketch missing';
     const tool = guard(() => {
       const fc = typeof f.center === 'function' ? f.center() : f.center, c = vec3(fc), spine = pathWire(ps, c); if (!spine) throw new Error('no open path');
-      return R.genericSweep(f.outerWire(), spine, { frenet: true, transitionMode: 'round' });
+      return R.genericSweep(f.clone().outerWire(), spine, { frenet: true, transitionMode: 'round' });
     }, 'Sweep failed — the profile should sit at the start of the path');
     if (typeof tool === 'string') return tool;
     return applyBody(p, tool, 'Sweep');
@@ -799,7 +837,7 @@ function cutTools(o, tools, msg) {
 
 export const holeOp = {
   label: p => `Hole Ø${fmtD(p.dia)}${p.kind === 'cbore' ? ' counterbore' : p.kind === 'csink' ? ' countersink' : ''}${patternLabel(p)}`,
-  defaults: () => ({ dia: 5, depth: 0, kind: 'simple', cbDia: 9, cbDepth: 5, csDia: 10, csAngle: 90, ...patternDefaults }),
+  defaults: () => ({ dia: 5, depth: 0, kind: 'simple', ...patternDefaults }),
   prepare(p) { return flatFacePrep(p, 'hole'); },
   touch: p => ({ ids: [p.obj], mesh: true }),
   fields: p => [lenF('dia', 'Diameter'), lenF('depth', 'Depth (0 = through)'), { key: 'kind', label: 'Type', kind: 'choice', options: [['simple', 'Simple'], ['cbore', 'Counterbore'], ['csink', 'Countersink']], wide: true },
@@ -807,6 +845,10 @@ export const holeOp = {
     lenF('x', 'Centre X'), lenF('y', 'Centre Y'), lenF('z', 'Centre Z'), ...patternFields(p)],
   apply(p) {
     if (!(p.dia > 0)) return 'Diameter must be > 0';
+    // counterbore / countersink sizes follow the hole until typed (ISO-ish: Ø×1.8 counterbore, Ø×2 countersink)
+    p._auto ??= {};
+    for (const [k, f] of [['cbDia', 1.8], ['cbDepth', 1], ['csDia', 2]]) if (p[k] == null || p._auto[k]) { p[k] = +(p.dia * f).toFixed(2); p._auto[k] = true; }
+    p.csAngle ??= 90;
     const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
     const before = p.faces[0].p.slice();
     const f = findFaces(o, p.faces)?.[0]; if (!f) return 'The face it was drilled into no longer exists';
