@@ -514,3 +514,12 @@ body.has-tl #toast { bottom: calc(var(--botH) + var(--sab) + var(--tlh) + 14px);
 #lastop, #draw-card, #measure-card { top: calc(var(--topH) + 58px); }
 @media (orientation: landscape) and (max-height: 500px) { #toast { max-width: calc(100vw - 460px); } }
 #sheet-body .objrow .ib { width: 44px; height: 44px; }
+
+/* Projects panel */
+.projgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.projcard { display: flex; flex-direction: column; gap: 4px; padding: 6px; border-radius: 18px; background: rgba(255,255,255,.06); text-align: left; }
+.projcard:active { transform: scale(.97); }
+.projcard.cur { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.projcard img, .projcard .nothumb { width: 100%; aspect-ratio: 3 / 2; border-radius: 13px; object-fit: cover; background: #1d1e22; display: grid; place-items: center; color: var(--faint); }
+.projcard .pname { font-weight: 600; font-size: 14px; padding: 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.projcard .pmeta { font-size: 11.5px; color: var(--muted); padding: 0 4px 2px; }

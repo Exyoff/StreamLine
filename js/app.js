@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { S, on, emit, activeObj, selectedObjs, objById, loadSettings, saveSettings, isShown } from './state.js';
 import * as H from './history.js';
 import * as K from './kernel.js';
+import * as PJ from './projects.js';
 import * as BR from './browser.js';
 import { view, camera } from './viewport.js';
 import { initGizmo, gizmoActive } from './gizmo.js';
@@ -46,6 +47,13 @@ async function boot() {
   S.ed.workspace = 'model'; // the studio: one 3D space for curves, regions and solids
   resetHistory();
   bindEvents();
+  PJ.initProjects({
+    view, refresh: () => refresh(), renderSheet: () => { if (sheetOpen) renderSheet(); },
+    newScene: () => newScene(),
+    afterLoad: () => { Draw.resetTool(); S.ed.workspace = 'model'; S.ed.tool = 'select'; view.markSelDirty(); refresh(); view.cam.lock2D = false; view.frame(S.doc.objects.flatMap(worldVerts).concat(allSketchPoints())); if (sheetOpen) renderSheet(); scheduleSave(); },
+  });
+  PJ.ensureProject();
+  on('library', () => refreshSoon());
   BR.initBrowser({
     closePanel() { if (sheetOpen && !document.body.classList.contains('sheet-docked')) toggleSheet(false); },
     editingStepId: () => getLast()?.def?.stepId,
@@ -63,7 +71,7 @@ async function boot() {
 }
 function defaultScene() {
   S.doc.objects = []; S.doc.sketches = []; S.doc.nextId = 1;
-  S.doc.history = []; S.doc.marker = null; S.doc.layers = [{ id: 1, name: 'Default', visible: true }]; S.doc.layer = 1;
+  S.doc.history = []; S.doc.marker = null; S.doc.components = {}; S.doc.layers = [{ id: 1, name: 'Default', visible: true }]; S.doc.layer = 1;
   S.ed.tools = { draw: 'line', cad: 'select', model: 'select' };
   S.ed.workspace = 'model'; S.ed.tool = 'select'; S.ed.sketch = null;
 }
@@ -302,10 +310,16 @@ function loadAutosave() {
   } catch (e) { console.warn(e); return false; }
 }
 let saveT = 0;
+function saveLocalNow() { clearTimeout(saveT); try { localStorage.setItem(DOC_KEY, JSON.stringify(serialize(true))); } catch (e) { toast('Autosave failed (storage full?)'); } }
 function scheduleSave() {
   clearTimeout(saveT);
-  saveT = setTimeout(() => { try { localStorage.setItem(DOC_KEY, JSON.stringify(serialize(true))); } catch (e) { toast('Autosave failed (storage full?)'); } }, 400);
+  PJ.scheduleLibrarySave();
+  saveT = setTimeout(saveLocalNow, 400);
 }
+// leaving the app (switching away on iOS, closing the tab): write everything now
+const flushSaves = () => { saveLocalNow(); PJ.saveNow(); };
+addEventListener('pagehide', flushSaves);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSaves(); });
 
 // =====================================================================
 // selection & modes
@@ -652,7 +666,7 @@ function renderViewButtons() {
 function act(icon, label, fn, cls = '') { return h('button', { class: 'act ' + cls, onclick: fn }, h('span', { html: icon }), h('span', {}, label)); }
 function renderActions() {
   const row = $('#actions');
-  const key = S.ed.workspace + S.ed.mode + S.ed.selectMode + S.ed.pick + (S.ed.editingSketch ?? '') + (getLast() && getLast().committed && !$('#lastop').hidden ? 'op' : '') + S.ed.faces.map(f => f.planar === false ? 'c' : 'f').join('') + [S.ed.drawSel.size, S.ed.profiles.length, S.ed.faces.length, S.ed.edges.length, S.ed.pick === 'solid' ? S.ed.selected.size : 0].join();
+  const key = S.ed.workspace + S.ed.mode + S.ed.selectMode + S.ed.pick + (S.ed.editingSketch ?? '') + (getLast() && getLast().committed && !$('#lastop').hidden ? 'op' : '') + selectedObjs().map(o => o.link ? (PJ.outOfDate(o.link.pid) ? 'L!' : 'L') : '').join('') + S.ed.faces.map(f => f.planar === false ? 'c' : 'f').join('') + [S.ed.drawSel.size, S.ed.profiles.length, S.ed.faces.length, S.ed.edges.length, S.ed.pick === 'solid' ? S.ed.selected.size : 0].join();
   if (row.dataset.k === key) return;
   row.dataset.k = key;
   if (S.ed.workspace === 'draw') {
@@ -721,6 +735,8 @@ function renderActions() {
     if (faces) c.push(...(flat ? [] : [act(I.thread, 'Thread', () => runOp(F.threadOp), 'primary')]), ...(flat ? [act(I.extrude, 'Push/Pull', () => modifier('pushpull'), prof ? '' : 'primary'), act(I.hole, 'Hole', () => runOp(F.holeOp))] : []), act(I.inset, 'Shell', () => modifier('shell'), flat || prof ? '' : 'primary'), ...(flat ? [act(I.cone, 'Draft', () => runOp(F.draftOp))] : []), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)));
     if (edges) c.push(act(I.fillet, 'Fillet', () => modifier('fillet'), 'primary'), act(I.chamfer, 'Chamfer', () => modifier('chamfer')));
     if (curves) c.push(act(I.move, 'Move', () => acadTool('move')), act(I.dup, 'Copy', () => acadTool('copy')), act(I.rotate, 'Rotate', () => acadTool('rotate')), act(I.flip, 'Mirror', () => acadTool('mirror')), act(I.scale, 'Scale', () => acadTool('scale')), act(I.inset, 'Offset', () => acadTool('offset')), act(I.array, 'Array', () => acadTool('arrayrect')), act(I.constrain, 'Constrain', e => openConstrainMenu(e.currentTarget)), act(I.line, 'Construction', () => Draw.toggleConstruction()), act(I.trash, 'Delete', () => Draw.deleteSelected(), 'danger'));
+    const linked = solids === 1 ? selectedObjs().find(o => o.link) : null;
+    if (linked) c.push(act(I.history, PJ.outOfDate(linked.link.pid) ? 'Sync ●' : 'Sync', () => PJ.syncComponent(linked.link.pid), PJ.outOfDate(linked.link.pid) ? 'primary' : ''), act(I.folder, 'Open source', () => PJ.openSource(linked.link.pid)));
     if (solids) c.push(act(I.union, 'Boolean', e => openBoolMenu(e.currentTarget), c.length ? '' : 'primary'), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.inset, 'Shell', () => runOp(F.shellOp)), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)), act(I.revolve, 'Pattern', () => runOp(F.polarPattern)), act(I.plane, 'Thicken', () => runOp(F.thickenOp)),
       act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; toast('Duplicated — drag the gizmo or type an offset'); refresh(); } }), act(I.array, 'Array', () => runOp(OPS.arrayOp)), act(I.join, 'Join', () => runOp(OPS.joinObjs)), act(I.apply, 'Apply', () => runOp(OPS.applyXf)), act(I.origin, 'Origin', () => runOp(OPS.setOrigin)), act(I.subdiv, 'Edit mesh', () => setPick('mesh')), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'));
     if (!c.length) c.push(act(I.plus, 'Add solid', e => openAddMenu(e.currentTarget), 'primary'), act(I.line, 'Line', () => setTool('line')), act(I.rect, 'Rectangle', () => setTool('rect')), act(I.circle, 'Circle', () => setTool('circle')), act(I.plane, `Plane ${planeLabel()}`, e => openPlaneMenu(e.currentTarget)), act(I.measure, 'Inquiry', e => openInquiryMenu(e.currentTarget)));
@@ -983,7 +999,7 @@ function renderSheet() {
   document.querySelectorAll('#sheet-tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === sheetTab));
   const body = $('#sheet-body');
   const st = body.scrollTop;
-  body.replaceChildren(...(sheetTab === 'item' ? itemTab() : sheetTab === 'objects' ? BR.browserTab(group) : sheetTab === 'history' ? BR.historyTab(group) : settingsTab()));
+  body.replaceChildren(...(sheetTab === 'item' ? itemTab() : sheetTab === 'objects' ? BR.browserTab(group) : sheetTab === 'history' ? BR.historyTab(group) : sheetTab === 'projects' ? PJ.projectsTab(group) : settingsTab()));
   body.scrollTop = st;
 }
 
@@ -1022,6 +1038,7 @@ function itemTab() {
       stat('Vertices', String(o.mesh.v.length)), stat('Edges', String(edges.length)), stat('Faces', String(o.mesh.f.length)),
       stat('Surface area', fmtArea(area)),
       stat('Volume', o.shape ? fmtVol(Math.abs(K.volume(o.shape)) * sv) : closed ? fmtVol(Math.abs(M.meshVolume(o.mesh)) * sv) : 'open mesh'),
+      o.link ? stat('Linked from', `${S.doc.components?.[o.link.pid]?.name || 'project'}${PJ.outOfDate(o.link.pid) ? ' · update available' : ' · up to date'}`) : null,
       stat('Geometry', o.shape ? `exact solid · ${o.brep.faces.length} faces · ${o.brep.edges.filter(e => !e.seam).length} edges` : 'triangle mesh'),
       stat('Watertight', closed ? 'yes' : 'no')),
   ].filter(Boolean);
@@ -1110,7 +1127,9 @@ function openAddMenu(anchor) {
 }
 function openMainMenu() {
   popover($('#btn-menu'), h('div', {},
-    menuItem(I.file, 'New scene', () => { if (confirm('Start a new scene? Unsaved changes will be lost (undo is available).')) newScene(); }),
+    h('div', { class: 'mtitle' }, PJ.projectName()),
+    menuItem(I.folder, 'Projects & assemblies…', () => openPanelTab('projects'), 'on this device'),
+    menuItem(I.file, 'New project', () => PJ.newProject()),
     menuItem(I.folder, 'Open / Import…', () => $('#file-input').click(), 'json step stl obj'),
     menuItem(I.save, 'Save project', () => saveProject()),
     h('div', { class: 'msep' }),
@@ -1156,7 +1175,7 @@ function newScene() {
   S.doc.objects = []; S.doc.nextId = 1;
   S.ed.mode = 'object'; S.ed.selected = new Set(); S.ed.active = null; S.ed.editSel = new Set(); S.ed.measure = []; S.ed.profiles = []; S.ed.drawSel = new Set();
   defaultScene(); resetHistory(); Draw.resetTool(); scheduleSave(); refresh();
-  enterSketchView(SK.activeSketch());
+  const sk0 = SK.activeSketch(); if (sk0) enterSketchView(sk0); else view.frameAll?.();
 }
 function exportTargets() {
   const objs = S.ed.mode === 'object' && S.ed.selected.size ? selectedObjs() : S.doc.objects.filter(isShown);
@@ -1331,3 +1350,5 @@ function openPlaneMenu(anchor) {
     menuItem(I.plane, 'Right (YZ)', set(SK.PLANES.YZ, 'Right'), planeLabel() === 'YZ' ? '✓' : '')), { above: true });
 }
 function renderActionsForce() { $('#actions').dataset.k = ''; refresh(); }
+
+function openPanelTab(tab) { if (sheetTab !== tab) $('#sheet-body').scrollTop = 0; sheetTab = tab; toggleSheet(true); renderSheet(); }

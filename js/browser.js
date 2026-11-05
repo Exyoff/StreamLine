@@ -241,7 +241,7 @@ export function browserTab(group) {
   }) : [h('p', { class: 'note' }, 'Draw on the grid or on a face to make a sketch.')]));
   const bodies = group(`Bodies · ${S.doc.objects.length}`, ...(S.doc.objects.length ? S.doc.objects.map(o => {
     const row = h('div', { class: 'objrow' + (S.ed.selected.has(o.id) ? ' sel' : '') + (S.ed.active === o.id ? ' cur' : '') + (layerVisible(o.layer) ? '' : ' dim') },
-      h('span', { class: 'sw', style: `background:${o.color}` }), h('span', { class: 'nm' }, o.name), h('span', { class: 'meta' }, o.brep ? `${o.brep.faces.length} faces` : `${o.mesh.f.length} tris`),
+      h('span', { class: 'sw', style: `background:${o.color}` }), h('span', { class: 'nm' }, o.name), h('span', { class: 'meta' }, o.link ? '🔗 linked' : o.brep ? `${o.brep.faces.length} faces` : `${o.mesh.f.length} tris`),
       layerTag('obj', o), eyeBtn(!o.hidden, () => setVisible('obj', o.id, !!o.hidden)));
     row.onclick = () => ctx.selectObj(o.id);
     return row;

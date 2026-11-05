@@ -313,6 +313,24 @@ try {
   });
   check(fast.t && /M8×1\.25/.test(fast.label) && fast.thread > 10, `Thread: a helical M8×1.25 thread (${fast.thread.toFixed(1)} mm³ of material cut into the shaft)`);
   check(fast.h && Math.abs(fast.removed - fast.expect) < 1e-6, `Hole: an exact counterbored hole (${fast.removed.toFixed(3)} mm³)`);
+  // assemblies: insert a saved project as a linked component, change its source, sync
+  const asm = await p.evaluate(async () => {
+    const L = StreamLine, PJ = await import('./js/projects.js'), ops = await import('./js/ops.js');
+    const vol = () => L.S.doc.objects.filter(o => o.link).map(o => L.K.volume(L.K.worldShape(o)));
+    await PJ.newProject(); L.addSketchedPrim('cube'); L.S.doc.project.name = 'Part A'; await PJ.saveNow(); const A = L.S.doc.project.id;
+    await PJ.newProject(); L.addSketchedPrim('cylinder'); await PJ.saveNow(); const B = L.S.doc.project.id;
+    await PJ.insertProject(A); const v0 = vol()[0];
+    await PJ.saveNow(); await PJ.openProject(A);
+    L.BR.editStep(L.H.hist().find(x => x.op === 'F.extrude').id); ops.updateOp({ distance: 35 }); ops.commit(); await PJ.saveNow();
+    await PJ.openProject(B); await PJ.refreshKnown();
+    const pid = L.S.doc.objects.find(o => o.link).link.pid, stale = PJ.outOfDate(pid);
+    await PJ.syncComponent(pid); const v1 = vol()[0];
+    const c = L.S.doc.objects.find(o => o.link); L.S.ed.faces = [{ obj: c.id, n: [0, 0, 1], w: 35, p: [0, 0, 35], planar: true }];
+    const refused = !L.runOp(L.F.pushPullOp, { dist: 5 });
+    return { v0, v1, stale, fresh: !PJ.outOfDate(pid), refused };
+  });
+  check(Math.abs(asm.v0 - 8000) < 1e-6 && Math.abs(asm.v1 - 14000) < 1e-6 && asm.stale && asm.fresh && asm.refused,
+    `Assemblies: insert a saved project, see it go out of date, Sync to its new version, linked parts stay read-only (${asm.v0.toFixed(0)} → ${asm.v1.toFixed(0)} mm³)`);
   await shot('5-timeline');
 } catch (e) {
   await p.screenshot({ path: OUT + 'crash.png' }).catch(() => {});

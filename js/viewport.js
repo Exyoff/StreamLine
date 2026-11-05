@@ -464,12 +464,25 @@ view.labelAt = (x, y, text, cls = '') => {
   el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -50%)`;
 };
 
+// a small picture of the current view (project thumbnails)
+view.thumbnail = (w = 240, h = 160) => {
+  try {
+    renderFrame();
+    const src = renderer.domElement, c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d'), k = Math.max(w / src.width, h / src.height), sw = w / k, sh = h / k;
+    g.drawImage(src, (src.width - sw) / 2, (src.height - sh) / 2, sw, sh, 0, 0, w, h);
+    return c.toDataURL('image/jpeg', 0.7);
+  } catch (e) { return null; }
+};
 // ---------- render loop ----------
 function loop(now) {
   requestAnimationFrame(loop);
   stepTween(now || performance.now());
   if (!needsRender) return;
   needsRender = false;
+  renderFrame();
+}
+function renderFrame() {
   updateCamera();
   syncScene();
   updateGrid();

@@ -120,7 +120,7 @@ const R = K.R;
 function guard(fn, msg) {
   try { return fn(); } catch (e) { console.warn(e); const m = e && e.message || ''; return typeof m === 'string' && m.trim() && m.length < 120 && !/^\d+$/.test(m) ? `${msg} (${m})` : msg; }
 }
-const solidOnly = o => (o && o.shape ? null : o ? `“${o.name}” is an imported mesh — this works on solids` : 'Body missing');
+const solidOnly = o => (o && o.link ? `“${o.name}” is a linked component — open its project to change it, then Sync` : o && o.shape ? null : o ? `“${o.name}” is an imported mesh — this works on solids` : 'Body missing');
 // a direction / point in an object's local frame
 const locDir = (xf, p, n) => M.norm(M.sub(xf.toL(M.add(p, n)), xf.toL(p)));
 const vec3 = v => [v.x, v.y, v.z];
@@ -267,6 +267,7 @@ export const bodyBoolean = {
   apply(p) {
     const [tid, ...tools] = p.ids;
     const t = objById(tid); if (!t) return 'Target missing';
+    if (t.link) return `“${t.name}” is a linked component — tap another body first to make it the target`;
     const objs = tools.map(objById).filter(Boolean);
     if (t.shape && objs.every(o => o.shape)) {
       const res = guard(() => { let s = t.shape; for (const o of objs) s = K.boolean(p.kind, s, K.toLocal(K.worldShape(o), t)); return s; }, 'Boolean failed');
@@ -698,3 +699,31 @@ export const holeOp = {
     K.setShape(o, res); S.ed.faces = [];
   },
 };
+
+// ---------- assemblies: linked components ----------
+// S.doc.components[pid] = { name, version, brep } — a copy of another project's solids. An inserted
+// component is a solid object with o.link = { pid }; it is placed with Move/Rotate and stays read-only
+// here (open its project to change it, then Sync to bring the new version in).
+const compCache = new Map();
+export function componentShape(pid) {
+  const c = (S.doc.components || {})[pid]; if (!c || !c.brep) return null;
+  const key = pid + '@' + c.version;
+  if (!compCache.has(key)) compCache.set(key, K.deserialize(c.brep));
+  return compCache.get(key);
+}
+export const insertComponent = {
+  label: p => `Insert ${(S.doc.components || {})[p.pid]?.name || 'component'}`,
+  defaults: () => ({ x: 0, y: 0, z: 0 }),
+  prepare(p) { if (!(S.doc.components || {})[p.pid]) return 'That project has no solids to insert'; p._id ??= S.doc.nextId; },
+  touch: () => ({ ids: [] }),
+  fields: () => [lenF('x', 'Position X'), lenF('y', 'Position Y'), lenF('z', 'Position Z')],
+  apply(p) {
+    const s = componentShape(p.pid); if (!s) return 'The component’s project data is missing';
+    const c = S.doc.components[p.pid];
+    const o = newObject(c.name, null, [p.x, p.y, p.z], p._id);
+    K.setShape(o, s); o.link = { pid: p.pid };
+    S.doc.objects.push(o);
+    S.ed.selected = new Set([o.id]); S.ed.active = o.id;
+  },
+};
+export const isLinked = o => !!(o && o.link);

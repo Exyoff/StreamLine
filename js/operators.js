@@ -369,6 +369,7 @@ export const applyXf = {
   fields: () => [{ key: 'loc', label: 'Location', kind: 'bool' }, { key: 'rot', label: 'Rotation', kind: 'bool' }, { key: 'scale', label: 'Scale', kind: 'bool' }],
   apply(p) {
     for (const o of selectedObjs()) {
+      if (o.link) return `“${o.name}” is a linked component — move it instead`;
       if (o.shape) { const M0 = objMatrix(o); if (p.loc) o.loc = [0, 0, 0]; if (p.rot) o.rot = [0, 0, 0]; if (p.scale) o.scl = [1, 1, 1]; try { rebase(o, M0); } catch (e) { return e.message; } continue; }
       const before = xfFor(o);
       const w = o.mesh.v.map(before.toW);
@@ -395,6 +396,7 @@ export const setOrigin = {
       let t;
       if (p.to === 'world') t = [0, 0, 0];
       else { t = M.mul(M.add(bb.min, bb.max), 0.5); if (p.to === 'bottom') t[2] = bb.min[2]; }
+      if (o.link) return `“${o.name}” is a linked component — move it instead`;
       if (o.shape) { const M0 = objMatrix(o); o.loc = t; try { rebase(o, M0); } catch (e) { return e.message; } continue; }
       o.loc = t;
       const nx = xfFor(o); o.mesh.v = w.map(nx.toL);
@@ -416,6 +418,7 @@ export const joinObjs = {
   apply() {
     const target = S.doc.objects.find(o => o.id === S.ed.active) || selectedObjs()[0];
     const others = selectedObjs().filter(o => o !== target);
+    if ([target, ...others].some(o => o.link)) return 'Linked components cannot be joined — use Boolean with another body as the target';
     if (target.shape || others.some(o => o.shape)) {
       if (!target.shape || others.some(o => !o.shape)) return 'Solids and imported meshes cannot be joined';
       try { let s = target.shape; for (const o of others) s = s.fuse(K.toLocal(K.worldShape(o), target)); K.setShape(target, s); } catch (e) { return 'Join failed'; }
