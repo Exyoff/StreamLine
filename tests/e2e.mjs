@@ -563,6 +563,76 @@ try {
     return out;
   });
   check(pcol.cols === '#40a040,#d04040', `An inserted assembly shows each part in its own colour (${pcol.cols}, ${pcol.faces} faces)`);
+  // round 19: a mate onto a part of an inserted assembly follows that part when a Sync moved it (not the nearest
+  // hole of another part); a tapped hole drilled across a round boss (saddle-shaped rims) can be mated; Duplicate
+  // makes a copy; a tap right after a cancelled preview (the fillet ball tapped, not dragged) picks what is there now
+  const r19 = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, m = await import('./js/ops.js'), PJ = await import('./js/projects.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    const bar = (name, y) => {
+      L.runOp(F.sketchOpNew(name, XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 0, y: y - 6, w: 80, h: 12 }); F.addEntity(k, { t: 'circle', c: [10, y], r: 3 }); F.addEntity(k, { t: 'circle', c: [70, y], r: 3 }); }));
+      L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [40, y - 4] }], distance: 5, mode: 'new', target: null }); m.commit();
+      L.S.doc.objects.filter(o => o.shape).at(-1).name = name;
+    };
+    const out = {};
+    // the sub-assembly: two links; the assembly: it inserted, a pin mated into the second link's x-70 hole
+    await PJ.newProject(); bar('Link1', 0); bar('Link2', 30); await PJ.saveNow(); const src = L.S.doc.project.id;
+    await PJ.newProject(); await PJ.insertProject(src); m.commit();
+    const arm = L.S.doc.objects.find(o => o.link);
+    L.runOp(F.sketchOpNew('pin', XY(0), null, k => F.addEntity(k, { t: 'circle', c: [200, 0], r: 3 })));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [200, 0] }], distance: 20, mode: 'new', target: null }); m.commit();
+    const pinId = L.S.doc.objects.filter(o => o.shape && !o.link).at(-1).id;
+    L.runOp(F.mateOp, { a: { obj: pinId, p: [203, 0, 10], n: [1, 0, 0], w: 203, planar: false }, b: { obj: arm.id, p: [73, 30, 2.5], n: [-1, 0, 0], w: -73, planar: false }, gap: 0, align: 'face' }); m.commit();
+    const ctr = () => { const b = L.K.worldBounds(L.S.doc.objects.find(o => o.id === pinId)); return [0, 1].map(k => +((b[0][k] + b[1][k]) / 2).toFixed(2)); };
+    out.before = ctr().join();
+    await PJ.saveNow(); const asm = L.S.doc.project.id;
+    // the second link moves up 60 and turns 30° about its first hole, in its own project; then Sync
+    await PJ.openProject(src);
+    const l2 = L.S.doc.objects.find(o => o.name === 'Link2');
+    L.S.ed.selected = new Set([l2.id]); L.S.ed.active = l2.id;
+    L.runOp(L.OPS.transform, { mode: 'move', x: 0, y: 60, z: 0 }); m.commit();
+    L.S.ed.selected = new Set([l2.id]);
+    L.runOp(L.OPS.transform, { mode: 'rotate', axis: 'z', angle: 30, pivot: [10, 90, 0], px: 10, py: 90, pz: 0 }); m.commit();
+    await PJ.saveNow(); await PJ.openProject(asm); await PJ.syncComponent(src);
+    out.after = ctr().join(); out.err = L.H.hist().find(r => r.op === 'F.mateOp')?.err || '';
+    // a radial Ø5 hole across a Ø44 boss, tapped M6, and a pin mated into it
+    await PJ.newProject();
+    L.runOp(F.sketchOpNew('boss', XY(0), null, k => F.addEntity(k, { t: 'circle', c: [0, 0], r: 22 })));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [0, 0] }], distance: 40, mode: 'new', target: null }); m.commit();
+    const boss = L.S.doc.objects.filter(o => o.shape).at(-1).id;
+    L.runOp(F.sketchOpNew('hole', { o: [0, 0, 0], u: [1, 0, 0], v: [0, 0, 1], n: [0, -1, 0] }, null, k => F.addEntity(k, { t: 'circle', c: [0, 20], r: 2.5 })));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [0, 20] }], distance: 30, symmetric: true, mode: 'cut', target: boss }); m.commit();
+    L.S.ed.faces = [{ obj: boss, p: [0, 15, 22.5], n: [0, 0, -1], w: -22.5, planar: false }];
+    L.runOp(F.threadOp, {}); m.commit();
+    out.thread = F.threadOp.label(L.H.hist().at(-1).params);
+    L.runOp(F.sketchOpNew('stud', XY(0), null, k => F.addEntity(k, { t: 'circle', c: [80, 0], r: 3 })));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [80, 0] }], distance: 20, mode: 'new', target: null }); m.commit();
+    const stud = L.S.doc.objects.filter(o => o.shape).at(-1).id;
+    out.mated = !!L.runOp(F.mateOp, { a: { obj: stud, p: [83, 0, 10], n: [1, 0, 0], w: 83, planar: false }, b: { obj: boss, p: [0, 8, 22.8], n: [0, 0, -1], w: -22.8, planar: false }, gap: 0, align: 'face' }); m.commit();
+    const sb = L.K.worldBounds(L.S.doc.objects.find(o => o.id === stud));
+    out.stud = [0, 2].map(k => +((sb[0][k] + sb[1][k]) / 2).toFixed(2)).join() + ' ' + (sb[1][1] - sb[0][1]).toFixed(1);
+    // Duplicate: one more body, and it is the selection
+    const n0 = L.S.doc.objects.length;
+    L.S.ed.selected = new Set([stud]); L.S.ed.active = stud;
+    L.runOp(L.OPS.duplicate, { x: 30, y: 0, z: 0 }); m.commit();
+    out.dup = { added: L.S.doc.objects.length - n0, sel: [...L.S.ed.selected].every(id => id !== stud && L.S.doc.objects.some(o => o.id === id)) };
+    // a fillet preview drawn, then cancelled: the next pick sees the plain block again
+    await PJ.newProject(); L.addSketchedPrim('cube'); // (the tests after this one carry on in this plain part)
+    const cube = L.S.doc.objects.at(-1); const cid = cube.id; L.S.ed.selected = new Set(); L.refresh();
+    const top = L.K.worldBounds(cube)[1][2];
+    L.S.ed.edges = [{ obj: cid, a: [-10, -10, top], b: [10, -10, top] }];
+    L.runOp(F.edgeBlendOp, { kind: 'fillet', size: 2 }, { interactive: true }); L.view.render();
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const tris = L.S.doc.objects.find(o => o.id === cid).mesh.f.length;
+    m.cancelOp();
+    const q = L.view.project([0, 0, top]), hit = L.view.pickObject(q.x, q.y), o2 = L.S.doc.objects.find(o => o.id === cid);
+    out.pick = { tris, now: o2.mesh.f.length, face: hit?.face, ok: hit?.id === cid && hit.face >= 0 && hit.face < o2.mesh.f.length };
+    L.S.ed.edges = []; L.refresh();
+    return out;
+  });
+  check(r19.before === '70,30' && r19.after === '61.96,120' && !r19.err, `A mate onto a part of an inserted assembly follows that part after Sync (${r19.before} → ${r19.after}, want 61.96,120${r19.err ? '; ' + r19.err : ''})`);
+  check(/M6/.test(r19.thread) && r19.mated && r19.stud === '0,20 20.0', `A tapped hole across a round boss can be mated (${r19.thread}; stud centre ${r19.stud})`);
+  check(r19.dup.added === 1 && r19.dup.sel, `Duplicate makes a copy and selects it (${JSON.stringify(r19.dup)})`);
+  check(r19.pick.tris > r19.pick.now && r19.pick.ok, `A pick right after a cancelled fillet preview sees the block as it is (${JSON.stringify(r19.pick)})`);
   // text → Outline → letters' filled areas selected → Extrude
   const txt = await p.evaluate(async () => {
     const L = StreamLine;

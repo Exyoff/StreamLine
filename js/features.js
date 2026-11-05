@@ -3,7 +3,7 @@ import { S, emit, objById, selectedObjs, isShown } from './state.js';
 import * as SK from './sketch.js';
 import * as M from './mesh.js';
 import { toPolys, boolean, polysToMesh } from './csg.js';
-import { newObject, xfFor, worldVerts, turnObject } from './scene.js';
+import { newObject, xfFor, xfOfMatrix, worldVerts, turnObject } from './scene.js';
 import { defSize } from './operators.js';
 import { fmtLen } from './units.js';
 
@@ -1216,29 +1216,33 @@ export const recessOp = {
 // the mate face's geometry in the part's own coordinates, cached per shape: re-solving mates during a drag only
 // re-applies the placement (no face search)
 const mateLocalCache = new WeakMap();
-function mateLocal(o, f, pl, nl) {
+// (only: one part of an inserted assembly — { f0, f1 } its range of faces, edges the indices of its edges)
+function mateLocal(o, f, pl, nl, only = null) {
   let m = mateLocalCache.get(o.shape); if (!m) { m = new Map(); mateLocalCache.set(o.shape, m); }
-  const key = [...pl, ...nl].map(v => v.toFixed(7)).join() + (f.edgeAxis ? 'e' : f.planar === false ? 'c' : 'p') + (f._ax ? JSON.stringify(f._ax) : '') + (f._fh ? JSON.stringify(f._fh) : '');
+  const key = [...pl, ...nl].map(v => v.toFixed(7)).join() + (f.edgeAxis ? 'e' : f.planar === false ? 'c' : 'p') + (f._ax ? JSON.stringify(f._ax) : '') + (f._fh ? JSON.stringify(f._fh) : '') + (only ? '@' + only.name : '');
   if (m.has(key)) return m.get(key);
-  const r = mateLocalFind(o, f, pl, nl); m.set(key, r); return r;
+  const r = mateLocalFind(o, f, pl, nl, only); m.set(key, r); return r;
 }
-function mateLocalFind(o, f, pl, nl) {
+const inPart = (only, i) => !only || (i >= only.f0 && i < only.f1);
+const edgeInPart = (only, e) => !only || only.edges.has(e.i);
+function mateLocalFind(o, f, pl, nl, only) {
   if (f.edgeAxis) { // (the rim nearest the tap; once known, a rim on that same axis line wins, so a changed part keeps its hole)
     let r = null;
     if (f._ax) for (const e of o.brep?.edges || []) {
-      if (e.type !== 'CIRCLE' || !e.closed || e.seam) continue;
+      if (e.type !== 'CIRCLE' || !e.closed || e.seam || !edgeInPart(only, e)) continue;
       const a = circleOfEdge(e.pts); if (Math.abs(M.dot(a.d, f._ax.d)) < 0.999) continue;
       const dc = M.sub(a.c, f._ax.c); if (M.len(M.sub(dc, M.mul(f._ax.d, M.dot(dc, f._ax.d)))) > 1e-3) continue;
       const d = K.polyDist(pl, e.pts); if (!r || d < r.dd) r = { kind: 'axis', q: null, ...a, dd: d };
     }
-    r = r || circleAxisNear(o, pl, Infinity); return r && { kind: 'axis', q: null, c: r.c, d: r.d, ax: { c: r.c, d: r.d, R: r.R } };
+    r = r || circleAxisNear(o, pl, Infinity, only); return r && { kind: 'axis', q: null, c: r.c, d: r.d, ax: { c: r.c, d: r.d, R: r.R } };
   }
-  let hit = K.faceAt(o.shape, pl, f.planar === false ? null : nl, f.planar === false ? null : f._fh);
-  if (!hit && f.planar !== false) hit = K.faceAt(o.shape, pl, nl, f._fh);
+  let hit = K.faceAt(o.shape, pl, f.planar === false ? null : nl, f.planar === false ? null : f._fh, only);
+  if (!hit && f.planar !== false) hit = K.faceAt(o.shape, pl, nl, f._fh, only);
   if (hit && f.planar !== false && hit.f.geomType === 'PLANE') f._fh = K.faceHint(hit.f);
   if (!hit && f._ax) { // a round face that moved (its sketch changed): the parallel cylinder of the same radius nearest its old axis
     let best = null;
     o.shape.faces.forEach((fc, i) => {
+      if (!inPart(only, i)) return;
       const cy = K.cylinderOf(fc); if (!cy || Math.abs(M.dot(cy.d, f._ax.d)) < 0.9999) return;
       const dc = M.sub(cy.c, f._ax.c), off = M.len(M.sub(dc, M.mul(f._ax.d, M.dot(dc, f._ax.d)))) + 1000 * Math.abs(cy.R - f._ax.R);
       if (!best || off < best.off) best = { off, i, f: fc };
@@ -1246,7 +1250,7 @@ function mateLocalFind(o, f, pl, nl) {
     if (best) hit = { i: best.i, f: best.f };
     else { // a thread (no cylinder left): the round edge on the same axis line, nearest the old radius
       let be = null;
-      for (const a of circleAxes(o)) {
+      for (const a of circleAxes(o, only)) {
         if (Math.abs(M.dot(a.d, f._ax.d)) < 0.999) continue;
         const dc = M.sub(a.c, f._ax.c), off = M.len(M.sub(dc, M.mul(f._ax.d, M.dot(dc, f._ax.d))));
         const sc = off + 0.1 * Math.abs(a.R - (f._ax.R || 0));
@@ -1255,7 +1259,7 @@ function mateLocalFind(o, f, pl, nl) {
       if (be && be.sc < Math.max(5, 2 * (f._ax.R || 0))) return { kind: 'axis', q: null, c: be.a.c, d: be.a.d, ax: { c: be.a.c, d: be.a.d, R: be.a.R } };
     }
   }
-  if (!hit) return null;
+  if (!hit) return f.planar === false ? threadAxisNear(o, pl, only) : null; // (a tap between a thread's turns)
   const q = hit.q || null;
   if (hit.f.geomType === 'PLANE') { // the exact plane (not the float32 tap point)
     const fn = hit.f.normalAt(), c0 = hit.f.center, c = typeof c0 === 'function' ? c0() : c0;
@@ -1263,35 +1267,112 @@ function mateLocalFind(o, f, pl, nl) {
   }
   const cy = K.cylinderOf(hit.f) || K.coneAxis(hit.f) || K.revolutionAxis(hit.f);
   if (cy) return { kind: 'axis', q, c: cy.c, d: cy.d, ax: cy.R ? { c: cy.c, d: cy.d, R: cy.R } : null };
-  const r = circleAxisNear(o, pl, Infinity); return r ? { ...r, q, ax: { c: r.c, d: r.d, R: r.R } } : null;
+  const th = threadAxisNear(o, pl, only); if (th) return { ...th, q };
+  const r = circleAxisNear(o, pl, Infinity, only); return r && M.len(r.d) > 0.5 ? { ...r, q, ax: { c: r.c, d: r.d, R: r.R } } : null;
 }
 // every round (closed circular) edge's axis, in the part's coordinates
-function circleAxes(o) {
-  return (o.brep?.edges || []).filter(e => e.type === 'CIRCLE' && e.closed && !e.seam).map(e => circleOfEdge(e.pts));
+function circleAxes(o, only = null) {
+  return (o.brep?.edges || []).filter(e => e.type === 'CIRCLE' && e.closed && !e.seam && edgeInPart(only, e)).map(e => circleOfEdge(e.pts)).filter(a => M.len(a.d) > 0.5);
+}
+// a thread (or any free-form face wrapped round an axis): the cylinder whose surface passes nearest the point — a
+// thread keeps its root or crest cylinder between the turns. Works where the hole's rims are not circles (a tapped
+// hole drilled across a round boss has saddle-shaped rims), in the part's coordinates; null when none is close.
+function threadAxisNear(o, pl, only = null) {
+  const faces = o.shape?.faces, t = o.brep; if (!faces || !t) return null;
+  let best = null;
+  t.faces.forEach((fd, i) => {
+    if (fd.type !== 'CYLINDRE' || !inPart(only, i)) return;
+    const cy = K.cylinderAxis(faces[i]); if (!cy) return;
+    const dc = M.sub(pl, cy.c), ax = M.dot(dc, cy.d), rad = M.len(M.sub(dc, M.mul(cy.d, ax)));
+    const res = Math.abs(rad - cy.R);
+    if (res > Math.max(2, 0.15 * cy.R) || (best && res >= best.res)) return;
+    // along the axis: within the face's extent (from its triangles)
+    let t0 = Infinity, t1 = -Infinity;
+    o.faceOf.forEach((fi, k) => { if (fi !== i) return; for (const vi of o.mesh.f[k]) { const s = M.dot(M.sub(o.mesh.v[vi], cy.c), cy.d); t0 = Math.min(t0, s); t1 = Math.max(t1, s); } });
+    if (ax < t0 - 1.5 || ax > t1 + 1.5) return;
+    best = { res, c: cy.c, d: M.norm(cy.d), R: cy.R };
+  });
+  return best && { kind: 'axis', q: null, c: best.c, d: best.d, ax: { c: best.c, d: best.d, R: best.R } };
 }
 function circleOfEdge(pts) {
   const qq = pts.slice(0, -1), c = [0, 1, 2].map(k => qq.reduce((s, v) => s + v[k], 0) / qq.length);
   return { c, d: M.norm(M.cross(M.sub(qq[0], c), M.sub(qq[Math.floor(qq.length / 4)], c))), R: M.len(M.sub(qq[0], c)) };
 }
 // the axis of the round (closed circular) edge nearest a point in the part's coordinates, within maxD
-export function circleAxisNear(o, pl, maxD) {
+export function circleAxisNear(o, pl, maxD, only = null) {
   let best = null;
   for (const e of o.brep?.edges || []) {
-    if (e.type !== 'CIRCLE' || !e.closed || e.seam) continue;
+    if (e.type !== 'CIRCLE' || !e.closed || e.seam || !edgeInPart(only, e)) continue;
     const d = K.polyDist(pl, e.pts); if (d <= maxD && (!best || d < best.d)) best = { d, e };
   }
   if (!best) return null;
   return { kind: 'axis', q: null, ...circleOfEdge(best.e.pts) };
 }
+// ---------- inserted assemblies: parts ----------
+// an inserted assembly's parts: name, placement in the component (matrix elements, when its project saved them) and
+// the range of the component's B-rep faces that are that part's (the component lists its parts' faces in order)
+const compPartsMemo = new Map();
+export function compParts(o) {
+  const c = o?.link && (S.doc.components || {})[o.link.pid];
+  if (!c || !c.parts || c.parts.length < 2 || !o.brep?.faces) return null;
+  const key = o.link.pid + '@' + c.version + '#' + o.brep.faces.length;
+  if (!compPartsMemo.has(key)) {
+    let r = null;
+    try {
+      let f0 = 0;
+      r = c.parts.map(pt => { const n = pt.nf ?? K.deserialize(pt.brep).faces.length, e = { name: pt.name, color: pt.color, m: pt.m || null, f0, f1: f0 + n }; f0 += n; return e; });
+      if (f0 !== o.brep.faces.length) r = null;
+    } catch (e) { r = null; }
+    compPartsMemo.set(key, r);
+  }
+  return compPartsMemo.get(key);
+}
+// the indices (into the shape's edges) of the edges of a part's faces
+const partEdgesMemo = new WeakMap();
+function partEdges(o, pt) {
+  let m = partEdgesMemo.get(o.shape); if (!m) { m = new Map(); partEdgesMemo.set(o.shape, m); }
+  if (!m.has(pt.name)) {
+    const idx = new Map(o.shape.edges.map((e, i) => [e.hashCode, i])), faces = o.shape.faces, set = new Set();
+    for (let i = pt.f0; i < pt.f1; i++) for (const e of faces[i].edges) { const k = idx.get(e.hashCode); if (k != null) set.add(k); }
+    m.set(pt.name, set);
+  }
+  return m.get(pt.name);
+}
+// a mate face on an inserted assembly belongs to one of its parts (f.part: its name, and the tap in that part's own
+// coordinates): after a Sync that moved the part (the arm re-posed in its own project) the face is found on that
+// part, where the part is now — not on whichever part's face happens to be nearest the old spot
+function partFrame(o, f) {
+  const pt = f.part && compParts(o)?.find(q => q.name === f.part.name); if (!pt) return null;
+  return { X: pt.m && f.part.pl ? xfOfMatrix(pt.m) : null, only: { f0: pt.f0, f1: pt.f1, name: pt.name, get edges() { return partEdges(o, pt); } } };
+}
+function tagPart(o, f) {
+  const parts = compParts(o); if (!parts) return;
+  const hit = K.faceAt(o.shape, f.lp, null); if (!hit) return;
+  const pt = parts.find(q => hit.i >= q.f0 && hit.i < q.f1); if (!pt) return;
+  f.part = { name: pt.name };
+  if (pt.m) { const X = xfOfMatrix(pt.m); f.part.pl = X.toL(f.lp); f.part.pn = dirTo(X.toL, f.lp, f.ln); }
+}
+const dirTo = (fn, p, d) => M.norm(M.sub(fn(M.add(p, d)), fn(p)));
+const axTo = (fn, a) => a && { ...a, c: fn(a.c), d: dirTo(fn, a.c, a.d) };
+const fhTo = (fn, h) => h && (h.c ? { ...h, c: fn(h.c) } : h);
+// a mate face's tap and normal in its body's coordinates (on its part of an inserted assembly, where that part is now)
+function mateLP(f) {
+  const o = objById(f.obj), xf = xfFor(o), pf = o && partFrame(o, f);
+  if (pf?.X) return { o, xf, pf, pl: pf.X.toW(f.part.pl), nl: dirTo(pf.X.toW, f.part.pl, f.part.pn) };
+  return { o, xf, pf, pl: f.lp || xf.toL(f.p), nl: f.ln || locDir(xf, f.p, f.n) };
+}
 export function mateGeom(f) {
-  const o = objById(f.obj); if (!o || !o.shape) return null;
+  const o0 = objById(f.obj); if (!o0 || !o0.shape) return null;
   // a mate's faces are kept in the part's own coordinates (lp, ln), so they ride along when the part moves
-  const xf = xfFor(o), pl = f.lp || xf.toL(f.p), nl = f.ln || locDir(xf, f.p, f.n);
-  const L = mateLocal(o, f, pl, nl); if (!L) return null;
+  const { o, xf, pf, pl, nl } = mateLP(f);
+  // (the hints a found face leaves — its axis, its size and centre — are kept on the assembly's part too)
+  const g = pf?.X ? { ...f, _ax: axTo(pf.X.toW, f._ax), _fh: fhTo(pf.X.toW, f._fh) } : f;
+  const L = mateLocal(o, g, pl, nl, pf?.only); if (!L) return null;
+  if (g !== f && g._fh) f._fh = fhTo(pf.X.toL, g._fh);
   if (L.q) { const pw = xf.toW(L.q); Object.assign(f, { p: pw, w: M.dot(f.n, pw) }); } // follow a moved face
   const toWd = d => M.norm(M.sub(xf.toW(M.add(pl, d)), xf.toW(pl)));
   if (L.kind === 'plane') return { kind: 'plane', o, n: toWd(L.n), p: xf.toW(L.p) };
-  if (L.ax) f._ax = L.ax;
+  if (L.ax) f._ax = pf?.X ? axTo(pf.X.toL, L.ax) : L.ax;
   return { kind: 'axis', o, c: xf.toW(L.c), d: toWd(L.d) };
 }
 // the move that puts face a onto face b: { v, kind } or an error message
@@ -1313,7 +1394,7 @@ export function mateSolve(a, b, gap = 0) {
 function solveMate(p) {
   const o = objById(p.a.obj); if (!o) return 'The part it moves no longer exists';
   if (!objById(p.b.obj)) return 'The part it mates to no longer exists';
-  for (const f of [p.a, p.b]) if (!f.lp) { const ob = objById(f.obj), x = xfFor(ob); f.lp = x.toL(f.p); f.ln = locDir(x, f.p, f.n); }
+  for (const f of [p.a, p.b]) if (!f.lp) { const ob = objById(f.obj), x = xfFor(ob); f.lp = x.toL(f.p); f.ln = locDir(x, f.p, f.n); tagPart(ob, f); }
   const A0 = mateGeom(p.a), B0 = mateGeom(p.b);
   if (A0 && B0 && A0.kind === B0.kind) {
     const da = A0.kind === 'plane' ? A0.n : A0.d, db = B0.kind === 'plane' ? B0.n : B0.d, k = M.dot(da, db);
@@ -1325,7 +1406,7 @@ function solveMate(p) {
   // Mate by hole axes from two flat faces: a pin through both holes — the axes line up AND the tapped faces stay
   // seated face to face (the part is turned round if they face the same way), with the gap between them
   const seat = p.a._by && p.b._by && p.a.ln && p.b.ln;
-  const faceN = f => { const x = xfFor(objById(f.obj)), P = x.toW(f.lp); return { P, n: M.norm(M.sub(x.toW(M.add(f.lp, f.ln)), P)) }; };
+  const faceN = f => { const { xf: x, pl, nl } = mateLP(f), P = x.toW(pl); return { P, n: M.norm(M.sub(x.toW(M.add(pl, nl)), P)) }; };
   if (seat) { const A = faceN(p.a), B = faceN(p.b); if (M.dot(A.n, B.n) > -0.9999) turnObject(o, A.n, M.mul(B.n, -1), A.P); }
   const r = mateSolve(p.a, p.b, +p.gap || 0); if (typeof r === 'string') return r;
   if (seat && r.kind === 'axis') {
@@ -1355,8 +1436,8 @@ export const mateOp = {
 function mateNearRims(p) {
   if (p.by === 'axis') return true;
   if (p.a.edgeAxis || p.b.edgeAxis || p.a.planar === false || p.b.planar === false) return false;
-  return [p.a, p.b].every(f => { const o = objById(f.obj); if (!o?.shape || !f.lp) return false;
-    return (o.brep?.edges || []).some(e => e.type === 'CIRCLE' && e.closed && !e.seam && K.polyDist(f.lp, e.pts) <= Math.max(3, circleOfEdge(e.pts).R)); });
+  return [p.a, p.b].every(f => { const o = objById(f.obj); if (!o?.shape || !f.lp) return false; const { pl, pf } = mateLP(f);
+    return (o.brep?.edges || []).some(e => e.type === 'CIRCLE' && e.closed && !e.seam && edgeInPart(pf?.only, e) && K.polyDist(pl, e.pts) <= Math.max(3, circleOfEdge(e.pts).R)); });
 }
 // where a mate's part was just before that mate was applied: a mate that turns out to conflict puts it back there
 const prePose = new WeakMap();

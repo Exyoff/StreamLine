@@ -337,10 +337,12 @@ export function polyDist(p, pts) { let d = Infinity; for (let k = 1; k < pts.len
 // face from a slot wall of about the same area
 function faceDims(f) { try { const b = f.boundingBox.bounds, e = [0, 1, 2].map(k => b[1][k] - b[0][k]).sort((x, y) => y - x); return [e[0], e[1]]; } catch (e) { return null; } }
 export function faceHint(f) { try { const c0 = f.center, c = typeof c0 === 'function' ? c0() : c0; return { a: R.measureArea(f), c: [c.x, c.y, c.z], dims: faceDims(f) }; } catch (e) { return null; } }
-export function faceAt(shape, p, n = null, hint = null) {
-  const v = R.makeVertex(p), faces = shape.faces;
+// (only: { f0, f1 } — look at those faces alone: one part of an inserted assembly)
+export function faceAt(shape, p, n = null, hint = null, only = null) {
+  const v = R.makeVertex(p), faces = shape.faces, skip = i => only && (i < only.f0 || i >= only.f1);
   let best = null;
   faces.forEach((f, i) => {
+    if (skip(i)) return;
     const d = R.measureDistanceBetween(f, v);
     if (n) { try { const fn = f.normalAt(p); const k = (fn.x * n[0] + fn.y * n[1] + fn.z * n[2]) / (Math.hypot(fn.x, fn.y, fn.z) || 1); if (k < 0.9) return; } catch (e) {} }
     if (!best || d < best.d) best = { d, i, f };
@@ -353,7 +355,7 @@ export function faceAt(shape, p, n = null, hint = null) {
   if (!n) return null;
   let alt = null;
   faces.forEach((f, i) => {
-    if (f.geomType !== 'PLANE') return;
+    if (skip(i) || f.geomType !== 'PLANE') return;
     let fn, c;
     try { fn = f.normalAt(); c = f.center; c = typeof c === 'function' ? c() : c; } catch (e) { return; }
     const nn = [fn.x, fn.y, fn.z]; if (nn[0] * n[0] + nn[1] * n[1] + nn[2] * n[2] < 1 - 1e-6) return;
@@ -434,6 +436,16 @@ export function edgeAt(shape, ref) {
 }
 
 // ---------- cylinders, helices, revolved tools (threads and holes) ----------
+// axis and radius of a cylindrical face (local coordinates), or null (no extent: cheap enough to ask every face)
+export function cylinderAxis(face) {
+  if (face.geomType !== 'CYLINDRE') return null;
+  let ad = null;
+  try {
+    ad = new oc.BRepAdaptor_Surface(face.wrapped, true);
+    const cy = ad.Cylinder(), ax = cy.Axis(), L = ax.Location(), D = ax.Direction();
+    return { c: [L.X(), L.Y(), L.Z()], d: [D.X(), D.Y(), D.Z()], R: cy.Radius() };
+  } catch (e) { return null; } finally { try { ad && ad.delete(); } catch (e) {} }
+}
 // axis, radius and extent of a cylindrical face (local coordinates), or null
 export function cylinderOf(face) {
   if (face.geomType !== 'CYLINDRE') return null;

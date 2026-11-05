@@ -33,8 +33,11 @@ export function turnObject(o, from, to, pivot) {
   o.loc = [pivot[0] + rel.x, pivot[1] + rel.y, pivot[2] + rel.z].map(v => { const r = Math.round(v * 1e9) / 1e9; return Math.abs(r - v) < 1e-9 ? r : v; });
 }
 // Transform helpers in double precision (Matrix4.elements is a plain Array)
-export function xfFor(o) {
-  const M = objMatrix(o), Mi = M.clone().invert();
+export function xfFor(o) { return xfOfMatrix(objMatrix(o)); }
+// a placement given as a THREE matrix (or its 16 elements, column-major): local → world and back
+export function xfOfMatrix(M) {
+  if (Array.isArray(M)) M = new THREE.Matrix4().fromArray(M);
+  const Mi = M.clone().invert();
   const e = M.elements, ei = Mi.elements;
   const ap = (m, p) => [
     m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12],

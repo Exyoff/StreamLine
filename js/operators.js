@@ -343,7 +343,9 @@ export const duplicate = {
     const src = selectedObjs(); const ids = [];
     src.forEach((o, k) => {
       const c = cloneObj(o); const n = newObject(o.name, c.mesh, M.add(o.loc, [p.x, p.y, p.z]), p._base + k);
-      n.rot = c.rot; n.scl = c.scl; n.color = o.color; copyShape(n, o); if (o.link) n.link = { ...o.link }; // a copy of a linked part stays linked S.doc.objects.push(n); ids.push(n.id);
+      n.rot = c.rot; n.scl = c.scl; n.color = o.color; copyShape(n, o);
+      if (o.link) n.link = { ...o.link }; // a copy of a linked part stays linked
+      S.doc.objects.push(n); ids.push(n.id);
     });
     S.ed.selected = new Set(ids); S.ed.active = ids[ids.length - 1];
   },

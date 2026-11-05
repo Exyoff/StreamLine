@@ -1,5 +1,6 @@
 // Projects on this device and assemblies: autosave into the library, open / new / duplicate / rename /
 // delete, insert another project as a linked component, and sync components when their source changed.
+import * as THREE from 'three';
 import { S, emit } from './state.js';
 import { serialize, deserialize, objMatrix } from './scene.js';
 import { runOp, resetHistory, getLast } from './ops.js';
@@ -27,13 +28,15 @@ function exportShape() {
 }
 // the project's parts, named and coloured (sub-assemblies expanded: "Seat / Slat"), for STEP export of
 // assemblies that contain this project
+// (each with its placement m — matrix elements, so an assembly that inserts this one can tell how a part moved
+// between versions — and its face count nf, in the order the project's export lists the faces)
 export function partsOf(o, prefix = '') {
-  const c = o.link && (S.doc.components || {})[o.link.pid];
-  if (c && c.parts && c.parts.length > 1) return c.parts.map(pt => ({ name: `${prefix}${o.name} / ${pt.name}`, color: pt.color, shape: () => K.transformShape(K.deserialize(pt.brep), objMatrix(o)) }));
-  return [{ name: prefix + o.name, color: o.color, shape: () => K.worldShape(o).clone() }];
+  const c = o.link && (S.doc.components || {})[o.link.pid], om = objMatrix(o);
+  if (c && c.parts && c.parts.length > 1) return c.parts.map(pt => ({ name: `${prefix}${o.name} / ${pt.name}`, color: pt.color, m: pt.m ? om.clone().multiply(new THREE.Matrix4().fromArray(pt.m)).toArray() : null, shape: () => K.transformShape(K.deserialize(pt.brep), om) }));
+  return [{ name: prefix + o.name, color: o.color, m: om.toArray(), shape: () => K.worldShape(o).clone() }];
 }
 function exportParts() {
-  return S.doc.objects.filter(o => o.shape && !o.hidden).flatMap(o => partsOf(o)).map(pt => ({ name: pt.name, color: pt.color, brep: K.serialize(pt.shape()) }));
+  return S.doc.objects.filter(o => o.shape && !o.hidden).flatMap(o => partsOf(o)).map(pt => { const sh = pt.shape(); return { name: pt.name, color: pt.color, brep: K.serialize(sh), m: pt.m, nf: sh.faces.length }; });
 }
 const sigCache = new WeakMap();
 const shapeSig = sh => { let v = sigCache.get(sh); if (!v) { v = K.massSig(sh); sigCache.set(sh, v); } return v; };

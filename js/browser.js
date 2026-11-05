@@ -53,9 +53,12 @@ export function dependents(id) {
   if (rec.kind === 'sketch') return hist.slice(i + 1).filter(r => r.params && new RegExp(`"sk":${rec.sk}[,}]`).test(JSON.stringify(r.params)));
   return hist.slice(i + 1).filter(r => r.kind !== 'sketch');
 }
-const when = t => { if (!t) return ''; const d = new Date(t); return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' · ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }); };
+// (formatters made once: toLocale…String builds a new one per call, and the timeline asked for one per step on
+// every refresh — most of a gizmo drag's time in a big assembly)
+let fmtD = null, fmtT = null;
+const when = t => { if (!t) return ''; fmtD ??= new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }); fmtT ??= new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }); const d = new Date(t); return fmtD.format(d) + ' · ' + fmtT.format(d); };
 const idxOf = id => H.hist().findIndex(r => r.id === id);
-let focusErr = false, lastEnd = -1;
+let focusErr = false, lastEnd = -1, lastSig = null;
 function failNote(failed) { if (failed.length) { focusErr = true; toast(`⚠ ${failed.length} later step${failed.length > 1 ? 's' : ''} failed — see History`, 3200); } }
 
 // ---------- timeline actions (all undoable, none recorded) ----------
@@ -141,7 +144,11 @@ export function renderTimeline() {
   }
   el.querySelector('.tl-first').disabled = el.querySelector('.tl-prev').disabled = end <= 0;
   el.querySelector('.tl-next').disabled = el.querySelector('.tl-last').disabled = end >= hist.length;
-  if (!hist.length) { row.replaceChildren(h('span', { class: 'tl-empty' }, 'History · each sketch and feature appears here')); lastEnd = -1; return; }
+  if (!hist.length) { if (lastSig !== '') row.replaceChildren(h('span', { class: 'tl-empty' }, 'History · each sketch and feature appears here')); lastEnd = -1; lastSig = ''; return; }
+  // nothing changed (a refresh during a drag): keep the chips as they are
+  const sig = end + '|' + S.ed.editingSketch + '|' + focusErr + '|' + hist.map(r => `${r.id}:${r.off ? 1 : 0}${r.err ? 'e' + r.err : ''}:${recLabel(r)}`).join(',');
+  if (sig === lastSig && row.childElementCount) return;
+  lastSig = sig;
   const kids = [];
   hist.forEach((rec, i) => {
     if (i === end) kids.push(h('span', { class: 'tl-marker', title: 'Rollback marker' }));
