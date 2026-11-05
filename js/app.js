@@ -922,6 +922,7 @@ function renderActions() {
     if (S.ed.mateFrom) { row.replaceChildren(act(I.close, 'Cancel mate', () => { S.ed.mateFrom = null; refresh(); }, 'primary')); return; }
     if (faces === 1 && S.doc.objects.filter(o => o.shape && isShown(o)).length > 1) c.push(act(I.join, 'Mate', () => startMate()));
     const faceLinked = faces && S.ed.faces.some(f => objById(f.obj)?.link);
+    if (faces === 1) c.push(act(I.plane, 'Plane here', () => planeHere()));
     if (faces && faceLinked) { if (!c.length) c.push(act(I.measure, 'Inquiry', e => openInquiryMenu(e.currentTarget))); }
     else if (faces) c.push(...(flat ? [] : [act(I.thread, 'Thread', () => runOp(F.threadOp), 'primary')]), ...(flat ? [act(I.extrude, 'Push/Pull', () => modifier('pushpull'), prof ? '' : 'primary'), act(I.hole, 'Hole', () => runOp(F.holeOp)), act(I.recess, 'Recess', () => runOp(F.recessOp))] : []), act(I.inset, 'Shell', () => modifier('shell'), flat || prof ? '' : 'primary'), ...(flat ? [act(I.cone, 'Draft', () => runOp(F.draftOp))] : []), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)));
     if (edges) c.push(act(I.fillet, 'Fillet', () => modifier('fillet'), 'primary'), act(I.chamfer, 'Chamfer', () => modifier('chamfer')),
@@ -1558,7 +1559,28 @@ function startExtrude() {
 }
 
 // the construction plane new curves go on when not drawn on a face
-function planeLabel() { const c = S.ed.cplane; return !c || c === SK.PLANES.XY ? 'XY' : c === SK.PLANES.XZ ? 'XZ' : 'YZ'; }
+function planeLabel() {
+  const c = S.ed.cplane; if (!c || c === SK.PLANES.XY) return 'XY'; if (c === SK.PLANES.XZ) return 'XZ'; if (c === SK.PLANES.YZ) return 'YZ';
+  return c.label || 'custom';
+}
+// a drawing plane through point o with normal n (u: a world axis projected into it, so typed X/Y read naturally)
+function planeAt(o, n, label) {
+  n = M.norm(n);
+  const ref = Math.abs(n[2]) > 0.9 ? [1, 0, 0] : Math.abs(n[1]) > 0.9 ? [1, 0, 0] : [0, 1, 0];
+  let u = M.norm(M.sub(ref, M.mul(n, M.dot(ref, n)))), v = M.cross(n, u);
+  if (v[2] < -1e-9) { u = M.mul(u, -1); v = M.cross(n, u); } // the sketch's Y points up where it can
+  const cl = x => { const q = Math.round(x * 1e9) / 1e9; return Math.abs(q - x) < 1e-9 ? (q === 0 ? 0 : q) : x; };
+  return { o: o.map(cl), u: u.map(cl), v: v.map(cl), n: n.map(cl), label };
+}
+function setDrawPlane(pl, msg) { S.ed.cplane = pl; Draw.resetTool(); Draw.clearTarget(); toast(msg); renderActionsForce(); }
+// "Plane here": the plane touching the picked face at the tapped point (tangent to a curved wall), to sketch a
+// spout or a handle right where it goes
+function planeHere() {
+  const f = S.ed.faces[0]; if (!f) return;
+  const o = objById(f.obj); let n = f.n, pt = f.p;
+  try { const xf = xfFor(o), hit = K.faceAt(o.shape, xf.toL(f.p)); if (hit) { const v = hit.f.normalAt(xf.toL(f.p)), nl = M.norm([v.x, v.y, v.z]); n = M.norm(M.sub(xf.toW(M.add(xf.toL(f.p), nl)), f.p)); if (M.dot(n, f.n) < 0) n = M.mul(n, -1); } } catch (e) {}
+  setDrawPlane(planeAt(pt, n, 'on face'), 'Drawing plane set on that face — draw on it, or offset it from the Plane menu');
+}
 // pick every sketch curve joined end to end with the picked ones (a slot's two lines and two arcs)
 function chainCurves() {
   const sk = SK.sketchById(S.ed.sketch); if (!sk) return;
@@ -1588,7 +1610,14 @@ function openPlaneMenu(anchor) {
   popover(anchor, h('div', {}, h('div', { class: 'mtitle' }, 'Drawing plane'),
     menuItem(I.plane, 'Top (XY)', set(null, 'Top'), planeLabel() === 'XY' ? '✓' : ''),
     menuItem(I.plane, 'Front (XZ)', set(SK.PLANES.XZ, 'Front'), planeLabel() === 'XZ' ? '✓' : ''),
-    menuItem(I.plane, 'Right (YZ)', set(SK.PLANES.YZ, 'Right'), planeLabel() === 'YZ' ? '✓' : '')), { above: true });
+    menuItem(I.plane, 'Right (YZ)', set(SK.PLANES.YZ, 'Right'), planeLabel() === 'YZ' ? '✓' : ''),
+    h('div', { class: 'msep' }),
+    menuItem(I.plane, 'Offset this plane…', () => setTimeout(() => BR.askText(anchor, 'Offset distance (mm, − goes the other way)', '10', v => {
+      const d = parseFloat(v); if (!isFinite(d)) return toast('Type a number');
+      const c = S.ed.cplane || SK.PLANES.XY, pl = planeAt(M.add(c.o, M.mul(c.n, d)), c.n, `${planeLabel()} ${d >= 0 ? '+' : ''}${d}`);
+      pl.u = c.u.slice(); pl.v = c.v.slice();
+      setDrawPlane(pl, `Drawing plane offset ${fmtLen(d)}`);
+    }), 0))), { above: true });
 }
 function renderActionsForce() { $('#actions').dataset.k = ''; refresh(); }
 
