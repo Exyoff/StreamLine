@@ -305,14 +305,29 @@ export function shell(shape, faces, t) {
   if (!sane(r)) throw new Error('shell fallback failed');
   return r;
 }
-// axis of a cone face (chamfered hole or boss): { c, d } in local coordinates, or null
+// axis of a cone face (chamfered hole or boss): { c, d } in local coordinates, or null. (This OCCT build has
+// no gp_Cone binding, so the axis comes from one of the cone's circular edges: centre and normal.)
 export function coneAxis(face) {
   if (face.geomType !== 'CONE') return null;
-  const ad = new oc.BRepAdaptor_Surface(face.wrapped, true);
-  const ax = ad.Cone().Axis(), L = ax.Location(), D = ax.Direction();
-  const r = { c: [L.X(), L.Y(), L.Z()], d: [D.X(), D.Y(), D.Z()] };
-  ad.delete(); return r;
+  return circleAxisOf(face);
 }
+// centre, normal and radius of the largest circular edge of a face (a boss's rim, not a hole in it)
+export function circleAxisOf(face) {
+  let best = null;
+  for (const e of face.edges) {
+    if (e.geomType !== 'CIRCLE') continue;
+    try {
+      const P = [0.05, 0.38, 0.71].map(t => { const v = e.pointAt(t); return [v.x, v.y, v.z]; });
+      const u = sub3(P[1], P[0]), v = sub3(P[2], P[0]), w = cross3(u, v), w2 = dot3(w, w);
+      if (w2 < 1e-18) continue;
+      const c = P[0].map((x, k) => x + (dot3(u, u) * cross3(v, w)[k] + dot3(v, v) * cross3(w, u)[k]) / (2 * w2));
+      const R0 = Math.hypot(...sub3(P[0], c));
+      if (!best || R0 > best.R) best = { c, d: unit3(w), R: R0 };
+    } catch (err) { /* next edge */ }
+  }
+  return best;
+}
+const cross3 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 // a solid of revolution from a closed (radial, axial) profile around the axis through c along d
 export function revolveProfile(c, d, u, prof) {
   const P = prof.map(([r, t]) => [c[0] + u[0] * r + d[0] * t, c[1] + u[1] * r + d[1] * t, c[2] + u[2] * r + d[2] * t]);

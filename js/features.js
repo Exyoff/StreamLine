@@ -111,11 +111,34 @@ export function facePlane(obj, fi, camRight) {
 }
 
 // ---------- profiles ----------
+// the region a stored pick means: the one under its point — unless the sketch changed so that point now lies in
+// a different region (or none); then the region of the same area nearest to where the old one was
+function regionCentre(r) { const P = r.outer; return [P.reduce((s, q) => s + q[0], 0) / P.length, P.reduce((s, q) => s + q[1], 0) / P.length]; }
+function interiorPoint(sk, r) {
+  const c = regionCentre(r); if (SK.regionAt(sk, c) === r) return c;
+  for (const t of [0.1, 0.25, 0.5]) for (const q of r.outer) { const p = [q[0] + (c[0] - q[0]) * t, q[1] + (c[1] - q[1]) * t]; if (SK.regionAt(sk, p) === r) return p; }
+  return null;
+}
+function resolveRegion(sk, it) {
+  let r = SK.regionAt(sk, it.pt);
+  const area = x => SK.regionArea(x).area;
+  // (a region that only changed size keeps its centre, so it is still the same region)
+  if (it._a != null && (!r || (Math.abs(area(r) - it._a) > 1e-6 * Math.max(1, it._a) + 1e-9 && it._c && SK.d2(regionCentre(r), it._c) > 1e-6 + 0.05 * Math.sqrt(it._a)))) {
+    let best = null;
+    for (const q of SK.regions(sk)) {
+      const a = area(q); if (Math.abs(a - it._a) > 0.05 * it._a) continue;
+      const d = SK.d2(regionCentre(q), it._c || it.pt); if (!best || d < best.d) best = { d, q };
+    }
+    if (best) { r = best.q; const ip = interiorPoint(sk, r); if (ip) it.pt = ip; }
+  }
+  if (r) { it._a = area(r); it._c = regionCentre(r); }
+  return r;
+}
 function profileGroups(pts) {
   const groups = new Map();
   for (const it of pts) {
     const sk = SK.sketchById(it.sk); if (!sk) continue;
-    const r = SK.regionAt(sk, it.pt); if (!r) continue;
+    const r = resolveRegion(sk, it); if (!r) continue;
     const g = groups.get(sk.id) || groups.set(sk.id, { sk, regs: [], pts: [] }).get(sk.id);
     if (!g.regs.includes(r)) { g.regs.push(r); g.pts.push(it.pt); }
   }
@@ -761,23 +784,56 @@ function faceFrame(o, f0) {
   const a = M.norm(M.sub(ref, M.mul(n, M.dot(n, ref)))), b = M.cross(a, n);
   return { xf, n, a, b };
 }
-// the face moved (an earlier step changed the part): the centre moves with it
+// the exact centre a tap means: a round face's circle centre (a boss, a standoff, a screw head), or the
+// middle of a polygon face when the tap is close to it; null when the tap is just a point on the face
+function faceCentre(o, f, tapW, strict) {
+  try {
+    const xf = xfFor(o), hit = K.faceAt(o.shape, xf.toL(tapW)); if (!hit) return null;
+    const ca = K.circleAxisOf(hit.f);
+    if (ca) {
+      const cw = xf.toW(ca.c);
+      if (strict || M.dist(cw, tapW) < ca.R * 0.6) return { c: cw, how: 'circle' };
+    }
+    const c0 = hit.f.center, c = typeof c0 === 'function' ? c0() : c0, cw = xf.toW([c.x, c.y, c.z]);
+    const b = hit.f.boundingBox.bounds, dims = [0, 1, 2].map(k => b[1][k] - b[0][k]).sort((a, b2) => a - b2), inPlane = dims[1] || dims[2];
+    if (strict || M.dist(cw, tapW) < inPlane * 0.2) return { c: cw, how: 'centroid' };
+  } catch (e) { /* no centre */ }
+  return null;
+}
+// the face moved (an earlier step changed the part): a centred feature re-centres on it, others move with it
 function followCentre(p, before) {
+  const o = objById(p.obj);
+  if (p._centred && o) { const fc = faceCentre(o, p.faces[0], p.faces[0].p, true); if (fc) { [p.x, p.y, p.z] = fc.c.map(v => +v.toFixed(9)); return; } }
   const d = M.sub(p.faces[0].p, before);
   if (M.len(d) > 1e-9) [p.x, p.y, p.z] = M.add([p.x, p.y, p.z], d).map(v => +v.toFixed(9));
 }
+// a feature centred on a round face finds that face again by its circle (same radius, nearest centre),
+// so it follows a boss or standoff that moved in its sketch
+function reanchorCircle(o, p) {
+  const ci = p._circ; if (!ci) return;
+  const xf = xfFor(o); let best = null;
+  for (const fc of o.shape.faces) {
+    if (fc.geomType !== 'PLANE') continue;
+    const fn = fc.normalAt(); if (M.dot(M.norm([fn.x, fn.y, fn.z]), ci.n) < 0.9999) continue;
+    const ca = K.circleAxisOf(fc); if (!ca || Math.abs(ca.R - ci.R) > 1e-6 * Math.max(1, ci.R)) continue;
+    // prefer faces whose outline is that circle (the boss top), not a bigger face it is a hole in
+    const b = fc.boundingBox.bounds, big = Math.hypot(b[1][0] - b[0][0], b[1][1] - b[0][1], b[1][2] - b[0][2]) > ci.R * 2.9;
+    const d = M.dist(ca.c, ci.c) + (big ? 1e6 : 0); if (!best || d < best.d) best = { d, ca };
+  }
+  if (!best) return;
+  const ca = best.ca, u = M.norm(Math.abs(ci.n[2]) < 0.9 ? M.cross(ci.n, [0, 0, 1]) : M.cross(ci.n, [1, 0, 0]));
+  const pw = xf.toW(M.add(ca.c, M.mul(u, ca.R * 0.85)));
+  Object.assign(p.faces[0], { p: pw, w: M.dot(p.faces[0].n, pw) }); p._circ = { ...ci, c: ca.c };
+}
 function snapCentre(p) {
   const f = p.faces[0], st = S.settings.snap ? S.settings.snapStep : 0;
-  // a tap near the middle of the face (a screw head, a nut, a boss) takes the face's exact centre
   if (p.x == null) {
-    try {
-      const o = objById(p.obj), xf = xfFor(o), hit = K.faceAt(o.shape, xf.toL(f.p));
-      if (hit) {
-        const c0 = hit.f.center, c = typeof c0 === 'function' ? c0() : c0, cw = xf.toW([c.x, c.y, c.z]);
-        const b = hit.f.boundingBox.bounds, size = Math.hypot(b[1][0] - b[0][0], b[1][1] - b[0][1], b[1][2] - b[0][2]);
-        if (M.dist(cw, f.p) < size * 0.3) { [p.x, p.y, p.z] = cw.map(v => +v.toFixed(9)); return; }
-      }
-    } catch (e) { /* fall back to the snapped tap */ }
+    const o = objById(p.obj), fc = faceCentre(o, f, f.p, false);
+    if (fc) {
+      [p.x, p.y, p.z] = fc.c.map(v => +v.toFixed(9)); p._centred = fc.how;
+      if (fc.how === 'circle') { const xf = xfFor(o), hit = K.faceAt(o.shape, xf.toL(f.p)), ca = hit && K.circleAxisOf(hit.f); if (ca) p._circ = { c: ca.c, R: ca.R, n: locDir(xf, f.p, f.n) }; }
+      return;
+    }
   }
   if (p.x == null) { const q = st ? f.p.map(v => Math.round(v / st) * st) : f.p.slice(); const c = M.add(q, M.mul(f.n, f.w - M.dot(f.n, q))); [p.x, p.y, p.z] = c.map(v => +v.toFixed(6)); }
 }
@@ -827,6 +883,22 @@ function offFaceCheck(face, c, offs, what) {
   if (off === offs.length && offs.length > 1) return `None of the ${what}s land on the face — check the spacing and direction`;
   if (off) emit('toast', `${off} of ${offs.length} ${what}s fall outside the face`);
 }
+// how deep a drill of radius r from c along n must go to come out of the material it starts in
+function firstExit(shape, c, n, r, len) {
+  try {
+    const u = M.norm(Math.abs(n[2]) < 0.9 ? M.cross(n, [0, 0, 1]) : M.cross(n, [1, 0, 0]));
+    const core = shape.intersect(K.revolveProfile(c, n, u, [[0, -0.01], [r, -0.01], [r, len], [0, len]]));
+    if (K.isEmpty(core)) return null;
+    let best = null;
+    for (const so of core.solids?.length ? core.solids : [core]) {
+      const b = so.boundingBox.bounds, ts = [];
+      for (const x of [0, 1]) for (const y of [0, 1]) for (const z of [0, 1]) ts.push(M.dot(M.sub([b[x][0], b[y][1], b[z][2]], c), n));
+      const lo = Math.min(...ts), hi = Math.max(...ts);
+      if (lo < 0.05 && (!best || hi < best)) best = hi; // the piece that starts at the face
+    }
+    return best == null ? null : best + 0.05;
+  } catch (e) { return null; }
+}
 // cut every tool at once; a tool that misses the body is fine, an empty result is not
 function cutTools(o, tools, msg) {
   const res = guard(() => o.shape.cut(K.compound(tools)), msg);
@@ -837,10 +909,10 @@ function cutTools(o, tools, msg) {
 
 export const holeOp = {
   label: p => `Hole Ø${fmtD(p.dia)}${p.kind === 'cbore' ? ' counterbore' : p.kind === 'csink' ? ' countersink' : ''}${patternLabel(p)}`,
-  defaults: () => ({ dia: 5, depth: 0, kind: 'simple', ...patternDefaults }),
+  defaults: () => ({ dia: 5, depth: 0, thru: 'wall', kind: 'simple', ...patternDefaults }),
   prepare(p) { return flatFacePrep(p, 'hole'); },
   touch: p => ({ ids: [p.obj], mesh: true }),
-  fields: p => [lenF('dia', 'Diameter'), lenF('depth', 'Depth (0 = through)'), { key: 'kind', label: 'Type', kind: 'choice', options: [['simple', 'Simple'], ['cbore', 'Counterbore'], ['csink', 'Countersink']], wide: true },
+  fields: p => [lenF('dia', 'Diameter'), lenF('depth', 'Depth (0 = through)'), ...(p.depth > 0 ? [] : [{ key: 'thru', label: 'Through', kind: 'choice', options: [['wall', 'This wall'], ['all', 'Everything']], wide: true }]), { key: 'kind', label: 'Type', kind: 'choice', options: [['simple', 'Simple'], ['cbore', 'Counterbore'], ['csink', 'Countersink']], wide: true },
     ...(p.kind === 'cbore' ? [lenF('cbDia', 'Counterbore Ø'), lenF('cbDepth', 'Counterbore depth')] : p.kind === 'csink' ? [lenF('csDia', 'Countersink Ø'), { key: 'csAngle', label: 'Countersink angle', kind: 'ang' }] : []),
     lenF('x', 'Centre X'), lenF('y', 'Centre Y'), lenF('z', 'Centre Z'), ...patternFields(p)],
   apply(p) {
@@ -850,13 +922,16 @@ export const holeOp = {
     for (const [k, f] of [['cbDia', 1.8], ['cbDepth', 1], ['csDia', 2]]) if (p[k] == null || p._auto[k]) { p[k] = +(p.dia * f).toFixed(2); p._auto[k] = true; }
     p.csAngle ??= 90;
     const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
+    if (p._centred === 'circle') reanchorCircle(o, p);
     const before = p.faces[0].p.slice();
     const f = findFaces(o, p.faces)?.[0]; if (!f) return 'The face it was drilled into no longer exists';
     followCentre(p, before);
     const pe = patternCheck(p); if (pe) return pe;
     const fr = faceFrame(o, p.faces[0]), n = fr.n, c = fr.xf.toL([p.x, p.y, p.z]);
     const bb = o.shape.boundingBox.bounds, through = Math.hypot(...[0, 1, 2].map(k => bb[1][k] - bb[0][k])) * 2 + 10;
-    const D = p.depth > 0 ? p.depth : through, r = p.dia / 2;
+    const r = p.dia / 2;
+    // depth 0: through the wall it starts in (a port in a box side), or through everything when asked
+    const D = p.depth > 0 ? p.depth : p.thru === 'wall' ? (firstExit(o.shape, c, n, r, through) ?? through) : through /* older steps (no setting) went through all */;
     const prof = [[0, -0.01]];
     if (p.kind === 'cbore') { if (!(p.cbDia > p.dia)) return 'Counterbore Ø must be larger than the hole'; prof.push([p.cbDia / 2, -0.01], [p.cbDia / 2, p.cbDepth], [r, p.cbDepth]); }
     else if (p.kind === 'csink') { if (!(p.csDia > p.dia)) return 'Countersink Ø must be larger than the hole'; const h = (p.csDia / 2 - r) / Math.tan((p.csAngle / 2) * Math.PI / 180); prof.push([p.csDia / 2 + 0.01, -0.01], [r, h]); }
@@ -885,6 +960,7 @@ export const recessOp = {
     if (!(p.size > 0) || !(p.depth > 0)) return 'Size and depth must be > 0';
     if ((p.kind === 'slot' || p.kind === 'cross') && !(p.width > 0 && p.width < p.size)) return 'Slot width must be > 0 and smaller than the length';
     const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
+    if (p._centred === 'circle') reanchorCircle(o, p);
     const before = p.faces[0].p.slice();
     const f = findFaces(o, p.faces)?.[0]; if (!f) return 'The face for the recess no longer exists';
     followCentre(p, before);

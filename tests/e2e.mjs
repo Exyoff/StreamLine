@@ -399,6 +399,28 @@ try {
   });
   check(Math.abs(crv.v1 - crv.e1) < 1e-3 && Math.abs(crv.v2 - crv.e2) < 1e-3, `Sweep along line + arc + line is exact (${crv.v1.toFixed(2)} mm³) and rebuilds when the path is edited`);
   check(crv.ok && crv.lv > 20000 && crv.lv < 35000, `A lofted cone shells to a 1.5 mm wall (${crv.lv.toFixed(0)} mm³)`);
+  // enclosure features: a hole centred on a standoff follows it when its sketch circle moves; a port drills one wall
+  const enc = await st(() => {
+    const L = StreamLine, F = L.F, K = L.K, XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    L.runOp(F.sketchOpNew('plate', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 5000, y: 0, w: 60, h: 40 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [5005, 5] }], distance: 4, mode: 'new', target: null });
+    const pid = L.S.doc.objects.at(-1).id, v = () => K.volume(L.S.doc.objects.find(o => o.id === pid).shape);
+    L.runOp(F.sketchOpNew('so', XY(4), null, k => { F.addEntity(k, { t: 'circle', c: [5015, 15], r: 2.5 }); })); const so = L.S.ed.sketch;
+    L.runOp(F.extrude, { pts: [{ sk: so, pt: [5015, 15] }], distance: 6, mode: 'join', target: pid });
+    L.S.ed.faces = [{ obj: pid, n: [0, 0, 1], w: 10, p: [5015.4, 14.8, 10], planar: true }];
+    L.runOp(F.holeOp, { dia: 2.5, depth: 5 });
+    L.runOp(F.sketchOp('shift', so, k => { k.ents.find(e => e.t === 'circle').c = [5018, 15]; }));
+    const h = L.H.hist().filter(r => r.op === 'F.holeOp').at(-1).params, ok1 = h.x === 5018 && h.y === 15 && h.z === 10 && Math.abs(v() - (9600 + Math.PI * 6.25 * 6 - Math.PI * 1.5625 * 5)) < 1e-6;
+    L.runOp(F.sketchOpNew('box', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 5100, y: 0, w: 50, h: 30 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [5110, 5] }], distance: 20, mode: 'new', target: null });
+    const bid = L.S.doc.objects.at(-1).id, bv = () => K.volume(L.S.doc.objects.find(o => o.id === bid).shape);
+    L.S.ed.faces = [{ obj: bid, n: [0, 0, 1], w: 20, p: [5120, 10, 20], planar: true }]; L.runOp(F.shellOp, { t: 2 });
+    const b0 = bv(); L.S.ed.faces = [{ obj: bid, n: [-1, 0, 0], w: -5100, p: [5100, 12, 9], planar: true }];
+    L.runOp(F.holeOp, { dia: 6 });
+    return { ok1, h: [h.x, h.y, h.z], port: b0 - bv(), errs: L.H.hist().filter(r => r.err).map(r => r.err) };
+  });
+  check(enc.ok1 && !enc.errs.length, `A hole centred on a standoff follows it when the standoff moves in its sketch (now at ${enc.h.join(', ')})`);
+  check(Math.abs(enc.port - Math.PI * 9 * 2) < 1e-6, `A "through" port drills only the wall it starts in (${enc.port.toFixed(3)} mm³)`);
   // Mate: a pin's round face onto a hole's round face (same axis), by touch
   {
     const ids = await st(() => {
