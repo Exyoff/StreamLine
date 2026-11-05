@@ -12,13 +12,14 @@ const MODES = [['new', 'New'], ['join', 'Join'], ['cut', 'Cut'], ['intersect', '
 
 // ---------- sketches ----------
 export const newSketch = {
-  label: p => `New Sketch · ${p.face ? 'on face' : SK.PLANES[p.plane].label}`,
+  label: p => `New Sketch · ${p.face ? 'on face' : p.planeDef ? (p.planeDef.label || 'plane') : SK.PLANES[p.plane].label}`,
   defaults: () => ({ plane: 'XY', offset: 0 }),
   prepare(p) { p._id ??= S.doc.nextId; p._n ??= (S.doc.sketches || []).length + 1; },
   touch: () => ({ ids: [] }), sketchOnly: true,
-  fields: p => (p.face ? [lenF('offset', 'Offset')] : [{ key: 'plane', label: 'Plane', kind: 'choice', options: [['XY', 'XY'], ['XZ', 'XZ'], ['YZ', 'YZ']] }, lenF('offset', 'Offset')]),
+  fields: p => (p.face || p.planeDef ? [lenF('offset', 'Offset')] : [{ key: 'plane', label: 'Plane', kind: 'choice', options: [['XY', 'XY'], ['XZ', 'XZ'], ['YZ', 'YZ']] }, lenF('offset', 'Offset')]),
   apply(p) {
-    const base = p.face ? p.face.plane : SK.PLANES[p.plane];
+    // on a body's face, on an origin plane, or on a construction plane (offset / tilted / tangent: planeDef)
+    const base = p.face ? p.face.plane : p.planeDef || SK.PLANES[p.plane];
     const plane = { o: M.add(base.o, M.mul(base.n, p.offset)), u: base.u.slice(), v: base.v.slice(), n: base.n.slice() };
     if (p._id >= S.doc.nextId) S.doc.nextId = p._id + 1;
     const ents = [];

@@ -286,6 +286,7 @@ export function cancelPress() { st.press = null; st.pressAnchor = null; if (st.g
 
 // ---------- select tool: grips ----------
 function gripDown(x, y) {
+  if (studio() && S.ed.editingSketch == null) return false; // curves are changed inside their sketch (Edit sketch)
   const s = sk();
   // while a sketch is being edited every point can be dragged directly; otherwise only the selection's
   const ids = S.ed.drawSel.size || S.ed.editingSketch == null ? [...S.ed.drawSel] : s.ents.filter(e => e.t !== 'dim').map(e => e.id);
@@ -807,8 +808,8 @@ function renderSketches() {
             pm.renderOrder = 4; sg.add(pm);
           }
         }
-        if (isAct && mine) {
-          // endpoints
+        if (isAct && mine && (!stu || S.ed.editingSketch === s.id)) {
+          // endpoints (only while the sketch is open: outside it a picked curve is just highlighted)
           const pts = [];
           for (const e of s.ents) if (S.ed.drawSel.has(e.id)) for (const kp of SK.keyPoints(e)) if (kp.m || kp.center || kp.k === 'mid') pts.push(...SK.toW(s.plane, kp.p));
           const pg = new THREE.BufferGeometry(); pg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
@@ -831,7 +832,8 @@ function renderSketches() {
   sketchGroup.traverse(o => { if ((o.userData.dashed || o.userData.fatDash) && Math.abs(o.material.dashSize - dash) > dash * 0.05) { o.material.dashSize = dash; o.material.gapSize = dash * 0.6; } });
   // per-frame labels for dims + preview
   st.dimLabels = []; st.consLabels = []; // (a hidden sketch keeps no tappable labels)
-  if ((ws === 'draw' || stu) && act && !act.pending && isShown(act)) {
+  // (in the studio a sketch's dimensions and constraints show only while it is open, as in Fusion)
+  if ((ws === 'draw' || (stu && S.ed.editingSketch === act?.id)) && act && !act.pending && isShown(act)) {
     for (const d of act.ents) if (d.t === 'dim') {
       const g = dimGeom(act, d); if (!g) continue;
       const w = SK.toW(act.plane, g.mid); view.label(w, g.text, 'dim');
@@ -839,9 +841,7 @@ function renderSketches() {
     }
     st.consLabels = [];
     const seen = new Map();
-    // constraint glyphs only while the sketch is still being worked on (not once a feature consumed it)
-    const showCons = !stu || S.ed.editingSketch === act.id || H.firstUsing([act.id]) < 0;
-    for (const c of showCons ? act.cons || [] : []) {
+    for (const c of act.cons || []) {
       const e = SK.entById(act, c.a); if (!e) continue;
       const kp = SK.keyPoints(e), anchor = (kp.find(q => q.k === 'mid' || q.k === 'c' || q.k === 'ctr') || kp[0]).p;
       const n = seen.get(e.id) || 0; seen.set(e.id, n + 1);

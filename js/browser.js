@@ -364,9 +364,9 @@ const folder = (key, name, icon, count, eye, onEye) => trow({ folder: true, open
 export function browserTree() {
   const out = [], end = H.markerIndex();
   out.push(trow({ icon: I.component, name: projectName(), meta: S.settings.unit, onTap: () => {} }));
-  // Origin: the three base planes; tap one to draw on it
+  // Origin: the three base planes; tap one to start a sketch on it
   out.push(folder('origin', 'Origin', I.origin, 3, S.settings.showOrigin === true, () => ctx.setSetting('showOrigin', S.settings.showOrigin !== true)));
-  if (brOpen.origin) for (const [k, nm] of [['XY', 'XY plane'], ['XZ', 'XZ plane'], ['YZ', 'YZ plane']]) out.push(trow({ depth: 1, icon: I.plane, name: nm, sel: ctx.planeKey() === k, meta: ctx.planeKey() === k ? 'drawing here' : '', onTap: () => ctx.setPlane(k) }));
+  if (brOpen.origin) for (const [k, nm] of [['XY', 'XY plane'], ['XZ', 'XZ plane'], ['YZ', 'YZ plane']]) out.push(trow({ depth: 1, icon: I.plane, name: nm, meta: 'tap to sketch', onTap: () => ctx.setPlane(k) }));
   const bodies = S.doc.objects.filter(o => !o.link), comps = S.doc.objects.filter(o => o.link);
   out.push(folder('bodies', 'Bodies', I.cube, bodies.length, bodies.some(o => !o.hidden), () => setVisibleMany('obj', bodies.map(o => o.id), !bodies.some(o => !o.hidden))));
   if (brOpen.bodies) for (const o of bodies) out.push(trow({ depth: 1, sw: o.color, name: o.name, sel: S.ed.selected.has(o.id) && S.ed.pick === 'solid', dim: !layerVisible(o.layer), meta: o.brep ? '' : 'mesh', eye: !o.hidden, onEye: () => setVisible('obj', o.id, !!o.hidden), more: b => rowMenu(b, 'obj', o), onTap: () => ctx.selectObj(o.id) }));
