@@ -128,7 +128,7 @@ export function projectsTab(group) {
   const cur = ensureProject();
   const wrap = h('div', {});
   const nameIn = h('input', { class: 'textin', value: cur.name, enterkeyhint: 'done', autocomplete: 'off', spellcheck: 'false' });
-  nameIn.addEventListener('change', async () => { const n = nameIn.value.trim(); if (n && n !== cur.name) { cur.name = n; await saveNow(); refreshKnown(); } });
+  nameIn.addEventListener('change', async () => { const n = nameIn.value.trim(); if (n && n !== cur.name) { cur.name = n; ctx.saveLocal?.(); await saveNow(); refreshKnown(); } }); // (the autosave too, or a reload brings the old name back)
   nameIn.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') nameIn.blur(); });
   wrap.append(group('This project', nameIn,
     h('div', { class: 'btnrow', style: 'justify-content:flex-start;flex-wrap:wrap' },
@@ -157,7 +157,7 @@ function projectMenu(anchor, r, isCur) {
     h('div', { class: 'mtitle' }, r.name),
     !isCur ? menuItem(I.folder, 'Open', () => openProject(r.id)) : null,
     !isCur ? menuItem(I.plus, r.hasSolids ? 'Insert into this project' : 'Insert (no solids yet)', () => insertProject(r.id)) : null,
-    menuItem(I.sliders, 'Rename…', () => setTimeout(() => askText(anchor, 'Rename project', r.name, n => LIB.rename(r.id, n).then(() => { if (isCur) S.doc.project.name = n; refreshKnown(); ctx.renderSheet(); })), 0)),
+    menuItem(I.sliders, 'Rename…', () => setTimeout(() => askText(anchor, 'Rename project', r.name, n => LIB.rename(r.id, n).then(() => { if (isCur) { S.doc.project.name = n; ctx.saveLocal?.(); } refreshKnown(); ctx.renderSheet(); })), 0)),
     menuItem(I.dup, 'Duplicate', () => LIB.duplicate(r.id).then(() => { refreshKnown(); ctx.renderSheet(); })),
     !isCur ? h('div', { class: 'msep' }) : null,
     !isCur ? menuItem(I.trash, 'Delete…', () => setTimeout(() => confirmPop(anchor, `Delete “${r.name}”?`, 'It is removed from this device. Assemblies that use it keep their last synced copy.', 'Delete', () => LIB.remove(r.id).then(() => { refreshKnown(); ctx.renderSheet(); })), 0)) : null,

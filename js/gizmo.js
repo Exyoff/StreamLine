@@ -137,7 +137,7 @@ function hitTest(x, y) {
   const consider = (part, d) => { if (d <= HIT && (!best || d < best.d)) best = { part, d }; };
   for (const part of parts) {
     if (!part.obj.visible) continue;
-    if (part.id === 'center') { const d = Math.hypot(C.x - x, C.y - y); if (d < 18) return { part, d: 0 }; continue; }
+    if (part.id === 'center') { const d = Math.hypot(C.x - x, C.y - y); if (d < 18) return part; continue; } // (return the part itself, like every other hit)
     if (part.id === 'handle') {
       const dir = getLast().handle.dir;
       const r = segDist(x, y, C, view.project(M.add(P, M.mul(dir, s))));
