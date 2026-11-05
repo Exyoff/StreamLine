@@ -18,7 +18,7 @@ const tx = async (mode, fn) => { const d = await db(); return new Promise((res, 
 export const newId = () => 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 export async function list() {
   const all = await tx('readonly', s => s.getAll());
-  return (all || []).map(({ data, exportBrep, ...meta }) => ({ ...meta, hasSolids: !!exportBrep })).sort((a, b) => b.updated - a.updated);
+  return (all || []).map(({ data, exportBrep, parts, ...meta }) => ({ ...meta, hasSolids: !!exportBrep })).sort((a, b) => b.updated - a.updated);
 }
 export const get = id => tx('readonly', s => s.get(id));
 export const put = rec => tx('readwrite', s => s.put(rec));

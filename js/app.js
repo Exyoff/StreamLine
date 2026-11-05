@@ -361,9 +361,9 @@ async function loadAutosave() {
     if (miss.length) {
       let saved = {}; try { const rec = S.doc.project && await LIB.get(S.doc.project.id); saved = rec ? JSON.parse(rec.data).doc.components || {} : {}; } catch (e) {}
       for (const [pid, c] of miss) {
-        let brep = saved[pid]?.version === c.version ? saved[pid].brep : null;
-        if (!brep) { try { const src = await LIB.get(pid); if (src && src.version === c.version) brep = src.exportBrep; } catch (e) {} }
-        if (brep) S.doc.components[pid] = { name: c.name, version: c.version, brep };
+        let brep = saved[pid]?.version === c.version ? saved[pid].brep : null, parts = brep ? saved[pid].parts || null : null;
+        if (!brep) { try { const src = await LIB.get(pid); if (src && src.version === c.version) { brep = src.exportBrep; parts = src.parts || null; } } catch (e) {} }
+        if (brep) S.doc.components[pid] = { name: c.name, version: c.version, brep, parts };
       }
     }
     if (S.doc.objects.some(o => o.regen)) { H.resetCache(); H.regenerate(0); for (const o of S.doc.objects) delete o.regen; }
@@ -1396,7 +1396,8 @@ async function exportAs(kind) {
     const solids = objs.filter(o => o.shape);
     if (!solids.length) { toast('STEP needs exact solids (imported meshes have none)'); return; }
     // an assembly STEP: one named, coloured part per body (so CAD apps show the part names)
-    try { blob = K.R.exportSTEP(solids.map(o => ({ shape: K.worldShape(o).clone(), name: o.name, color: o.color })), { unit: 'MM' }); }
+    // (a linked sub-assembly exports its own parts, named "Seat / Slat")
+    try { blob = K.R.exportSTEP(solids.flatMap(o => PJ.partsOf(o)).map(pt => ({ shape: pt.shape(), name: pt.name, color: pt.color })), { unit: 'MM' }); }
     catch (err) {
       console.warn('assembly STEP failed, writing a plain compound', err);
       try { const shapes = solids.map(o => K.worldShape(o).clone()); blob = (shapes.length === 1 ? shapes[0] : K.R.makeCompound(shapes)).blobSTEP(); }

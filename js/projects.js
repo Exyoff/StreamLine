@@ -1,7 +1,7 @@
 // Projects on this device and assemblies: autosave into the library, open / new / duplicate / rename /
 // delete, insert another project as a linked component, and sync components when their source changed.
 import { S, emit } from './state.js';
-import { serialize, deserialize } from './scene.js';
+import { serialize, deserialize, objMatrix } from './scene.js';
 import { runOp, resetHistory } from './ops.js';
 import * as H from './history.js';
 import * as K from './kernel.js';
@@ -25,6 +25,16 @@ function exportShape() {
   if (!solids.length) return null;
   return solids.length === 1 ? solids[0] : K.R.makeCompound(solids);
 }
+// the project's parts, named and coloured (sub-assemblies expanded: "Seat / Slat"), for STEP export of
+// assemblies that contain this project
+export function partsOf(o, prefix = '') {
+  const c = o.link && (S.doc.components || {})[o.link.pid];
+  if (c && c.parts && c.parts.length > 1) return c.parts.map(pt => ({ name: `${prefix}${o.name} / ${pt.name}`, color: pt.color, shape: () => K.transformShape(K.deserialize(pt.brep), objMatrix(o)) }));
+  return [{ name: prefix + o.name, color: o.color, shape: () => K.worldShape(o).clone() }];
+}
+function exportParts() {
+  return S.doc.objects.filter(o => o.shape && !o.hidden).flatMap(o => partsOf(o)).map(pt => ({ name: pt.name, color: pt.color, brep: K.serialize(pt.shape()) }));
+}
 const sigCache = new WeakMap();
 const shapeSig = sh => { let v = sigCache.get(sh); if (!v) { v = [K.volume(sh), K.area(sh)]; sigCache.set(sh, v); } return v; };
 let saveT = 0, saving = null;
@@ -42,8 +52,9 @@ export async function saveNow() {
       const sig = S.doc.objects.filter(o => o.shape && !o.hidden).map(o => [...shapeSig(o.shape), ...o.loc, ...o.rot, ...o.scl].map(v => (+v).toFixed(5)).join(',')).join('|');
       const changed = !prev || prev.sig !== sig;
       const shp = changed ? exportShape() : null, brep = changed ? (shp ? K.serialize(shp) : null) : prev.exportBrep;
+      const parts = changed ? exportParts() : prev.parts || null;
       const rec = { id: pr.id, name: pr.name, created: prev?.created || pr.created || Date.now(), updated: changed || !prev ? Date.now() : prev.updated, version: changed ? (prev?.version || 0) + 1 : prev.version,
-        data: JSON.stringify(serialize(false)), exportBrep: brep, sig, /* full solids: opening needs no rebuild (fast) */ thumb: ctx?.view?.thumbnail?.() || prev?.thumb || null,
+        data: JSON.stringify(serialize(false)), exportBrep: brep, parts, sig, /* full solids: opening needs no rebuild (fast) */ thumb: ctx?.view?.thumbnail?.() || prev?.thumb || null,
         bodies: S.doc.objects.filter(o => o.shape).length };
       await LIB.put(rec);
       known.set(rec.id, { id: rec.id, name: rec.name, version: rec.version, updated: rec.updated, thumb: rec.thumb });
@@ -75,7 +86,7 @@ export async function insertProject(id) {
   const rec = await LIB.get(id);
   if (!rec || !rec.exportBrep) { toast('That project has no solids yet'); return; }
   if (S.doc.project && await containsProject(rec, S.doc.project.id)) { toast('That project already contains this one (directly or inside one of its parts) — inserting it would loop'); return; }
-  const def = { ...F.insertComponent, prepare(p) { S.doc.components = { ...(S.doc.components || {}), [id]: { name: rec.name, version: rec.version, brep: rec.exportBrep } }; return F.insertComponent.prepare(p); } };
+  const def = { ...F.insertComponent, prepare(p) { S.doc.components = { ...(S.doc.components || {}), [id]: { name: rec.name, version: rec.version, brep: rec.exportBrep, parts: rec.parts || null } }; return F.insertComponent.prepare(p); } };
   def.opName = F.insertComponent.opName; // recorded as the normal insert step
   if (runOp(def, { pid: id })) { ctx.closeSheet?.(); toast(`Inserted “${rec.name}” — drag it with Move, or type its position`); ctx.refresh(); }
 }
@@ -99,7 +110,7 @@ export async function syncComponent(pid) {
   runOp({
     label: () => `Sync ${rec.name}`, noRecord: true, touch: () => 'all',
     apply() {
-      S.doc.components = { ...(S.doc.components || {}), [pid]: { name: rec.name, version: rec.version, brep: rec.exportBrep } };
+      S.doc.components = { ...(S.doc.components || {}), [pid]: { name: rec.name, version: rec.version, brep: rec.exportBrep, parts: rec.parts || null } };
       const i = H.hist().findIndex(r => r.op === 'F.insertComponent' && r.params?.pid === pid);
       if (i < 0) return 'Component step missing';
       H.invalidate(i); H.regenerate(i);
