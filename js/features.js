@@ -324,7 +324,13 @@ export const bodyBoolean = {
       // subtract: the target is the biggest body (cutters are smaller) — so a pattern of cutters selected
       // first, then the blank, still cuts the blank
       // (union / intersect too: the result keeps the main body's name, colour and placement, not a tool's)
-      if (sel.every(o => o.shape)) sel.sort((a, b) => Math.abs(K.volume(K.worldShape(b))) - Math.abs(K.volume(K.worldShape(a))));
+      // equal volumes (a pattern's copies and their original): the original wins, then the first tapped — a copy as
+      // the target would vanish when the pattern's count drops
+      if (sel.every(o => o.shape)) {
+        const vol = new Map(sel.map(o => [o, Math.abs(K.volume(K.worldShape(o)))])), order = new Map(sel.map((o, i) => [o, i]));
+        sel.sort((a, b) => { const va = vol.get(a), vb = vol.get(b); if (Math.abs(va - vb) > 1e-6 * Math.max(va, vb, 1)) return vb - va;
+          return ((a.patternOf != null) - (b.patternOf != null)) || order.get(a) - order.get(b); });
+      }
       p.ids = sel.map(o => o.id);
     }
     // tools that came from a pattern follow the pattern (its copies are made again when its count changes)
@@ -1172,19 +1178,35 @@ export const mateOp = {
   fields: p => (mateGeom(p.a)?.kind === 'plane' ? [{ key: 'align', label: 'Faces', kind: 'choice', options: [['face', 'Face to face'], ['flush', 'Flush']], wide: true }, lenF('gap', 'Gap (− overlaps)')] : []),
   apply(p) { return solveMate(p); },
 };
+// would mate p (p.a's part moves onto p.b's) close a loop with the mates in list? (p.b's part already depends on p.a's)
+export function mateLoop(list, p) {
+  const dep = new Map(); for (const q of list) { if (!dep.has(q.a.obj)) dep.set(q.a.obj, []); dep.get(q.a.obj).push(q.b.obj); }
+  const seen = new Set(), stack = [p.b.obj];
+  while (stack.length) { const x = stack.pop(); if (x === p.a.obj) return true; if (seen.has(x)) continue; seen.add(x); stack.push(...(dep.get(x) || [])); }
+  return false;
+}
 // re-solve every mate in the history (after any edit), in order, twice so chains of mates settle
 export function solveMates(recs) {
-  const ms = recs.filter(r => r.op === 'F.mateOp' && !r.off && (!r.err || r.conflict));
+  let ms = recs.filter(r => r.op === 'F.mateOp' && !r.off && (!r.err || r.conflict));
   if (!ms.length) return;
   for (const r of ms) if (r.conflict) { delete r.err; r.conflict = false; }
+  // a mate whose fixed part already hangs (through other mates) off the part it moves makes a loop: the parts
+  // would chase each other — it is left out and flagged
+  const kept = [];
+  for (const r of ms) {
+    if (mateLoop(kept.map(k => k.params), r.params)) { r.err = 'Makes a loop with other mates (each part would move the other) — mate them the other way round'; r.conflict = true; }
+    else kept.push(r);
+  }
+  ms = kept;
   // earlier mates win: after each mate, the part's earlier mates are solved again (latest to earliest), so a new
   // mate that contradicts them is the one left unsatisfied (and flagged), not the hinge that was there first
   const solve = r => { try { solveMate(r.params); } catch (e) { /* keep the part where it is */ } };
   for (let pass = 0; pass < 2; pass++) ms.forEach((r, i) => { solve(r); for (let j = i - 1; j >= 0; j--) if (ms[j].params.a.obj === r.params.a.obj) solve(ms[j]); });
   // a mate left unsatisfied fights another one: say so on its step (red in History) instead of failing silently
   for (const r of ms) {
-    let off = 0; try { const v = mateSolve(r.params.a, r.params.b, +r.params.gap || 0); off = typeof v === 'string' ? 0 : M.len(v.v); } catch (e) {}
-    if (off > 1e-6) { r.err = `Conflicts with another mate (${fmtLen(off)} off) — delete or edit one of them`; r.conflict = true; }
+    let off = 0, msg = ''; try { const v = mateSolve(r.params.a, r.params.b, +r.params.gap || 0); if (typeof v === 'string') { if (/not parallel/.test(v)) msg = 'Conflicts with another mate (its faces are no longer parallel) — delete or edit one of them'; } else off = M.len(v.v); } catch (e) {}
+    if (off > 1e-6) msg = `Conflicts with another mate (${fmtLen(off)} off) — delete or edit one of them`;
+    if (msg) { r.err = msg; r.conflict = true; }
   }
 }
 
