@@ -73,6 +73,10 @@ const snapObjs = () => ({ objects: S.doc.objects.map(o => cloneObj(o)), nextId: 
 const PRES = ['name', 'color', 'hidden', 'layer'];
 // Re-run records from index `from` up to the marker. Sketches are authoritative (never replayed),
 // presentation props (name, colour, visibility, layer) survive by object id. Returns failures.
+// mates are constraints: solved again after every rebuild and edit (set by the app)
+let postSolve = null;
+export function setPostSolve(fn) { postSolve = fn; }
+export function solveConstraints() { if (postSolve) try { postSolve(hist().slice(0, markerIndex())); } catch (e) { console.warn(e); } }
 export function regenerate(from = 0) {
   const h = hist(), end = markerIndex();
   from = Math.max(0, Math.min(from, end));
@@ -100,6 +104,7 @@ export function regenerate(from = 0) {
   }
   cps[end] = snapObjs();
   cps.length = end + 1;
+  solveConstraints();
   for (const o of S.doc.objects) { const p = pres.get(o.id); if (p) for (const k of PRES) if (p[k] !== undefined) o[k] = p[k]; }
   S.doc.sketches = JSON.parse(keepSk);
   for (const [id, pl] of moved) { const k = S.doc.sketches.find(q => q.id === id); if (k) k.plane = pl; }

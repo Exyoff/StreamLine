@@ -22,7 +22,7 @@ import * as Draw from './draw.js';
 import * as Cmd from './cmdline.js';
 import { findRegion, faceRegion, faceLoops } from './modifiers.js';
 import { featureEdges, straightRun, edgeLoop } from './edges.js';
-H.registerOps('F.', F); H.registerOps('O.', OPS); H.registerFactory('setMedianOp', OPS.setMedianOp);
+H.registerOps('F.', F); H.setPostSolve(recs => F.solveMates(recs)); H.registerOps('O.', OPS); H.registerFactory('setMedianOp', OPS.setMedianOp);
 
 const DOC_KEY = 'streamline.doc.v1';
 const AXC = ['ax-x', 'ax-y', 'ax-z'];
@@ -628,7 +628,7 @@ function mateTap(x, y) {
   const from = S.ed.mateFrom; S.ed.mateFrom = null;
   const prev = S.ed.faces; S.ed.faces = []; faceTap(x, y);
   const to = S.ed.faces[0];
-  if (!to) { S.ed.faces = prev; toast('Mate cancelled'); return refresh(); }
+  if (!to) { S.ed.faces = prev; S.ed.mateFrom = from; toast('Tap a face on the other part (or Cancel mate)'); return refresh(); } // a missed tap keeps Mate armed
   if (to.obj === from.obj) { S.ed.faces = prev; S.ed.mateFrom = from; toast('Pick a face on the other body'); return refresh(); }
   const retry = m => { S.ed.mateFrom = from; S.ed.faces = prev; toast(m + ' — tap another face, or Cancel mate'); refresh(); };
   const gA = F.mateGeom(from), gB = F.mateGeom(to);
@@ -658,7 +658,7 @@ function checkInterference(objs) {
     const A = W[i], B = W[j];
     if ([0, 1, 2].some(k => A.b[1][k] < B.b[0][k] || B.b[1][k] < A.b[0][k])) continue;
     let v = 0; try { const x = A.w.intersect(B.w); v = K.isEmpty(x) ? 0 : K.volume(x); } catch (e) { continue; }
-    if (v > 1e-6) hits.push({ a: A.o, b: B.o, v });
+    if (v > 5e-3) hits.push({ a: A.o, b: B.o, v }); // (rounding-level overlaps are touching, not clashing)
   }
   if (!hits.length) { toast(`No interference between ${list.length} solids`); return; }
   S.ed.selected = new Set(hits.flatMap(x => [x.a.id, x.b.id])); S.ed.active = hits[0].a.id; S.ed.pick = 'solid';
@@ -932,7 +932,7 @@ function renderActions() {
     if (solids && !S.ed.isolate) c.push(act(I.eye, 'Isolate', () => isolate(true)));
     const linked = solids === 1 ? selectedObjs().find(o => o.link) : null;
     if (linked) c.push(act(I.history, PJ.outOfDate(linked.link.pid) ? 'Sync ●' : 'Sync', () => PJ.syncComponent(linked.link.pid), PJ.outOfDate(linked.link.pid) ? 'primary' : ''), act(I.folder, 'Open source', () => PJ.openSource(linked.link.pid)));
-    if (linked) c.push(act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; refresh(); } }), act(I.array, 'Array', () => runOp(OPS.arrayOp)), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'));
+    if (linked) c.push(act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; refresh(); } }), act(I.revolve, 'Pattern', e => openPatternMenu(e.currentTarget)), act(I.array, 'Array', () => runOp(OPS.arrayOp)), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'));
     else if (solids && selectedObjs().some(o => o.link)) c.push(act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; refresh(); } }), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger')); // linked parts are read-only
     else if (solids) c.push(act(I.union, 'Boolean', e => openBoolMenu(e.currentTarget), c.length ? '' : 'primary'), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.inset, 'Shell', () => runOp(F.shellOp)), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)), act(I.revolve, 'Pattern', e => openPatternMenu(e.currentTarget)), act(I.plane, 'Thicken', () => runOp(F.thickenOp)),
       act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; toast('Duplicated — drag the gizmo or type an offset'); refresh(); } }), act(I.array, 'Array', () => runOp(OPS.arrayOp)), act(I.join, 'Join', () => runOp(OPS.joinObjs)), act(I.apply, 'Apply', () => runOp(OPS.applyXf)), act(I.origin, 'Origin', () => runOp(OPS.setOrigin)), act(I.subdiv, 'Edit mesh', () => setPick('mesh')), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'));

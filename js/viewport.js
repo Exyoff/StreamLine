@@ -452,6 +452,12 @@ view.pickFace = (x, y, o) => {
 // world point on the ground plane (z=0) or along view plane through target
 view.groundPoint = (x, y) => {
   const r = view.ray(x, y).ray;
+  // looking along the ground (a side view): the point at the model's depth instead of a far-away intersection
+  if (Math.abs(r.direction.z) < 0.05) {
+    const tc = view.cam.target.clone().sub(r.origin).dot(r.direction), q = r.origin.clone().addScaledVector(r.direction, tc);
+    if (Math.abs(q.z) < view.worldPerPixel(q) * 12) q.z = 0; // near the ground line: on it
+    return q.toArray();
+  }
   const t = r.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), new THREE.Vector3());
   return t ? t.toArray() : null;
 };

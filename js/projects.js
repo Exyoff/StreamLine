@@ -25,6 +25,8 @@ function exportShape() {
   if (!solids.length) return null;
   return solids.length === 1 ? solids[0] : K.R.makeCompound(solids);
 }
+const sigCache = new WeakMap();
+const shapeSig = sh => { let v = sigCache.get(sh); if (!v) { v = [K.volume(sh), K.area(sh)]; sigCache.set(sh, v); } return v; };
 let saveT = 0, saving = null;
 export function scheduleLibrarySave() { clearTimeout(saveT); saveT = setTimeout(() => saveNow(), 1500); }
 export async function saveNow() {
@@ -34,13 +36,14 @@ export async function saveNow() {
   saving = (async () => {
     try {
       const prev = await LIB.get(pr.id);
-      const shp = exportShape(), brep = shp ? K.serialize(shp) : null;
       // the version only moves when the exported solids changed, so assemblies only see real updates. A rebuild can
-      // serialize the same solids a little differently, so compare their geometry (volume, area, bounds), not the text
-      const sig = shp ? (() => { const b = shp.boundingBox.bounds; return [K.volume(shp), K.area(shp), ...b[0], ...b[1]].map(v => v.toFixed(5)).join('|'); })() : '';
-      const changed = !prev || (prev.sig != null ? prev.sig !== sig : prev.exportBrep !== brep);
+      // serialize the same solids a little differently, so compare their geometry (volume, area per part, placement),
+      // measured once per shape — and only build and serialize the export when that changed (big assemblies are slow)
+      const sig = S.doc.objects.filter(o => o.shape && !o.hidden).map(o => [...shapeSig(o.shape), ...o.loc, ...o.rot, ...o.scl].map(v => (+v).toFixed(5)).join(',')).join('|');
+      const changed = !prev || prev.sig !== sig;
+      const shp = changed ? exportShape() : null, brep = changed ? (shp ? K.serialize(shp) : null) : prev.exportBrep;
       const rec = { id: pr.id, name: pr.name, created: prev?.created || pr.created || Date.now(), updated: changed || !prev ? Date.now() : prev.updated, version: changed ? (prev?.version || 0) + 1 : prev.version,
-        data: JSON.stringify(serialize(true)), exportBrep: changed || !prev ? brep : prev.exportBrep, sig, thumb: ctx?.view?.thumbnail?.() || prev?.thumb || null,
+        data: JSON.stringify(serialize(false)), exportBrep: brep, sig, /* full solids: opening needs no rebuild (fast) */ thumb: ctx?.view?.thumbnail?.() || prev?.thumb || null,
         bodies: S.doc.objects.filter(o => o.shape).length };
       await LIB.put(rec);
       known.set(rec.id, { id: rec.id, name: rec.name, version: rec.version, updated: rec.updated, thumb: rec.thumb });
@@ -71,10 +74,20 @@ export async function insertProject(id) {
   if (id === S.doc.project?.id) { toast('A project cannot contain itself'); return; }
   const rec = await LIB.get(id);
   if (!rec || !rec.exportBrep) { toast('That project has no solids yet'); return; }
-  if (rec.data && S.doc.project && rec.data.includes(`"${S.doc.project.id}":{`)) { toast('That project already contains this one — inserting it would loop'); return; }
+  if (S.doc.project && await containsProject(rec, S.doc.project.id)) { toast('That project already contains this one (directly or inside one of its parts) — inserting it would loop'); return; }
   const def = { ...F.insertComponent, prepare(p) { S.doc.components = { ...(S.doc.components || {}), [id]: { name: rec.name, version: rec.version, brep: rec.exportBrep } }; return F.insertComponent.prepare(p); } };
   def.opName = F.insertComponent.opName; // recorded as the normal insert step
   if (runOp(def, { pid: id })) { ctx.closeSheet?.(); toast(`Inserted “${rec.name}” — drag it with Move, or type its position`); ctx.refresh(); }
+}
+// does a saved project contain `target` anywhere down its tree of linked components?
+async function containsProject(rec, target, seen = new Set()) {
+  if (!rec || seen.has(rec.id)) return false; seen.add(rec.id);
+  let comps = {}; try { comps = JSON.parse(rec.data).doc.components || {}; } catch (e) { return false; }
+  for (const pid of Object.keys(comps)) {
+    if (pid === target) return true;
+    if (await containsProject(await LIB.get(pid), target, seen)) return true;
+  }
+  return false;
 }
 // bring a linked component up to its source project's latest saved version
 export async function syncComponent(pid) {
