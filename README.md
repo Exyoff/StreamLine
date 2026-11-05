@@ -80,14 +80,17 @@ A mix of Fusion 360 and Plasticity. The 3D view fills the whole screen and every
   - In a sketch: **Create**, **Modify** (Fillet, Trim, Extend, Offset, Mirror, Move, Copy, Rotate, Scale, Pattern, Construction, Delete), **Constrain** (Horizontal, Vertical, Parallel, Perpendicular, Equal, Tangent, Concentric, Fix, Dimension) and **Inspect**.
 - **Sketch bar:** while a sketch is open it takes the timeline's place: the sketch's name and plane, and **Finish Sketch** at its right end.
 - **Above the bottom bar:** the commands for what is selected (Plasticity-style). Fillet and Chamfer appear for edges; Push/Pull, Shell, Hole and Mate for faces. The row is hidden when nothing is selected.
-- **Browser:** opens from the bottom bar as a tree, like Fusion's browser. It stays open while you work, and its folders are:
+- **Browser:** opens from the bottom bar as a tree, like Fusion's browser. On a phone it sits beside the tool rail and covers only the lower part of the view, so it can stay open while you work; tap its title bar for full height. Its folders are:
   - **Origin:** the XY, XZ and YZ planes. Tap one to start a sketch on it; the eye shows them in the view.
   - **Bodies:** each with an eye, its colour and a ⋯ menu for rename, colour, isolate, layer and delete.
   - **Components:** inserted parts, with Sync and Open.
   - **Sketches:** tap one to edit it.
   - **Joints:** the mates. Tap one to edit its gap or flush setting.
   - **Layers.**
-- **Bottom right:** the view controls and the axis navigator.
+- **Right edge:** the zoom bar, with **Snap** and **X-ray** under it.
+- **Bottom right:** the orientation cube, with **Home**, **Frame** and **Perspective / Orthographic** in a slim column beside it. Nothing floats over the middle of the model.
+- **Look** (top bar) opens compact, and the model moves down under it so a theme or a light can be judged on the part.
+- **Inspect** results (Distance, Angle, Area, Radius, Point) stay in the HUD until the next tap or tool.
 
 ### Touch controls
 - **Tap** picks what is under your finger: a face, an edge, a sketch curve or region, a dimension, or a constraint glyph. A picked constraint shows the curves it ties, and **Delete** removes it.
@@ -97,7 +100,7 @@ A mix of Fusion 360 and Plasticity. The 3D view fills the whole screen and every
 - **Rotating the view:** one finger never moves the view. Turn it with the **orientation cube** at the bottom right (Fusion's ViewCube):
   - Drag the cube to turn the view.
   - Tap a face for its flat view, or an edge or corner for a 3D view.
-  - **Home** (above the cube) goes back to the 3D view of everything.
+  - **Home** (beside the cube) goes back to the 3D view of everything; **Frame** fits the selection, or everything.
 - **Zooming:** use the **zoom bar** on the right side.
   - Push its handle up to zoom in, or down to zoom out. The further you push, the faster it zooms, and the handle springs back to the middle.
   - **+** and **−** zoom by steps.
@@ -116,6 +119,7 @@ A mix of Fusion 360 and Plasticity. The 3D view fills the whole screen and every
 - **Create Sketch** shows the three origin planes, named, around the origin; tap a plane, its name, a flat face of a body, or one of the plane buttons above the bottom bar (XY · Top, XZ · Front, YZ · Right, and the construction plane if you made one). **Cancel** or `Esc` stops.
 - The view turns to look straight at the new sketch, and the Create tools fill the rail. The HUD counts curves and profiles and says how many degrees of freedom are left.
 - Dimensions, constraint glyphs and the little square points on curve ends show only while the sketch is open.
+- After a line's first segment, its card switches the next one between **Line** and **Tangent arc** (a slot, a hook, a rounded profile in one chain).
 - **Finish Sketch** returns to the part and the view you had. Undoing the sketch's creation, or deleting it, finishes it too.
 - Reopen a sketch from the timeline, the Browser's Sketches folder, or **Edit sketch** on one of its picked curves.
 - On the AutoCAD command line a drawing command (`L`, `C`, `REC` …) typed outside a sketch opens one on the current construction plane, so typed coordinates keep working.

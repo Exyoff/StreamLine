@@ -665,9 +665,10 @@ function bindPointer() {
     if (pts.size === 1) {
       moved = false; startT = performance.now(); multiTap = null;
       if (e.pointerType === 'mouse' && (e.button === 1 || e.button === 2 || e.shiftKey)) mode = 'pan';
-      else if (view.handlers.dragStart && view.handlers.dragStart(p.x, p.y, e)) mode = 'gizmo';
-      // a small control drawn over the view (a gizmo's value bubble): held or slid a little it is still a tap on it
+      // a small control drawn over the view (a value bubble, a dimension, a constraint glyph) comes first — it sits on
+      // top of the curves' drag points — and held or slid a little it is still a tap on it
       else if (view.handlers.pressTarget?.(p.x, p.y)) mode = 'target';
+      else if (view.handlers.dragStart && view.handlers.dragStart(p.x, p.y, e)) mode = 'gizmo';
       else { mode = 'pending'; if (e.pointerType !== 'mouse') holdT = setTimeout(() => startCursor(p.x, p.y), 320); }
     } else if (pts.size === 2) {
       clearTimeout(holdT);

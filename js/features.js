@@ -843,6 +843,7 @@ function coaxialCylinder(shape, ax) {
   return best?.cy || null;
 }
 // Thread: a true helical thread on a cylindrical face — external (shaft) or internal (hole), detected from the face
+const threadLen = (span, d, P) => +Math.min(span, 2 * d + 6, 16 * P).toFixed(6);
 export const threadOp = {
   shrink: 'length', shrinkTries: 3, // a thread that cannot be cut over the default length is tried shorter
   label: p => `Thread ${p._internal ? 'internal ' : ''}M${fmtD(p.size || p._d || 0)}×${fmtD(p.pitch || 0)}`,
@@ -858,9 +859,13 @@ export const threadOp = {
     p._d = 2 * cy.R; p._axis = { c: cy.c, d: cy.d, R: cy.R };
     // nominal size: a shaft is threaded at its diameter; a hole at its tap-drill size becomes that thread (Ø6.8 → M8)
     p.size ??= p._internal ? (tapNominal(p._d) ?? p._d) : p._d;
-    // start at the end nearest the tap, over a typical length (2·d + 6, or the whole face if shorter)
+    // start at the end nearest the tap, over a typical length: 2·d + 6 (ISO bolts), at most 16 turns (a big lid's
+    // thread is short; 33 turns of Ø110 took half a minute), or the whole face if shorter. Until a length is typed it
+    // follows the pitch.
     const tl = M.dot(M.sub(pl, cy.c), cy.d); p._tapEnd = Math.abs(cy.t1 - tl) <= Math.abs(tl - cy.t0);
-    p.pitch ??= isoPitch(p.size); p.length ??= +Math.min(cy.t1 - cy.t0, 2 * p.size + 6).toFixed(6); p.fromEnd ??= p._tapEnd; p.left ??= false;
+    p.pitch ??= isoPitch(p.size);
+    if (p.length == null) { p.length = threadLen(cy.t1 - cy.t0, p.size, p.pitch); p._auto = { ...(p._auto || {}), length: true }; p._autoP = p.pitch; }
+    p.fromEnd ??= p._tapEnd; p.left ??= false;
   },
   touch: p => ({ ids: [p.obj], mesh: true }),
   fields: p => [...(p._internal ? [lenF('size', 'Thread size (M)')] : []), lenF('pitch', 'Pitch'), lenF('length', 'Length'), { key: 'fromEnd', label: 'Starts at', kind: 'choice', options: p._tapEnd == null ? [[true, 'One end'], [false, 'Other end']] : [[p._tapEnd, 'The end you tapped'], [!p._tapEnd, 'The other end']], wide: true }, { key: 'left', label: 'Left-hand', kind: 'bool' }],
@@ -871,6 +876,7 @@ export const threadOp = {
     if (!cy && p._axis) cy = coaxialCylinder(o.shape, p._axis); // the hole or shaft changed size or moved
     if (!cy) return 'The cylindrical face it used no longer exists';
     p._axis = { c: cy.c, d: cy.d, R: cy.R };
+    if (p._auto?.length && p._autoP !== p.pitch) { p.length = threadLen(cy.t1 - cy.t0, p.size, p.pitch); p._autoP = p.pitch; }
     const span = cy.t1 - cy.t0, L = Math.min(Math.max(p.length, p.pitch * 2), span);
     if (L < p.pitch * 2) return 'The face is too short for this pitch';
     const internal = p._internal, P = p.pitch;

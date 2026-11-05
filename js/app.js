@@ -76,16 +76,16 @@ async function boot() {
   resetHistory();
   bindEvents();
   // what Frame should keep clear: the tool rail on the left, the top bar, and the controls along the bottom
-  view.insets = () => {
+  view.insets = ({ hud: withHud = true } = {}) => {
     const vr = $('#viewport').getBoundingClientRect(), vis = el => el && !el.hidden && el.offsetParent !== null && el.getBoundingClientRect();
     const rail = vis($('#toolrail')), top = vis($('#topbar')), tl = vis($('#timeline')) || vis($('#skbar')), zb = vis($('#zoombar'));
     const l = rail && rail.left < vr.width / 2 ? rail.right - vr.left : 0;
     // (the top bar and the history timeline under it; the draw card shifts the picture itself, see renderLastOp)
-    const hudEl = $('#hud'), hud = vis(hudEl), hb = hud && hudEl.textContent.trim() ? hud.bottom - vr.top : 0; // (and the HUD's lines under them)
+    const hudEl = $('#hud'), hud = withHud && vis(hudEl), hb = hud && hudEl.textContent.trim() ? hud.bottom - vr.top : 0; // (and the HUD's lines under them)
     const t = Math.max(top ? top.bottom - vr.top : 0, tl ? tl.bottom - vr.top : 0, hb);
     const r = zb && zb.left > vr.width / 2 ? vr.right - zb.left : 0; // the zoom bar on the right
     // (the cube and view tools ride up above the command line when it is open: they still keep the model clear)
-    const bottoms = ['#stationbar', '#vtools-r', '#nav', '#lastop', '#cmdbar'].map(q => vis($(q))).filter(Boolean).map(r => r.top - vr.top).filter(y => y > vr.height * 0.3);
+    const bottoms = ['#stationbar', '#vtools-c', '#nav', '#lastop', '#cmdbar'].map(q => vis($(q))).filter(Boolean).map(r => r.top - vr.top).filter(y => y > vr.height * 0.3);
     const b = bottoms.length ? vr.bottom - vr.top - Math.min(...bottoms) : 0;
     return { l: Math.max(0, l), r: Math.max(0, r), t: Math.max(0, t), b: Math.max(0, b) };
   };
@@ -638,6 +638,7 @@ function regionOrFaceTap(x, y) {
 }
 function onTap(x, y) {
   lastViewportTap = performance.now();
+  if (S.ed.inquiry && !Draw.EDIT_TOOLS.has(S.ed.tool)) S.ed.inquiry = null; // (a measurement's result stays up until the next tap)
   if (keypadOpen()) { closeKeypad(false); return; }
   if (sheetOpen && !document.body.classList.contains('sheet-docked')) { toggleSheet(false); return; }
   if (S.ed.planePick) return planePickTap(x, y);
@@ -699,21 +700,22 @@ function bodyTap(x, y) {
   return selectionChanged();
 }
 // (the pick as it stands: a tap counts as "the same spot again" only if nothing else changed the pick since)
-// (and the view as it stands: after a turn or a frame the same pixel is somewhere else on the model)
-const pickSig = () => JSON.stringify([S.ed.pick, S.ed.faces.map(f => [f.obj, f.p]), S.ed.edges.map(e => [e.obj, e.p || e.a]), [...S.ed.selected], [...S.ed.drawSel], S.ed.profiles,
-  ((c) => [c.yaw, c.pitch, c.dist, c.target.x, c.target.y, c.target.z].map(v => +v.toFixed(5)).concat(c.ortho))(view.cam)]);
+const pickSig = () => JSON.stringify([S.ed.pick, S.ed.faces.map(f => [f.obj, f.p]), S.ed.edges.map(e => [e.obj, e.p || e.a]), [...S.ed.selected], [...S.ed.drawSel], S.ed.profiles]);
 let lastTap = null;
 function smartTap(x, y) {
   smartTapInner(x, y);
-  lastTap = { x, y, sig: pickSig() };
+  // (and the point of the model under the finger: after a turn or a frame the same pixel is somewhere else)
+  const hit = view.pickObject(x, y);
+  lastTap = { x, y, sig: pickSig(), w: hit ? (Array.isArray(hit.point) ? hit.point.slice() : hit.point.toArray()) : null };
 }
+const sameSpot = (x, y) => { if (!lastTap?.w) return true; const q = view.project(lastTap.w); return q.front && Math.hypot(q.x - x, q.y - y) < 12; };
 function smartTapInner(x, y) {
   const lock = S.ed.pickLock || (S.ed.multi && hasPicks() ? S.ed.pick : null);
   if (lock === 'edge') return curveOrEdgeTap(x, y);
   if (lock === 'face') return regionOrFaceTap(x, y);
   if (lock === 'solid') return bodyTap(x, y);
   // the same spot tapped again: the next thing under the finger — edge → face → body → edge
-  const again = lastTap && Math.hypot(x - lastTap.x, y - lastTap.y) < 12 && !S.ed.multi && hasPicks() && lastTap.sig === pickSig();
+  const again = lastTap && Math.hypot(x - lastTap.x, y - lastTap.y) < 12 && !S.ed.multi && hasPicks() && lastTap.sig === pickSig() && sameSpot(x, y);
   if (again && S.ed.editingSketch == null && !S.ed.drawSel.size && !S.ed.profiles.length) {
     const hit = view.pickObject(x, y);
     if (S.ed.pick === 'edge' && S.ed.edges.length && hit) { setPickKind('face'); return faceTap(x, y); }
@@ -880,6 +882,7 @@ function cmdSetTool(t, m) {
   setTool(t, m);
 }
 function setTool(t, m) {
+  S.ed.inquiry = null;
   if (SKETCH_TOOLS.has(t) && S.ed.workspace === 'model' && !sketching()) { if (m) Draw.drawMode[t] = m; startCreateSketch(t); return; }
   // (tapping the active tool again just starts it over; its mode is chosen on the tool card)
   if (m) Draw.drawMode[t] = m;
@@ -1568,6 +1571,7 @@ function renderHud() {
     else if (S.ed.consTool) parts.push(`<b>${CONS_NAME[S.ed.consTool]}</b> · tap ${CONS_NEED[S.ed.consTool] === 1 ? 'a curve' : `two curves (${S.ed.drawSel.size}/2)`}`, 'Pick another constraint, or Select to stop');
     else if (S.ed.pickLock && !hasPicks()) parts.push(`<b>Tap ${S.ed.pickLock === 'edge' ? 'edges' : S.ed.pickLock === 'face' ? 'a face' : 'a body'}</b>`, S.ed.pendingRun ? 'The command goes on once you tap it' : 'Then choose the command again');
     else if (drawing) parts.push(`<b>${{ dist: 'Distance', id: 'Point', list: 'List' }[S.ed.tool] || S.ed.tool[0].toUpperCase() + S.ed.tool.slice(1)}</b> · tap points on the model or the grid`);
+    else if (S.ed.inquiry) { const [head, ...rest] = S.ed.inquiry.replace(/^[A-Z]+\s+/, '').split(/,\s+/).map(x => esc(x.replace(/\s*=\s*/, ' '))); parts.push(`<b>${head}</b>`, rest.join(' · ')); }
     else if (bodyName) parts.push(`<b>${esc(bodyName)}</b> · whole body selected`, 'Tap it again for the face under your finger');
     else if (sel.length) parts.push(`<b>${sel.join(', ')}</b>`, S.ed.faces.length === 1 && !S.ed.multi ? 'Tap the face again for its whole body' : S.ed.multi ? 'Multi-select: taps add or remove' : '');
     else if (!S.doc.objects.length && !(S.doc.sketches || []).length) parts.push('<b>Sketch</b> to start: tap a plane, draw, then <b>Finish Sketch</b>', '<span class="kbhint">Space or 🔍 for commands</span>');
@@ -1720,8 +1724,11 @@ function renderLastOp() {
     const dcOff = dcTop ? -Math.max(0, dc.getBoundingClientRect().bottom - $('#topbar').getBoundingClientRect().bottom) / 2 : 0;
     // move the model out from under the dialog: centred in the room left between the timeline and the card (half the
     // card's height pushed it up under the timeline and the HUD)
-    const ins = view.insets?.() || { t: 0, b: 0 };
-    const off = docked ? Math.max(0, (ins.b - ins.t) / 2) : dcOff, offX = side ? -(el.offsetWidth + 40) / 2 : 0;
+    // (not counting the HUD: its lines come and go, and the model must not jump while a card is open)
+    const ins = view.insets?.({ hud: false }) || { t: 0, b: 0 };
+    // (with the Look panel open the model moves down into the room under it, so themes and lights can be judged)
+    const look = !!document.querySelector('#popover:not([hidden]) .lookpop') && $('#popover').getBoundingClientRect(), vtop = $('#viewport').getBoundingClientRect().top;
+    const off = look ? -Math.max(0, (look.bottom - vtop - ins.t) / 2) : docked ? Math.max(0, (ins.b - ins.t) / 2) : dcOff, offX = side ? -(el.offsetWidth + 40) / 2 : 0;
     if (Math.abs((view.offsetY || 0) - off) > 1 || Math.abs((view.offsetX || 0) - offX) > 1) { view.offsetY = off; view.offsetX = offX; view.render(); }
   });
   if (!show) return;
@@ -1768,6 +1775,8 @@ function toggleBrowser(force) {
   browserOpen = force ?? !browserOpen;
   if (browserOpen && sheetOpen && !document.body.classList.contains('sheet-docked')) toggleSheet(false);
   $('#browser').classList.toggle('open', browserOpen); $('#browser').setAttribute('aria-hidden', String(!browserOpen));
+  // (its title bar lets it out to full height and back)
+  $('#browser .br-head').onclick = e => { if (!e.target.closest('button')) $('#browser').classList.toggle('tall'); };
   document.body.classList.toggle('has-browser', browserOpen);
   if (browserOpen) renderBrowser();
   refresh();
@@ -1925,7 +1934,8 @@ function openLook() {
   const body = h('div', { class: 'lookpop' });
   const fill = () => body.replaceChildren(h('div', { class: 'mtitle' }, 'Look'), ...lookGroups(fill));
   fill();
-  popover($('#btn-look'), body, { align: 'right' });
+  popover($('#btn-look'), body, { align: 'right', onClose: () => refresh() });
+  refresh();
 }
 function settingsTab() {
   const set = (k, v) => { S.settings[k] = v; saveSettings(); if (k === 'xray') view.applyXray(); refresh(); renderSheet(); };

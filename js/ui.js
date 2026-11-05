@@ -162,7 +162,7 @@ export const fmtField = { fmtLen, fmtAng, fmtNum };
 
 // ---------- popover ----------
 let popClose = null;
-export function popover(anchor, content, { align = 'left', above = false } = {}) {
+export function popover(anchor, content, { align = 'left', above = false, onClose = null } = {}) {
   closePopover();
   const pop = $('#popover'), scrim = $('#scrim');
   pop.replaceChildren(content); pop.hidden = false; scrim.hidden = false;
@@ -173,7 +173,7 @@ export function popover(anchor, content, { align = 'left', above = false } = {})
   if (y + ph > window.innerHeight - 10) y = Math.max(10, r.top - ph - 8);
   if (y < 10) y = 10;
   pop.style.left = x + 'px'; pop.style.top = y + 'px';
-  popClose = () => { pop.hidden = true; scrim.hidden = true; popClose = null; };
+  popClose = () => { pop.hidden = true; scrim.hidden = true; popClose = null; onClose && onClose(); };
   scrim.onclick = closePopover;
 }
 export function closePopover() { popClose && popClose(); }

@@ -146,7 +146,6 @@ body.has-cmd #viewport { --cmdh: 128px; }
 /* view controls: glass column + axis navigator, bottom right */
 #nav { position: absolute; right: calc(var(--sar) + 8px); bottom: calc(var(--bot) + var(--cmdh) + var(--tlh) + 8px); touch-action: none; }
 .vcol { position: absolute; display: flex; flex-direction: column; gap: 2px; }
-#vtools-r { right: calc(var(--sar) + 112px); bottom: calc(var(--bot) + var(--cmdh) + var(--tlh) + 14px); display: grid; grid-template-columns: 44px 44px; gap: 2px; padding: 4px; border-radius: 26px; }
 .fab { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; position: relative; transition: transform .15s, background .2s; }
 .fab:active { transform: scale(.92); }
 .fab.on { background: var(--accent); color: var(--accent-ink); }
@@ -396,7 +395,7 @@ body:has(#popover:not([hidden])) #toast { opacity: 0; }
   #topbar { gap: 6px; padding-left: calc(var(--sal) + 10px); padding-right: calc(var(--sar) + 10px); }
   /* the op dialog docks at the bottom, above the timeline; the view shifts up to keep the model visible */
   body.ws-model #lastop { top: auto; bottom: calc(var(--bot) + var(--cmdh) + var(--tlh) + 6px); left: calc(var(--sal) + 86px); right: calc(var(--sar) + 10px); width: auto; max-width: none; max-height: 48%; }
-  body.ws-model.has-lastop #vtools-r, body.ws-model.has-lastop #nav { visibility: hidden; }
+  body.ws-model.has-lastop #vtools-c, body.ws-model.has-lastop #nav { visibility: hidden; }
   body.has-lastop #toast { top: calc(var(--topH) + 52px); }
   #draw-card { left: calc(var(--sal) + 86px); right: calc(var(--sar) + 10px); width: auto; max-width: none; }
 }
@@ -432,7 +431,6 @@ body:has(#popover:not([hidden])) #toast { opacity: 0; }
   body.has-tl #viewport { --tlh: 50px; }
   #timeline { height: 42px; }
   #statusbar { display: none; }
-  #vtools-r { grid-template-columns: repeat(4, 44px); }
   /* two-column icon rail so every tool stays reachable */
   #toolrail { width: 124px; top: calc(var(--topH) - 2px); border-radius: 24px; }
   #toolrail #tools { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; align-content: start; }
@@ -504,7 +502,7 @@ body:has(#popover:not([hidden])) #toast { opacity: 0; }
 .btn.small { height: 30px; padding: 0 12px; font-size: 13px; }
 .btn.danger { background: var(--danger); color: #fff; }
 /* phone: view controls step aside while a draw card is open */
-@media (max-width: 500px) { body.has-drawcard #vtools-r, body.has-drawcard #nav { visibility: hidden; } }
+@media (max-width: 500px) { body.has-drawcard #vtools-c, body.has-drawcard #nav { visibility: hidden; } }
 
 /* boot: the CAD kernel loads before the app starts */
 #boot { position: fixed; inset: 0; z-index: 100; display: grid; place-content: center; justify-items: center; gap: 14px; background: var(--bg); color: var(--muted); font-size: 14px; transition: opacity .35s; }
@@ -581,7 +579,19 @@ body.has-handle #toast.show { transform: translate(-50%, 0) scale(1); }
 .swatch .ball { height: 52px; border-radius: 11px; background: var(--well); display: grid; place-items: center; }
 .swatch .ball span { width: 38px; height: 38px; border-radius: 50%; display: block; }
 .lookpop { width: min(360px, calc(100vw - 28px)); padding: 0 8px 4px; }
-.lookpop .group { margin-bottom: 14px; }
+/* (Look stays short so the model shows under it while you try themes and lighting) */
+.popover:has(.lookpop) { max-height: min(52%, 460px); }
+.lookpop .group { margin-bottom: 10px; }
+/* compact: the four themes in one row, the lights in another (the model stays in view below) */
+.lookpop .swatches { grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.lookpop .swatches.three { grid-template-columns: repeat(3, 1fr); }
+.lookpop .swatch { padding: 5px; gap: 4px; font-size: 11.5px; border-radius: 13px; }
+.lookpop .swatch .pv { height: 28px; border-radius: 8px; }
+.lookpop .swatch .pv b { left: 6px; top: 6px; width: 18px; height: 6px; }
+.lookpop .swatch .pv i { right: 6px; bottom: 6px; width: 12px; height: 12px; }
+.lookpop .swatch small { display: none; }
+.lookpop .swatch .ball { height: 38px; border-radius: 9px; }
+.lookpop .swatch .ball span { width: 28px; height: 28px; }
 .lookpop .mtitle { padding-left: 4px; }
 .field.row4 .seg { flex-wrap: nowrap !important; }
 .field.row4 .seg > button { flex: 1 1 0 !important; min-width: 0 !important; padding: 0 4px; }
@@ -610,13 +620,17 @@ body.has-handle #toast.show { transform: translate(-50%, 0) scale(1); }
 .tl-empty { font-size: 12.5px; color: var(--faint); padding: 0 10px; white-space: nowrap; }
 
 /* ---------- Browser: Fusion-style tree in a sheet that rises from the bottom bar ---------- */
+/* (on a phone it leaves the tool rail and the top half of the model in view, so it can stay open while you work;
+   its title bar's grabber lets it out to full height) */
 #browser {
-  position: fixed; z-index: 21; left: calc(var(--sal) + 8px); right: calc(var(--sar) + 8px); bottom: calc(var(--sab) + 70px);
-  height: min(64%, 560px); border-radius: 26px; display: flex; flex-direction: column; overflow: hidden;
+  position: fixed; z-index: 21; left: calc(var(--sal) + 86px); right: calc(var(--sar) + 8px); bottom: calc(var(--sab) + 70px);
+  height: min(44%, 400px); border-radius: 26px; display: flex; flex-direction: column; overflow: hidden;
   background: var(--glass-sheen), var(--glass-strong);
   transform: translateY(calc(100% + 90px)); transition: transform .34s cubic-bezier(.2,.9,.2,1); pointer-events: none;
 }
 #browser.open { transform: none; pointer-events: auto; }
+#browser.tall { height: min(72%, 620px); }
+#browser .br-grab { position: absolute; left: 50%; top: 5px; width: 36px; height: 5px; margin-left: -18px; border-radius: 3px; background: var(--faint); opacity: .7; }
 .br-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 8px 6px 18px; }
 .br-title { flex: 1; font-weight: 700; font-size: 16px; letter-spacing: -.01em; }
 .br-head .ib { width: 36px; height: 36px; background: var(--fill); }
@@ -660,24 +674,32 @@ body.has-handle #toast.show { transform: translate(-50%, 0) scale(1); }
 
 /* ---------- view: orientation cube + home, vertical zoom bar ---------- */
 #nav { width: 104px; height: 104px; }
-#btn-home { position: absolute; z-index: 2; width: 32px; height: 32px; right: calc(var(--sar) + 86px); bottom: calc(var(--bot) + var(--cmdh) + var(--tlh) + 90px); }
-#btn-home svg { width: 17px; height: 17px; }
-#vtools-r { right: calc(var(--sar) + 122px); }
+/* Home, Frame and Persp in a slim column beside the cube (nothing floats over the middle of the model) */
+#vtools-c { position: absolute; z-index: 2; right: calc(var(--sar) + 116px); bottom: calc(var(--bot) + var(--cmdh) + var(--tlh) + 10px); display: flex; flex-direction: column; gap: 4px; }
+#vtools-c .circ { width: 32px; height: 32px; }
+#vtools-c svg { width: 17px; height: 17px; }
+#vtools-c .tag { display: none; }
+/* the zoom bar, with Snap and X-ray under it: one column on the right edge, between the HUD and the cube */
 #zoombar {
-  position: absolute; z-index: 2; right: calc(var(--sar) + 10px); width: 44px; height: 196px; border-radius: 22px;
-  top: calc((var(--topH) + 100% - var(--bot) - 120px) / 2 - 98px);
+  position: absolute; z-index: 2; right: calc(var(--sar) + 10px); width: 44px; border-radius: 22px;
+  top: calc(var(--topH) + 44px); bottom: calc(var(--bot) + var(--cmdh) + var(--tlh) + 124px); max-height: 330px; margin: auto 0;
   display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 4px 0; touch-action: none;
 }
-.zb-btn { width: 36px; height: 30px; border-radius: 15px; font: 600 20px/1 var(--font); color: var(--muted); }
+.zb-sep { flex: none; width: 22px; height: 1px; margin: 4px 0; background: var(--line); }
+.zb-tool { flex: none; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); }
+.zb-tool svg { width: 19px; height: 19px; }
+.zb-tool.on { background: var(--accent); color: var(--accent-ink); }
+.zb-tool:active { transform: scale(.92); }
+.zb-btn { flex: none; width: 36px; height: 30px; border-radius: 15px; font: 600 20px/1 var(--font); color: var(--muted); }
 .zb-btn:active { background: var(--fill-2); color: var(--text); }
-.zb-track { position: relative; flex: 1; width: 100%; display: grid; place-items: center; touch-action: none; }
+.zb-track { position: relative; flex: 1; min-height: 64px; width: 100%; display: grid; place-items: center; touch-action: none; }
 .zb-track::before { content: ''; position: absolute; top: 6px; bottom: 6px; left: 50%; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--line); }
 .zb-track::after { content: ''; position: absolute; left: 50%; top: 50%; width: 14px; height: 2px; margin: -1px 0 0 -7px; background: var(--faint); }
 .zb-thumb { position: relative; z-index: 1; width: 32px; height: 32px; border-radius: 50%; background: var(--accent); box-shadow: var(--accent-glow), inset 0 1px 0 rgba(255,255,255,.25); transition: transform .22s cubic-bezier(.2,.9,.3,1.3); }
 .zb-thumb::before { content: ''; position: absolute; left: 9px; right: 9px; top: 12px; height: 8px; border-top: 2px solid rgba(255,255,255,.75); border-bottom: 2px solid rgba(255,255,255,.75); }
 .zb-thumb.held { transition: none; }
-body.ws-model.has-lastop #zoombar, body.has-drawcard #zoombar, body.has-lastop #btn-home, body.has-drawcard #btn-home { visibility: hidden; }
-@media (min-width: 501px) { body.ws-model.has-lastop #zoombar, body.has-drawcard #zoombar, body.has-lastop #btn-home, body.has-drawcard #btn-home { visibility: visible; } }
+body.ws-model.has-lastop #zoombar, body.has-drawcard #zoombar, body.has-lastop #vtools-c, body.has-drawcard #vtools-c { visibility: hidden; }
+@media (min-width: 501px) { body.ws-model.has-lastop #zoombar, body.has-drawcard #zoombar, body.has-lastop #vtools-c, body.has-drawcard #vtools-c { visibility: visible; } }
 
 /* ---------- precision cursor + magnifier (hold a finger on the view) ---------- */
 #pcursor { position: absolute; z-index: 9; left: 0; top: 0; width: 44px; height: 44px; margin: -22px 0 0 -22px; pointer-events: none; }
