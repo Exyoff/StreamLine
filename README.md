@@ -120,6 +120,7 @@ A mix of Fusion 360 and Plasticity. The 3D view fills the whole screen and every
 - The view turns to look straight at the new sketch, and the Create tools fill the rail. Turned away with the cube, **Home** looks straight at the sketch again (Fusion's Look At). The HUD counts curves and profiles and says how many degrees of freedom are left.
 - Dimensions, constraint glyphs and the little square points on curve ends show only while the sketch is open.
 - After a line's first segment, its card switches the next one between **Line** and **Tangent arc** (a slot, a hook, a rounded profile in one chain).
+- **Project** (Create set) brings a body's edge or face into the open sketch as purple reference geometry, from the exact B-rep: a straight edge as a line, a circle or arc parallel to the sketch as that exact circle or arc, other curves as the outline seen along the sketch's normal. Snap to it, dimension against it, or let it close a profile; a curve already there is not added twice.
 - **Finish Sketch** returns to the part and the view you had. Undoing the sketch's creation, or deleting it, finishes it too.
 - Reopen a sketch from the timeline, the Browser's Sketches folder, or **Edit sketch** on one of its picked curves.
 - On the AutoCAD command line a drawing command (`L`, `C`, `REC` …) typed outside a sketch opens one on the current construction plane, so typed coordinates keep working.

@@ -272,6 +272,52 @@ function sketchOnFace(o, tri) {
   const W = worldVerts(o), reg = regionOf(o, tri), loops = faceLoops(W, o.mesh.f, reg);
   createSketchOn({ face: { obj: o.id, plane, loops } });
 }
+// ---------- Project (Fusion): a body's edge or face into the open sketch, as purple reference geometry ----------
+// from the exact B-rep edges: a straight edge comes in as a line, a circle or arc lying parallel to the sketch as the
+// exact circle or arc, any other curve as the lines of its outline seen along the sketch's normal
+function edgeToSketch(pl, E, xf) {
+  const W = v => xf.toW([v.x, v.y, v.z]), at = t => W(E.pointAt(t)), toP = w => SK.toP(pl, w);
+  const d2 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]), cl = x => { const q = Math.round(x * 1e9) / 1e9; return Math.abs(q - x) < 1e-9 ? q || 0 : x; }, c2 = q => q.map(cl);
+  if (E.geomType === 'LINE') { const a = toP(W(E.startPoint)), b = toP(W(E.endPoint)); return d2(a, b) > 1e-9 ? [{ t: 'line', a: c2(a), b: c2(b) }] : []; }
+  if (E.geomType === 'CIRCLE') {
+    const A = at(0), B = at(1 / 3), C = at(2 / 3), u = M.sub(B, A), v = M.sub(C, A), w = M.cross(u, v), w2 = M.dot(w, w);
+    if (w2 > 1e-18 && Math.abs(M.dot(M.norm(w), pl.n)) > 1 - 1e-9) {
+      const c3 = M.add(A, M.mul(M.add(M.mul(M.cross(w, u), M.dot(v, v)), M.mul(M.cross(v, w), M.dot(u, u))), 1 / (2 * w2)));
+      const c = c2(toP(c3)), r = cl(M.dist(A, c3)), Z = at(1);
+      if (M.dist(A, Z) < 1e-9 * Math.max(1, r)) return [{ t: 'circle', c, r }];
+      const ang = q => Math.atan2(q[1] - c[1], q[0] - c[0]), a0 = ang(toP(A)), a1 = ang(toP(Z)), am = ang(toP(at(0.5)));
+      const ccw = (from, to, x) => { const T = 2 * Math.PI, sw = ((to - from) % T + T) % T, t = ((x - from) % T + T) % T; return t <= sw; };
+      return [ccw(a0, a1, am) ? { t: 'arc', c, r, a0, a1 } : { t: 'arc', c, r, a0: a1, a1: a0 }];
+    }
+  }
+  const Q = []; for (let i = 0; i <= 32; i++) { const q = toP(at(i / 32)); if (!Q.length || d2(q, Q.at(-1)) > 1e-9) Q.push(q); }
+  return Q.slice(1).map((q, i) => ({ t: 'line', a: c2(Q[i]), b: c2(q) }));
+}
+// (already in the sketch: projecting the same rim twice adds nothing)
+const nearP = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-6;
+const sameEnt = (a, b) => a.t === b.t && (a.t === 'line' ? (nearP(a.a, b.a) && nearP(a.b, b.b)) || (nearP(a.a, b.b) && nearP(a.b, b.a))
+  : a.t === 'circle' ? nearP(a.c, b.c) && Math.abs(a.r - b.r) < 1e-6 : a.t === 'arc' ? nearP(a.c, b.c) && Math.abs(a.r - b.r) < 1e-6 && Math.abs(a.a0 - b.a0) < 1e-6 && Math.abs(a.a1 - b.a1) < 1e-6 : false);
+function projectTap(x, y) {
+  const k = SK.sketchById(S.ed.editingSketch); if (!k) return;
+  let ents = [], what = '';
+  try {
+    const ec = edgeCandidate(x, y);
+    if (ec && ec.d <= 12 && ec.solid && ec.o.shape) { const E = ec.o.shape.edges[ec.solid.e.i]; if (E) { ents = edgeToSketch(k.plane, E, xfFor(ec.o)); what = 'edge'; } }
+    else {
+      const hit = view.pickObject(x, y), o = hit && hit.face >= 0 && objById(hit.id);
+      if (o && o.shape && o.faceOf) {
+        const fc = o.shape.faces[o.faceOf[hit.face]], es = fc ? fc.edges : [], n = new Map();
+        for (const E of es) n.set(E.hashCode, (n.get(E.hashCode) || 0) + 1);
+        ents = es.filter(E => n.get(E.hashCode) === 1).flatMap(E => edgeToSketch(k.plane, E, xfFor(o))); what = 'face'; // (not a seam)
+      }
+    }
+  } catch (e) { console.error(e); ents = []; }
+  const fresh = ents.filter((e, i) => !k.ents.some(x => sameEnt(e, x)) && !ents.slice(0, i).some(x => sameEnt(e, x)));
+  if (!ents.length) return toast(what ? `That ${what} runs along the sketch's normal — nothing to project` : 'Tap a body edge or face to project it into the sketch');
+  if (!fresh.length) return toast(`That ${what} is already in the sketch`);
+  runOp(F.sketchOp('Project', k.id, sk2 => { for (const e of fresh) F.addEntity(sk2, { ...e, proj: true }); }));
+  toast(`Projected the ${what}: ${fresh.length} curve${fresh.length === 1 ? '' : 's'} to snap to, dimension against, or close a profile`);
+}
 let camBeforeEdit = null, pickBeforeEdit = null;
 // Extrude / Revolve / … picked inside a sketch finish it first (as in Fusion), keeping the picked profiles and path
 function outOfSketch(run) {
@@ -646,6 +692,7 @@ function onTap(x, y) {
   if (S.ed.tool === 'measure') return measureTap(x, y);
   if (S.ed.workspace === 'draw') return Draw.tap(x, y);
   if (S.ed.workspace === 'cad') return cadTap(x, y);
+  if (S.ed.tool === 'project' && sketching()) return projectTap(x, y);
   if (S.ed.mode === 'object' && (Draw.EDIT_TOOLS.has(S.ed.tool) || ['trim', 'dim', 'corner', 'extend'].includes(S.ed.tool))) return Draw.tap(x, y);
   if (S.ed.mode === 'object' && S.ed.mateFrom) return mateTap(x, y);
   if (S.ed.mode === 'object' && S.ed.consTool) return consTap(x, y);
@@ -874,7 +921,7 @@ function selectAllToggle() {
   selectionChanged();
 }
 function acadTool(t) { setTool(t); Draw.startCommand(); refresh(); }
-const SKETCH_TOOLS = new Set(['line', 'rect', 'circle', 'arc', 'spline', 'polygon', 'ellipse', 'text', 'hatch', 'corner', 'trim', 'dim', 'extend', 'offset', 'erase', 'explode', 'arrayrect', 'arraypolar', 'mirror', 'copy']);
+const SKETCH_TOOLS = new Set(['project', 'line', 'rect', 'circle', 'arc', 'spline', 'polygon', 'ellipse', 'text', 'hatch', 'corner', 'trim', 'dim', 'extend', 'offset', 'erase', 'explode', 'arrayrect', 'arraypolar', 'mirror', 'copy']);
 // a drawing command typed on the command line outside a sketch opens one on the current construction plane (AutoCAD's
 // UCS), so typed coordinates keep working; the rail and the palette ask for the plane instead (Create Sketch)
 function cmdSetTool(t, m) {
@@ -1186,7 +1233,7 @@ function toolsetDefs() {
   ];
   const sketch = [
     { id: 'create', label: 'Create', icon: I.draw, tools: [sel, T('line', 'Line', I.line), T('rect', 'Rect', I.rect), T('circle', 'Circle', I.circle), T('arc', 'Arc', I.arc), T('spline', 'Spline', I.spline), T('polygon', 'Polygon', I.polygon),
-      A('text', 'Text', I.text, () => acadTool('text')), A('ellipse', 'Ellipse', I.circle, () => acadTool('ellipse')), T('dim', 'Dimension', I.dim)] },
+      A('text', 'Text', I.text, () => acadTool('text')), A('ellipse', 'Ellipse', I.circle, () => acadTool('ellipse')), T('dim', 'Dimension', I.dim), T('project', 'Project', I.project)] },
     { id: 'skmodify', label: 'Modify', icon: I.trim, tools: [sel, T('corner', 'Fillet', I.corner), T('trim', 'Trim', I.trim), A('extend', 'Extend', I.extend, () => acadTool('extend')), A('offset', 'Offset', I.offset, () => acadTool('offset')),
       A('skmirror', 'Mirror', I.flip, () => acadTool('mirror')), A('skmove', 'Move', I.move, () => acadTool('move')), A('skcopy', 'Copy', I.dup, () => acadTool('copy')), A('skrotate', 'Rotate', I.rotate, () => acadTool('rotate')), A('skscale', 'Scale', I.scale, () => acadTool('scale')),
       A('skpattern', 'Pattern', I.array, () => acadTool('arrayrect')), A('cons', 'Construction', I.construction, () => Draw.toggleConstruction()), A('skdelete', 'Delete', I.trash, () => Draw.deleteSelected())] },
@@ -1560,7 +1607,7 @@ function renderHud() {
     const used = H.firstUsing([eds.id]) >= 0;
     const dof = Draw.dofText ? Draw.dofText() : '';
     const nc = eds.ents.filter(e => e.t !== 'dim').length, nr = SK.regions(eds).length;
-    $('#hud').innerHTML = `<b>${nc} curve${nc === 1 ? '' : 's'} · ${nr} profile${nr === 1 ? '' : 's'}</b>${dof ? ' · ' + esc(dof) : ''}<br>${used ? 'Features built from it update as you change it' : nc ? 'Tap <b>Finish Sketch</b>, then tap a profile to extrude it' : 'Pick a tool on the left and draw'}`;
+    $('#hud').innerHTML = `<b>${nc} curve${nc === 1 ? '' : 's'} · ${nr} profile${nr === 1 ? '' : 's'}</b>${dof ? ' · ' + esc(dof) : ''}<br>${S.ed.tool === 'project' ? '<b>Project</b> · tap a body edge or face to bring it into the sketch' : used ? 'Features built from it update as you change it' : nc ? 'Tap <b>Finish Sketch</b>, then tap a profile to extrude it' : 'Pick a tool on the left and draw'}`;
     return;
   }
   if (S.ed.workspace === 'model' && S.ed.mode === 'object') {

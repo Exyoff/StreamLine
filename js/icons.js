@@ -84,6 +84,7 @@ export const I = {
   polygon: s('<path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9z"/>'),
   spline: s('<path d="M3 17c3-9 6-9 9-5s6 4 9-5"/>'),
   plane: s('<path d="M2 15l10-5 10 5-10 5z"/>'),
+  project: s('<path d="M3 16.5 12 20.5l9-4-9-4z"/><path d="M12 3v8.5M8.8 8.6 12 11.8l3.2-3.2"/>'),
   cylinder: s('<ellipse cx="12" cy="6" rx="7" ry="2.5"/><path d="M5 6v12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5V6"/>'),
   cone: s('<path d="M12 3 5 18M12 3l7 15"/><ellipse cx="12" cy="18" rx="7" ry="2.5"/>'),
   sphere: s('<circle cx="12" cy="12" r="8.5"/><ellipse cx="12" cy="12" rx="8.5" ry="3"/>'),

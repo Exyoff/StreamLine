@@ -664,7 +664,7 @@ function bindPointer() {
   canvas.addEventListener('pointerdown', e => {
     canvas.setPointerCapture(e.pointerId);
     const p = rel(e);
-    pts.set(e.pointerId, { ...p, sx: p.x, sy: p.y, t: performance.now() });
+    pts.set(e.pointerId, { ...p, sx: p.x, sy: p.y, t: e.timeStamp || performance.now() });
     if (pts.size === 1) {
       moved = false; startT = performance.now(); multiTap = null;
       if (e.pointerType === 'mouse' && (e.button === 1 || e.button === 2 || e.shiftKey)) mode = 'pan';
@@ -709,6 +709,8 @@ function bindPointer() {
     const p = pts.get(e.pointerId);
     if (!p) return;
     pts.delete(e.pointerId); clearTimeout(holdT);
+    // a quick tap whose hold timer fired late (the phone was busy) is still a tap: the events' own times decide
+    if (mode === 'cursor' && !moved && e.type === 'pointerup' && pts.size === 0 && (e.timeStamp || performance.now()) - p.t < 320) { view.handlers.cursorCancel && view.handlers.cursorCancel(); mode = 'pending'; }
     if (mode === 'cursor') { mode = null; if (e.type === 'pointerup') view.handlers.cursorEnd(); else view.handlers.cursorCancel(); }
     if (mode === 'gizmo') { const r = view.handlers.dragEnd(); mode = null; if (r === 'tap' && e.type === 'pointerup' && pts.size === 0) view.handlers.tap && view.handlers.tap(p.x, p.y, e); } // (a press on a gizmo that never dragged is a tap)
     else if (mode === 'pending' && pts.size === 0 && e.type === 'pointerup') { mode = null; view.handlers.tap && view.handlers.tap(p.x, p.y, e); }
