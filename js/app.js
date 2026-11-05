@@ -105,7 +105,13 @@ async function boot() {
     editingStepId: () => getLast()?.def?.stepId,
     activateSketch,
     selectionChanged,
-    selectObj(id) { if (S.ed.mode === 'edit') setMode('object'); if (S.ed.multi) S.ed.selected.add(id); else S.ed.selected = new Set([id]); S.ed.active = id; if (S.ed.pick !== 'solid') S.ed.pick = 'solid'; selectionChanged(); },
+    selectObj(id) { if (S.ed.mode === 'edit') setMode('object'); setPickKind('solid'); if (S.ed.multi) S.ed.selected.add(id); else S.ed.selected = new Set([id]); S.ed.active = id; selectionChanged(); },
+    refresh: () => refresh(),
+    planeKey: () => planeLabel(),
+    setPlane(k) { S.ed.cplane = k === 'XY' ? null : SK.PLANES[k]; Draw.resetTool(); view.setView({ XY: 'top', XZ: 'front', YZ: 'right' }[k]); toast(`Drawing on the ${k} plane — pick a Sketch tool, or tap a face to draw on it instead`); refresh(); },
+    deleteObj(id) { setPickKind('solid'); S.ed.selected = new Set([id]); S.ed.active = id; runOp(OPS.deleteObjs); },
+    isolateObj(id) { setPickKind('solid'); S.ed.selected = new Set([id]); S.ed.active = id; isolate(true); },
+    setSetting(k, v) { S.settings[k] = v; saveSettings(); view.render(); refresh(); },
   });
   S.ed.tool = S.ed.tool && TOOLS.model.some(t => t[0] === S.ed.tool) ? S.ed.tool : 'select';
   refresh();
@@ -214,7 +220,9 @@ function finishSketchEdit() {
   view.cam.lock2D = false;
   if (camBeforeEdit) view.restoreCam(camBeforeEdit); else view.setView('iso');
   camBeforeEdit = null;
-  setPick(pickBeforeEdit || 'solid'); pickBeforeEdit = null;
+  // (back to free picking: nothing is held to a kind once the sketch is done)
+  setPickKind(pickBeforeEdit || 'face'); S.ed.pickLock = null; S.ed.pendingRun = null; pickBeforeEdit = null;
+  selectionChanged();
 }
 function activateSketch(id) {
   const sk = SK.sketchById(id); if (!sk) return;
@@ -223,6 +231,7 @@ function activateSketch(id) {
   if (S.ed.editingSketch == null) camBeforeEdit = view.saveCam();
   if (S.ed.editingSketch == null) pickBeforeEdit = S.ed.pick;
   S.ed.editingSketch = id; S.ed.pick = 'edge'; S.ed.faces = []; S.ed.edges = []; S.ed.selected = new Set();
+  if (S.settings.toolset !== 'sketch' && S.settings.toolset !== 'constrain') { S.settings.toolset = 'sketch'; saveSettings(); } // (the sketch tools come up)
   S.ed.sketch = id; sk.hidden = false; Draw.clearTarget();
   if (S.ed.workspace !== 'model') setWorkspace('model');
   enterSketchView(sk); selectionChanged();
@@ -285,7 +294,7 @@ function growEdges(all) {
 }
 function edgeTap(x, y, probe = false) { // probe: only report how close the nearest body edge is (px)
   let best = null;
-  const hit = view.pickObject(x, y);
+  const hit = view.pickObject(x, y), cands = [];
   for (const o of S.doc.objects) {
     if (!isShown(o)) continue;
     if (o.shape && o.brep) { // solids: the exact B-rep edges
@@ -302,7 +311,7 @@ function edgeTap(x, y, probe = false) { // probe: only report how close the near
           if (d > 24) continue;
           const Q = P[k - 1].map((c, j) => c + (P[k][j] - c) * t);
           if (hit && view.project(hit.point).depth < view.project(Q).depth - Math.max(1e-3, view.worldPerPixel(Q) * 3) && hit.id !== o.id) continue; // behind another body
-          if (!best || d < best.d) best = { d, o, solid: { e, P, Q } };
+          cands.push({ d, o, Q, solid: { e, P, Q } });
         }
       }
       continue;
@@ -318,9 +327,12 @@ function edgeTap(x, y, probe = false) { // probe: only report how close the near
       const P = W[e.a].map((c, k) => c + (W[e.b][k] - c) * t);
       const depth = view.project(P).depth;
       if (hit && hit.id !== o.id && view.project(hit.point).depth < depth - 1e-3) continue; // hidden behind another body
-      if (!best || d < best.d) best = { d, o, W, fe, e };
+      cands.push({ d, o, W, fe, e, Q: P });
     }
   }
+  // the nearest edge that can be seen: a back edge behind the part's own faces is not under the finger
+  cands.sort((a, b) => a.d - b.d);
+  for (const c of cands.slice(0, 16)) if (!view.occluded(c.Q)) { best = c; break; }
   if (probe) return best ? best.d : Infinity;
   if (!best) { if (!S.ed.multi) S.ed.edges = []; return selectionChanged(); }
   if (best.solid) {
@@ -446,27 +458,37 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 // =====================================================================
 // selection & modes
 // =====================================================================
-function selectionChanged() { clearLast(); view.markSelDirty(); refresh(); }
+function selectionChanged() {
+  clearLast(); view.markSelDirty(); refresh();
+  // a command that was waiting for a face (Hole, Mate…) goes ahead once one is tapped
+  if (S.ed.pendingRun && S.ed.pickLock === 'face' && S.ed.faces.length) { const fn = S.ed.pendingRun; S.ed.pendingRun = null; S.ed.pickLock = null; fn(); }
+}
 
 let lastViewportTap = 0;
 // iOS fires a click ~300 ms after a tap; if a panel appeared under the finger it must not receive it
 document.addEventListener('click', e => {
   if (performance.now() - lastViewportTap < 450 && e.target.closest && e.target.closest('#draw-card, #lastop, #measure-card, #popover, #sheet, #actions, #tools')) { e.stopPropagation(); e.preventDefault(); }
 }, true);
-// Edge mode: sketch curves first (nearest along the ray), else body edges
-function curveOrEdgeTap(x, y) {
+// the sketch curve a tap lands on (nearest along the ray), or null — a sketch a feature already used (its lines run
+// along the body's edges) yields to a body edge under the finger, and a curve behind a body is not pickable
+function probeCurve(x, y, px = 16) {
   const ray = view.ray(x, y).ray;
   let best = null;
   for (const k of tapSketches()) {
     const pl = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(...k.plane.n), new THREE.Vector3(...k.plane.o));
     const w = ray.intersectPlane(pl, new THREE.Vector3()); if (!w) continue;
-    const p2 = SK.toP(k.plane, w.toArray()), e = SK.pickEntity(k, p2, 16 * view.worldPerPixel(w.toArray()));
+    const p2 = SK.toP(k.plane, w.toArray()), e = SK.pickEntity(k, p2, px * view.worldPerPixel(w.toArray()));
     if (e && e.t !== 'hatch' && (!best || w.distanceTo(ray.origin) < best.t)) best = { k, e, t: w.distanceTo(ray.origin) };
   }
+  if (!best) return null;
   const hit = S.ed.editingSketch != null ? null : view.pickObject(x, y); // bodies are ghosted while a sketch is edited
-  // a sketch a feature already used (its lines run along the body's edges) yields to a body edge under the finger
-  if (best && !S.settings.xray && S.ed.editingSketch == null && H.firstUsing([best.k.id]) >= 0 && edgeTap(x, y, true) <= 16) best = null;
-  if (best && (!hit || S.settings.xray || best.t <= hit.distance + view.worldPerPixel(hit.point) * 8)) {
+  if (!S.settings.xray && S.ed.editingSketch == null && H.firstUsing([best.k.id]) >= 0 && edgeTap(x, y, true) <= 16) return null;
+  return !hit || S.settings.xray || best.t <= hit.distance + view.worldPerPixel(hit.point) * 8 ? best : null;
+}
+// curves and edges: sketch curves first, else body edges
+function curveOrEdgeTap(x, y) {
+  const best = probeCurve(x, y);
+  if (best) {
     if (S.ed.sketch !== best.k.id || !S.ed.multi) S.ed.drawSel = new Set();
     S.ed.sketch = best.k.id; Draw.clearTarget();
     if (S.ed.drawSel.has(best.e.id) && S.ed.multi) S.ed.drawSel.delete(best.e.id); else S.ed.drawSel.add(best.e.id);
@@ -477,7 +499,27 @@ function curveOrEdgeTap(x, y) {
   if (S.ed.editingSketch != null) return selectionChanged();
   return edgeTap(x, y);
 }
-// Face mode: sketch regions first (nearest along the ray), else body faces
+// the closed sketch region a tap lands on ({ k, p2, r, t, used }), or null — with the same rules as a region pick
+function probeRegion(x, y) {
+  const ray = view.ray(x, y).ray;
+  let best = null;
+  for (const k of tapSketches()) {
+    const pl = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(...k.plane.n), new THREE.Vector3(...k.plane.o));
+    const w = ray.intersectPlane(pl, new THREE.Vector3()); if (!w) continue;
+    const p2 = SK.toP(k.plane, w.toArray()), r = SK.regionAt(k, p2);
+    if (r && (!best || w.distanceTo(ray.origin) < best.t)) best = { k, p2, r, t: w.distanceTo(ray.origin) };
+  }
+  if (!best) return null;
+  const hit = S.ed.editingSketch != null ? null : view.pickObject(x, y);
+  const used = H.hist().some(r => (r.params?.pts || []).some(it => it.sk === best.k.id && SK.regionAt(best.k, it.pt) === best.r));
+  if (used && !S.settings.xray && S.ed.editingSketch == null && edgeTap(x, y, true) <= 16) return null;
+  if (hit && S.ed.editingSketch == null && !S.settings.xray) {
+    const again = !S.ed.multi && S.ed.profiles.length === 1 && S.ed.profiles[0].sk === best.k.id && SK.regionAt(best.k, S.ed.profiles[0].pt) === best.r;
+    if ((used && Math.abs(best.t - hit.distance) < view.worldPerPixel(hit.point) * 8) || again) return null;
+  }
+  return !hit || S.settings.xray || best.t <= hit.distance + view.worldPerPixel(hit.point) * 8 ? { ...best, used } : null;
+}
+// regions and faces: sketch regions first (nearest along the ray), else body faces
 function regionOrFaceTap(x, y) {
   const ray = view.ray(x, y).ray;
   let best = null;
@@ -517,20 +559,10 @@ function onTap(x, y) {
   if (S.ed.workspace === 'draw') return Draw.tap(x, y);
   if (S.ed.workspace === 'cad') return cadTap(x, y);
   if (S.ed.mode === 'object' && (Draw.EDIT_TOOLS.has(S.ed.tool) || ['trim', 'dim', 'corner', 'extend'].includes(S.ed.tool))) return Draw.tap(x, y);
-  if (S.ed.mode === 'object' && Draw.tapLabel(x, y, S.ed.pick !== 'face' || S.ed.editingSketch != null)) return; // Face mode taps go to regions
-  if (S.ed.mode === 'object' && S.ed.pick === 'edge') return curveOrEdgeTap(x, y);
-  if (S.ed.mode === 'object' && S.ed.pick === 'face' && S.ed.mateFrom) return mateTap(x, y);
-  if (S.ed.mode === 'object' && S.ed.pick === 'face') return regionOrFaceTap(x, y);
-  if (S.ed.mode === 'object') {
-    const hit = view.pickObject(x, y);
-    if (hit) {
-      if (S.ed.multi) {
-        if (S.ed.selected.has(hit.id) && S.ed.active === hit.id) { S.ed.selected.delete(hit.id); S.ed.active = [...S.ed.selected].pop() ?? null; }
-        else { S.ed.selected.add(hit.id); S.ed.active = hit.id; }
-      } else { S.ed.selected = new Set([hit.id]); S.ed.active = hit.id; }
-    } else if (!S.ed.multi) { S.ed.selected = new Set(); }
-    return selectionChanged();
-  }
+  if (S.ed.mode === 'object' && S.ed.mateFrom) return mateTap(x, y);
+  if (S.ed.mode === 'object' && S.ed.consTool) return consTap(x, y);
+  if (S.ed.mode === 'object' && Draw.tapLabel(x, y, S.ed.editingSketch != null || S.ed.pick === 'edge')) return; // (constraint glyphs only while working on curves)
+  if (S.ed.mode === 'object') return smartTap(x, y);
   const o = activeObj(); if (!o) return;
   let verts = null;
   if (S.ed.selectMode === 'vert') { const v = view.pickVertex(x, y, { objs: [o] }); if (v) verts = [v.index]; }
@@ -543,6 +575,74 @@ function onTap(x, y) {
     } else { S.ed.editSel = new Set(verts); S.ed.selOrder = verts.slice(); }
   } else if (!S.ed.multi) { S.ed.editSel = new Set(); S.ed.selOrder = []; }
   selectionChanged();
+}
+
+// ---------- picking: what is under the finger (no Edge / Face / Solid switch) ----------
+// curves (and regions not used yet) of the sketches, then body edges within EDGE_PX, then faces; a face tapped
+// again selects its whole body (and the body tapped again goes back to the face). A command waiting for one kind
+// (Fillet → edges) holds picking to it, and so does Multi-select while it is adding to a pick.
+const EDGE_PX = 8;
+function setPickKind(kind) {
+  if (S.ed.pick === kind) return;
+  S.ed.pick = kind; S.ed.faces = []; S.ed.edges = []; S.ed.profiles = []; S.ed.drawSel = new Set();
+  if (kind !== 'solid' && kind !== 'face') { S.ed.selected = new Set(); }
+}
+function lockPick(kind, msg, then = null) {
+  if (S.ed.mode === 'edit') setMode('object');
+  S.ed.pickLock = kind; S.ed.pendingRun = then; setPickKind(kind);
+  if (msg) toast(msg);
+  selectionChanged();
+}
+function clearPicks() {
+  S.ed.faces = []; S.ed.edges = []; S.ed.profiles = []; S.ed.drawSel = new Set(); S.ed.selected = new Set(); S.ed.active = null; S.ed.pickLock = null; S.ed.pendingRun = null;
+}
+const hasPicks = () => S.ed.faces.length || S.ed.edges.length || S.ed.profiles.length || S.ed.drawSel.size || (S.ed.pick === 'solid' && S.ed.selected.size);
+function sameFaceHit(f, hit) { const o = objById(hit.id); if (!o || f.obj !== o.id) return false; const r2 = findRegionObj(o, f); return !!r2 && r2.faces.includes(hit.face); }
+function bodyTap(x, y) {
+  const hit = S.ed.editingSketch != null ? null : view.pickObject(x, y);
+  if (hit) {
+    if (S.ed.multi) {
+      if (S.ed.selected.has(hit.id) && S.ed.active === hit.id) { S.ed.selected.delete(hit.id); S.ed.active = [...S.ed.selected].pop() ?? null; }
+      else { S.ed.selected.add(hit.id); S.ed.active = hit.id; }
+    } else { S.ed.selected = new Set([hit.id]); S.ed.active = hit.id; }
+  } else if (!S.ed.multi) { S.ed.selected = new Set(); }
+  return selectionChanged();
+}
+// (the pick as it stands: a tap counts as "the same spot again" only if nothing else changed the pick since)
+const pickSig = () => JSON.stringify([S.ed.pick, S.ed.faces.map(f => [f.obj, f.p]), S.ed.edges.map(e => [e.obj, e.p || e.a]), [...S.ed.selected], [...S.ed.drawSel], S.ed.profiles]);
+let lastTap = null;
+function smartTap(x, y) {
+  smartTapInner(x, y);
+  lastTap = { x, y, sig: pickSig() };
+}
+function smartTapInner(x, y) {
+  const lock = S.ed.pickLock || (S.ed.multi && hasPicks() ? S.ed.pick : null);
+  if (lock === 'edge') return curveOrEdgeTap(x, y);
+  if (lock === 'face') return regionOrFaceTap(x, y);
+  if (lock === 'solid') return bodyTap(x, y);
+  // the same spot tapped again: the next thing under the finger — edge → face → body → edge
+  const again = lastTap && Math.hypot(x - lastTap.x, y - lastTap.y) < 12 && !S.ed.multi && hasPicks() && lastTap.sig === pickSig();
+  if (again && S.ed.editingSketch == null && !S.ed.drawSel.size && !S.ed.profiles.length) {
+    const hit = view.pickObject(x, y);
+    if (S.ed.pick === 'edge' && S.ed.edges.length && hit) { setPickKind('face'); return faceTap(x, y); }
+    if (S.ed.pick === 'edge' && S.ed.edges.length && !hit) return selectionChanged();
+    if (S.ed.pick === 'face' && S.ed.faces.length && hit) { setPickKind('solid'); return bodyTap(x, y); }
+    if (S.ed.pick === 'solid' && hit && edgeTap(x, y, true) <= EDGE_PX) { setPickKind('edge'); return edgeTap(x, y); }
+    if (S.ed.pick === 'solid' && hit && hit.face >= 0) { setPickKind('face'); return faceTap(x, y); }
+  }
+  // right on a curve (a few px) → the curve; inside a closed region → the region; near a body edge → the edge;
+  // near a curve outside any region (an open line) → the curve; else the face under the finger
+  if (probeCurve(x, y, 7)) { setPickKind('edge'); return curveOrEdgeTap(x, y); }
+  const reg = probeRegion(x, y);
+  if (reg && !reg.used) { setPickKind('face'); return regionOrFaceTap(x, y); }
+  if (S.ed.editingSketch == null && edgeTap(x, y, true) <= EDGE_PX) { setPickKind('edge'); return edgeTap(x, y); }
+  if (reg) { setPickKind('face'); return regionOrFaceTap(x, y); }
+  if (probeCurve(x, y)) { setPickKind('edge'); return curveOrEdgeTap(x, y); }
+  const hit = S.ed.editingSketch != null ? null : view.pickObject(x, y);
+  if (!hit) { clearPicks(); return selectionChanged(); }
+  if (!S.ed.multi && S.ed.pick === 'face' && S.ed.faces.length === 1 && !S.ed.profiles.length && hit.face >= 0 && sameFaceHit(S.ed.faces[0], hit)) { setPickKind('solid'); return bodyTap(x, y); }
+  if (hit.face < 0) { setPickKind('solid'); return bodyTap(x, y); } // (an imported mesh without faces)
+  setPickKind('face'); return faceTap(x, y);
 }
 
 function setMode(mode) {
@@ -592,7 +692,7 @@ function acadTool(t) { setTool(t); Draw.startCommand(); refresh(); }
 function setTool(t, m) {
   // (tapping the active tool again just starts it over; its mode is chosen on the tool card)
   if (m) Draw.drawMode[t] = m;
-  S.ed.tool = t; S.ed.tools[S.ed.workspace] = t;
+  S.ed.tool = t; S.ed.tools[S.ed.workspace] = t; S.ed.consTool = null; S.ed.pickLock = null; S.ed.pendingRun = null;
   Draw.resetTool();
   if (Draw.EDIT_TOOLS.has(t)) Draw.startCommand();
   if (t === 'measure') S.ed.measure = [];
@@ -619,7 +719,29 @@ function drawFaceHighlights() {
     faceGroup.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: view.selHex(), transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 })));
   }
 }
+let originGroup = null, originKey = '';
+function drawOrigin() {
+  const show = S.settings.showOrigin === true && S.ed.workspace === 'model';
+  if (!originGroup) { originGroup = new THREE.Group(); originGroup.renderOrder = 1; view.scene.add(originGroup); }
+  originGroup.visible = show; if (!show) return;
+  const cur = planeLabel(), key = cur + '|' + view.theme.name;
+  if (key !== originKey) {
+    originKey = key; originGroup.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); }); originGroup.clear();
+    const P = { XY: [[1, 0, 0], [0, 1, 0], 0x4f8ff7], XZ: [[1, 0, 0], [0, 0, 1], 0x7cc243], YZ: [[0, 1, 0], [0, 0, 1], 0xf2545b] };
+    for (const [k, [u, v, col]] of Object.entries(P)) {
+      const on = k === cur, q = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => u.map((c, i) => c * a + v[i] * b));
+      const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute([...q[0], ...q[1], ...q[2], ...q[0], ...q[2], ...q[3]], 3));
+      const fill = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: on ? 0.16 : 0.07, side: THREE.DoubleSide, depthWrite: false }));
+      const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute([...q[0], ...q[1], ...q[1], ...q[2], ...q[2], ...q[3], ...q[3], ...q[0]], 3));
+      const line = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: on ? 0.9 : 0.45 }));
+      originGroup.add(fill, line);
+    }
+  }
+  // a fixed size on screen (like the axis triad): about 90 px from the origin to an edge
+  originGroup.scale.setScalar(view.worldPerPixel([0, 0, 0]) * 90);
+}
 function initMeasureOverlay() {
+  view.renderHooks.push(drawOrigin);
   measureGroup = new THREE.Group(); view.overlayScene.add(measureGroup);
   edgeGroup = new THREE.Group(); view.overlayScene.add(edgeGroup);
   faceGroup = new THREE.Group(); view.scene.add(faceGroup);
@@ -825,13 +947,96 @@ const TOOLS = {
     ['line', 'Line', I.line], ['rect', 'Rect', I.rect], ['circle', 'Circle', I.circle], ['arc', 'Arc', I.arc], ['spline', 'Spline', I.spline], ['polygon', 'Polygon', I.polygon],
     ['corner', 'Corner', I.corner], ['trim', 'Trim', I.trim], ['dim', 'Dim', I.dim], ['measure', 'Measure', I.measure]],
 };
+// ---------- tool sets (Fusion's toolbar tabs, along the bottom) → their tools down the left rail ----------
+// an entry is a modal tool (t: the S.ed.tool it sets), a constraint (c: its kind) or a command (run)
+const CONS_NEED = { h: 1, v: 1, fix: 1, par: 2, perp: 2, eq: 2, tan: 2, conc: 2 };
+const CONS_ICON = { h: 'cH', v: 'cV', par: 'cPar', perp: 'cPerp', eq: 'cEq', tan: 'cTan', conc: 'cConc', fix: 'cFix' };
+const CONS_NAME = { h: 'Horizontal', v: 'Vertical', par: 'Parallel', perp: 'Perpendicular', eq: 'Equal', tan: 'Tangent', conc: 'Concentric', fix: 'Fix' };
+function toolsetDefs() {
+  const T = (t, label, icon) => ({ id: t, t, label, icon }), A = (id, label, icon, run) => ({ id, label, icon, run });
+  const sel = T('select', 'Select', I.select);
+  const plane = (k, name) => () => { S.ed.cplane = k === 'XY' ? null : SK.PLANES[k]; Draw.resetTool(); view.setView(name.toLowerCase()); toast(`New curves go on the ${k} plane (or on any face you draw on)`); refresh(); };
+  return [
+    { id: 'sketch', label: 'Sketch', icon: I.draw, tools: [sel, T('line', 'Line', I.line), T('rect', 'Rect', I.rect), T('circle', 'Circle', I.circle), T('arc', 'Arc', I.arc), T('spline', 'Spline', I.spline), T('polygon', 'Polygon', I.polygon),
+      A('text', 'Text', I.text, () => acadTool('text')), T('corner', 'Fillet', I.corner), T('trim', 'Trim', I.trim), A('extend', 'Extend', I.extend, () => acadTool('extend')), A('offset', 'Offset', I.offset, () => acadTool('offset')),
+      A('skmirror', 'Mirror', I.flip, () => acadTool('mirror')), T('dim', 'Dimension', I.dim), A('cons', 'Construction', I.construction, () => Draw.toggleConstruction())] },
+    { id: 'solid', label: 'Solid', icon: I.cube, tools: [sel, A('extrude', 'Extrude', I.extrude, () => startExtrude()), A('revolve', 'Revolve', I.revolve, () => runOp(F.revolve)), A('loft', 'Loft', I.loft, () => runOp(F.loftOp)), A('sweep', 'Sweep', I.sweep, () => runOp(F.sweepOp)),
+      A('box', 'Box', I.cube, () => addSketchedPrim('cube')), A('cyl', 'Cylinder', I.cylinder, () => addSketchedPrim('cylinder')), A('sphere', 'Sphere', I.sphere, () => addSketchedPrim('sphere')), A('cone', 'Cone', I.cone, () => addSketchedPrim('cone')), A('torus', 'Torus', I.torus, () => addSketchedPrim('torus')),
+      A('hole', 'Hole', I.hole, () => needFaces('Hole', () => runOp(F.holeOp))), A('thread', 'Thread', I.thread, () => needFaces('Thread', () => runOp(F.threadOp))), A('pattern', 'Pattern', I.array, e => openPatternMenu(e.currentTarget)), A('mirror', 'Mirror', I.flip, () => modifier('mirror')), A('thicken', 'Thicken', I.plane, () => runOp(F.thickenOp))] },
+    { id: 'modify', label: 'Modify', icon: I.fillet, tools: [sel, A('pushpull', 'Push/Pull', I.extrude, () => modifier('pushpull')), A('fillet', 'Fillet', I.fillet, () => modifier('fillet')), A('chamfer', 'Chamfer', I.chamfer, () => modifier('chamfer')), A('shell', 'Shell', I.inset, () => modifier('shell')),
+      A('draft', 'Draft', I.draft, () => needFaces('Draft', () => runOp(F.draftOp))), A('split', 'Split', I.split, () => runOp(F.sliceOp)), A('combine', 'Combine', I.union, e => openBoolMenu(e.currentTarget)), T('move', 'Move', I.move), T('rotate', 'Rotate', I.rotate), T('scale', 'Scale', I.scale),
+      A('recess', 'Recess', I.recess, () => needFaces('Recess', () => runOp(F.recessOp))), A('dup', 'Copy', I.dup, () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; refresh(); } }), A('delete', 'Delete', I.trash, () => deleteSelection())] },
+    { id: 'constrain', label: 'Constrain', icon: I.constrain, tools: [sel, ...Object.keys(CONS_NEED).map(k => ({ id: 'c-' + k, c: k, label: k === 'perp' ? 'Perpend.' : CONS_NAME[k], icon: I[CONS_ICON[k]] })),
+      T('dim', 'Dimension', I.dim), A('cons', 'Construction', I.construction, () => Draw.toggleConstruction())] },
+    { id: 'assemble', label: 'Assemble', icon: I.joint, tools: [sel, A('insert', 'Insert', I.insert, () => openPanelTab('projects')), A('mate', 'Mate', I.joint, () => needFaces('Mate', () => startMate(), 1)), T('rotate', 'Rotate', I.rotate), T('move', 'Move', I.move),
+      A('interf', 'Interfere', I.intersect, () => checkInterference()), A('isolate', 'Isolate', I.eye, () => isolate(!S.ed.isolate)), A('sync', 'Sync', I.history, () => syncSelected())] },
+    { id: 'construct', label: 'Construct', icon: I.plane, tools: [sel, A('pXY', 'XY plane', I.plane, plane('XY', 'Top')), A('pXZ', 'XZ plane', I.plane, plane('XZ', 'Front')), A('pYZ', 'YZ plane', I.plane, plane('YZ', 'Right')),
+      A('pface', 'On face', I.face, () => needFaces('Plane on a face', () => planeHere(), 1)), A('poffset', 'Offset', I.offset, e => openPlaneMenu(e.currentTarget)), A('skface', 'Sketch on', I.sketch, () => startFacePick())] },
+    { id: 'inspect', label: 'Inspect', icon: I.measure, tools: [sel, T('measure', 'Measure', I.measure), A('dist', 'Distance', I.measure, () => acadTool('dist')), A('angle', 'Angle', I.angle, () => acadTool('angle')), A('area', 'Area', I.area, () => acadTool('area')),
+      A('radius', 'Radius', I.radius, () => acadTool('radius')), A('id', 'Point', I.point, () => acadTool('id')), A('list', 'List', I.list, () => acadTool('list')), A('interf2', 'Interfere', I.intersect, () => checkInterference()), A('props', 'Properties', I.info, () => openPanelTab('item'))] },
+  ];
+}
+let TSETS = null;
+const curSet = () => { TSETS ??= toolsetDefs(); return TSETS.find(t => t.id === S.settings.toolset) || TSETS[0]; };
+function setToolset(id) {
+  if (S.settings.toolset === id) return;
+  S.settings.toolset = id; saveSettings();
+  if (S.ed.consTool && id !== 'constrain') S.ed.consTool = null;
+  $('#tools').scrollTop = 0; refresh();
+}
+function renderToolsets() {
+  const nav = $('#toolsets'); TSETS ??= toolsetDefs();
+  if (!nav.children.length) nav.replaceChildren(...TSETS.map(t => h('button', { class: 'tset', 'data-set': t.id, role: 'tab', onclick: () => setToolset(t.id) }, h('span', { html: t.icon }), h('span', {}, t.label))));
+  const cur = curSet().id;
+  nav.querySelectorAll('.tset').forEach(b => { const on = b.dataset.set === cur; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); });
+}
+function runRailItem(it, e) {
+  if (it.t) return setTool(it.t);
+  if (it.c) return startConstraint(it.c);
+  S.ed.consTool = null;
+  if (S.ed.tool !== 'select' && !isGizmoTool(S.ed.tool)) { S.ed.tool = 'select'; Draw.resetTool(); }
+  it.run(e);
+}
 function renderTools() {
   const row = $('#tools');
-  if (row.dataset.k !== S.ed.workspace) {
-    row.dataset.k = S.ed.workspace;
-    row.replaceChildren(...TOOLS[S.ed.workspace].map(([id, label, icon]) => h('button', { class: 'tool', 'data-tool': id, onclick: () => setTool(id) }, h('span', { html: icon }), h('span', {}, label))));
+  if (S.ed.workspace !== 'model') {
+    if (row.dataset.k !== S.ed.workspace) {
+      row.dataset.k = S.ed.workspace;
+      row.replaceChildren(...TOOLS[S.ed.workspace].map(([id, label, icon]) => h('button', { class: 'tool', 'data-tool': id, onclick: () => setTool(id) }, h('span', { html: icon }), h('span', {}, label))));
+    }
+  } else {
+    const set = curSet();
+    if (row.dataset.k !== 'set:' + set.id) {
+      row.dataset.k = 'set:' + set.id;
+      row.replaceChildren(...set.tools.map(it => h('button', { class: 'tool', 'data-tool': it.t || '', 'data-cons': it.c || '', 'data-id': it.id, onclick: e => runRailItem(it, e) }, h('span', { html: it.icon }), h('span', {}, it.label))));
+    }
   }
-  document.querySelectorAll('.tool').forEach(b => b.classList.toggle('on', b.dataset.tool === S.ed.tool));
+  document.querySelectorAll('#tools .tool').forEach(b => b.classList.toggle('on', b.dataset.cons ? S.ed.consTool === b.dataset.cons : !!b.dataset.tool && b.dataset.tool === S.ed.tool && !(S.ed.consTool && b.dataset.tool === 'select')));
+}
+// a command that works on faces, tapped with none picked: picking is held to faces until some are tapped
+function needFaces(what, run, n) {
+  if (S.ed.faces.length && (!n || S.ed.faces.length === n)) return run();
+  lockPick('face', n === 1 ? `${what}: tap a face` : `${what}: tap the face(s), then ${what} again`, n === 1 ? run : null);
+}
+function syncSelected() {
+  const linked = selectedObjs().filter(o => o.link);
+  if (!linked.length) { toast('Select an inserted component to sync it'); return; }
+  for (const pid of new Set(linked.map(o => o.link.pid))) PJ.syncComponent(pid);
+}
+// ---------- constraints as tools (Fusion): pick the constraint, then tap the curves it applies to ----------
+function startConstraint(kind) {
+  S.ed.tool = 'select'; Draw.resetTool();
+  // curves already picked: apply straight away
+  if (S.ed.drawSel.size >= CONS_NEED[kind] || (kind === 'fix' && S.ed.drawSel.size)) { Draw.constrain(kind); S.ed.consTool = kind; S.ed.drawSel = new Set(); refresh(); return; }
+  S.ed.consTool = kind; S.ed.drawSel = new Set(); setPickKind('edge');
+  toast(`${CONS_NAME[kind]}: tap ${CONS_NEED[kind] === 1 ? 'a curve' : 'two curves'}`);
+  refresh();
+}
+function consTap(x, y) {
+  const kind = S.ed.consTool, multi = S.ed.multi;
+  S.ed.multi = true; // (picks build up until the constraint has what it needs)
+  try { curveOrEdgeTap(x, y); } finally { S.ed.multi = multi; }
+  if (S.ed.drawSel.size >= CONS_NEED[kind]) { Draw.constrain(kind); S.ed.drawSel = new Set(); refresh(); }
 }
 function buildStatic() {
   $('#btn-cmd').innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></svg>';
@@ -839,11 +1044,11 @@ function buildStatic() {
   $('#sheet-close').innerHTML = I.close;
   $('#btn-frame').innerHTML = I.frame; $('#btn-snap').innerHTML = I.magnet; $('#btn-xray').innerHTML = I.xray;
   $('#btn-multi').innerHTML = I.multi; $('#btn-all').innerHTML = I.all;
+  $('#btn-browser').innerHTML = I.tree; $('#browser-close').innerHTML = I.close;
 }
 
 function bindEvents() {
   view.handlers.tap = onTap;
-  $('#ws-seg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setPick(b.dataset.pick); });
   $('#btn-cmd').onclick = () => openPalette();
   $('#btn-undo').onclick = () => undo();
   $('#btn-redo').onclick = () => redo();
@@ -852,7 +1057,8 @@ function bindEvents() {
   $('#btn-props').onclick = () => openPanel('settings');
   $('#btn-look').onclick = () => openLook();
   $('#btn-history').onclick = () => openPanel('history');
-  $('#layerpill').onclick = () => openPanel('objects');
+  $('#btn-browser').onclick = () => toggleBrowser();
+  $('#browser-close').onclick = () => toggleBrowser(false);
   $('#sheet-close').onclick = () => toggleSheet(false);
   $('#sheet-tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { sheetTab = b.dataset.tab; $('#sheet-body').scrollTop = 0; renderSheet(); } });
   $('#btn-menu').onclick = () => openMainMenu();
@@ -875,7 +1081,7 @@ function bindEvents() {
   let sheetClosedAt = 0;
   document.addEventListener('pointerdown', e => {
     if (!sheetOpen || document.body.classList.contains('sheet-docked') || !e.target.closest) return;
-    if (e.target.closest('#sheet, #popover, #scrim, #keypad, #btn-history, #btn-props, #btn-look, #layerpill')) return;
+    if (e.target.closest('#sheet, #popover, #scrim, #keypad, #btn-history, #btn-props, #btn-look, #browser, #btn-browser')) return;
     toggleSheet(false); sheetClosedAt = performance.now(); e.stopPropagation(); e.preventDefault();
   }, true);
   document.addEventListener('click', e => { if (performance.now() - sheetClosedAt < 500) { e.stopPropagation(); e.preventDefault(); } }, true);
@@ -912,13 +1118,14 @@ function refresh() {
   document.body.classList.toggle('ws-draw', S.ed.workspace === 'draw');
   document.body.classList.toggle('ws-cad', S.ed.workspace === 'cad');
   Cmd.render();
-  renderTop(); renderTools(); renderActions(); renderHud(); renderDrawCard(); renderLastOp(); renderMeasureCard(); renderViewButtons(); BR.renderTimeline(); BR.renderLayerPill(); BR.renderHistoryBadge();
+  renderTop(); renderToolsets(); renderTools(); renderActions(); renderHud(); renderDrawCard(); renderLastOp(); renderMeasureCard(); renderViewButtons(); BR.renderTimeline(); BR.renderHistoryBadge();
+  if (browserOpen) renderBrowser();
   if (sheetOpen && !gizmoActive()) renderSheet();
   view.render();
 }
 
 function renderTop() {
-  document.querySelectorAll('#ws-seg button').forEach(b => b.classList.toggle('on', S.ed.mode === 'edit' ? b.dataset.pick === 'mesh' : b.dataset.pick === S.ed.pick));
+  $('#btn-browser').classList.toggle('on', browserOpen);
   $('#btn-undo').disabled = !canUndo(); $('#btn-redo').disabled = !canRedo();
   $('#btn-snap').classList.toggle('on', S.settings.snap);
   $('#btn-xray').classList.toggle('on', S.settings.xray);
@@ -934,7 +1141,7 @@ function renderViewButtons() {
 function act(icon, label, fn, cls = '') { return h('button', { class: 'act ' + cls, onclick: fn }, h('span', { html: icon }), h('span', {}, label)); }
 function renderActions() {
   const row = $('#actions');
-  const key = (S.ed.mateFrom ? 'mate' : '') + (S.ed.isolate ? 'iso' : '') + S.ed.workspace + S.ed.mode + S.ed.selectMode + S.ed.pick + (S.ed.editingSketch ?? '') + (getLast() && getLast().committed && !$('#lastop').hidden ? 'op' : '') + selectedObjs().map(o => o.id + (o.link ? (PJ.outOfDate(o.link.pid) ? 'L!' : 'L') : '')).join(':') + S.ed.faces.map(f => f.planar === false ? 'c' : 'f').join('') + [S.ed.drawSel.size, S.ed.profiles.length, S.ed.faces.length, S.ed.edges.length, S.ed.pick === 'solid' ? S.ed.selected.size : 0].join();
+  const key = (S.ed.pickLock || '') + (S.ed.consTool || '') + (S.ed.pendingRun ? 'pend' : '') + (S.ed.mateFrom ? 'mate' : '') + (S.ed.isolate ? 'iso' : '') + S.ed.workspace + S.ed.mode + S.ed.selectMode + S.ed.pick + (S.ed.editingSketch ?? '') + (getLast() && getLast().committed && !$('#lastop').hidden ? 'op' : '') + selectedObjs().map(o => o.id + (o.link ? (PJ.outOfDate(o.link.pid) ? 'L!' : 'L') : '')).join(':') + S.ed.faces.map(f => f.planar === false ? 'c' : 'f').join('') + [S.ed.drawSel.size, S.ed.profiles.length, S.ed.faces.length, S.ed.edges.length, S.ed.pick === 'solid' ? S.ed.selected.size : 0].join();
   if (row.dataset.k === key) return;
   row.dataset.k = key;
   if (S.ed.workspace === 'draw') {
@@ -993,6 +1200,9 @@ function renderActions() {
     const c = [];
     // an operation's dialog is open: the bar offers finishing it instead of unrelated commands
     const lop = getLast();
+    // a command or constraint waiting for picks: a way out
+    if (S.ed.consTool) { row.replaceChildren(act(I.check, 'Done', () => { S.ed.consTool = null; S.ed.drawSel = new Set(); refresh(); }, 'primary')); return; }
+    if (S.ed.pickLock && !curves && !prof && !faces && !edges && !solids) { row.replaceChildren(act(I.close, 'Cancel', () => { S.ed.pickLock = null; S.ed.pendingRun = null; refresh(); }, 'primary')); return; }
     if (lop && lop.committed && (lop.def.fields || lop.info) && !$('#lastop').hidden && !curves && !prof && !faces && !edges) {
       row.replaceChildren(act(I.check, 'Done', () => { clearLast(); selectionChanged(); }, 'primary'), act(I.undo, 'Cancel', () => undo()));
       return;
@@ -1021,8 +1231,8 @@ function renderActions() {
     if (linked) c.push(act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; refresh(); } }), act(I.revolve, 'Pattern', e => openPatternMenu(e.currentTarget)), act(I.array, 'Array', () => runOp(OPS.arrayOp)), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'));
     else if (solids && selectedObjs().some(o => o.link)) c.push(act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; refresh(); } }), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger')); // linked parts are read-only
     else if (solids) c.push(act(I.union, 'Boolean', e => openBoolMenu(e.currentTarget), c.length ? '' : 'primary'), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.inset, 'Shell', () => runOp(F.shellOp)), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)), act(I.revolve, 'Pattern', e => openPatternMenu(e.currentTarget)), act(I.plane, 'Thicken', () => runOp(F.thickenOp)),
-      act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; toast('Duplicated — drag the gizmo or type an offset'); refresh(); } }), act(I.array, 'Array', () => runOp(OPS.arrayOp)), act(I.join, 'Join', () => runOp(OPS.joinObjs)), act(I.apply, 'Apply', () => runOp(OPS.applyXf)), act(I.origin, 'Origin', () => runOp(OPS.setOrigin)), act(I.subdiv, 'Edit mesh', () => setPick('mesh')), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'));
-    if (!c.length || (c.length === 1 && S.ed.isolate)) c.push(act(I.plus, 'Add solid', e => openAddMenu(e.currentTarget), 'primary'), act(I.line, 'Line', () => setTool('line')), act(I.rect, 'Rectangle', () => setTool('rect')), act(I.circle, 'Circle', () => setTool('circle')), act(I.plane, `Plane ${planeLabel()}`, e => openPlaneMenu(e.currentTarget)), act(I.measure, 'Inquiry', e => openInquiryMenu(e.currentTarget)));
+      act(I.dup, 'Duplicate', () => { if (runOp(OPS.duplicate)) { S.ed.tool = 'move'; toast('Duplicated — drag the gizmo or type an offset'); refresh(); } }), act(I.array, 'Array', () => runOp(OPS.arrayOp)), act(I.join, 'Join', () => runOp(OPS.joinObjs)), act(I.apply, 'Apply', () => runOp(OPS.applyXf)), act(I.origin, 'Origin', () => runOp(OPS.setOrigin)), ...(selectedObjs().some(o => !o.shape) ? [act(I.subdiv, 'Edit mesh', () => setPick('mesh'))] : []), act(I.trash, 'Delete', () => runOp(OPS.deleteObjs), 'danger'));
+    // (nothing selected: the row goes away — the tool sets along the bottom have every command)
     row.replaceChildren(...c);
   } else {
     row.replaceChildren(modeSeg,
@@ -1041,9 +1251,8 @@ function renderActions() {
 }
 function setPick(m) {
   if (m === 'mesh') { S.ed.faces = []; S.ed.edges = []; setMode('edit'); return; }
-  if (S.ed.mode === 'edit') setMode('object');
-  S.ed.pick = m; S.ed.faces = []; S.ed.edges = []; S.ed.profiles = []; S.ed.drawSel = new Set();
-  selectionChanged();
+  if (S.ed.mode === 'edit') { setMode('object'); if (m === 'solid') return; }
+  lockPick(m);
 }
 // Plasticity-style modifiers: if the needed selection is missing, switch to that selection mode
 function modifier(kind) {
@@ -1099,10 +1308,16 @@ function renderHud() {
   }
   if (S.ed.workspace === 'model' && S.ed.mode === 'object') {
     const drawing = !isGizmoTool(S.ed.tool) && S.ed.tool !== 'select';
-    const sel = [[S.ed.drawSel.size, 'curve'], [S.ed.profiles.length, 'region'], [S.ed.faces.length, 'face'], [S.ed.edges.length, 'edge'], [S.ed.pick === 'solid' ? S.ed.selected.size : 0, 'solid']].filter(q => q[0]).map(([n, w]) => `${n} ${w}${n === 1 ? '' : 's'}`);
-    parts.push(drawing ? `<b>${S.ed.tool[0].toUpperCase() + S.ed.tool.slice(1)}</b> · draw on the grid or on any face` : `<b>${{ edge: 'Edge', face: 'Face', solid: 'Solid' }[S.ed.pick]} select</b>${sel.length ? ' · ' + sel.join(', ') : ''}`);
-    parts.push(drawing ? `${S.ed.sketch && SK.activeSketch() ? esc(SK.activeSketch().name) + ' · ' : ''}${Draw.dofText ? Draw.dofText() : ''}` : '<span class="kbhint">Space or 🔍 for commands · 2 Edge · 3 Face · 4 Solid</span>');
-    $('#hud').innerHTML = parts.join('<br>');
+    const plural = (n, w) => `${n} ${n === 1 ? w : w === 'body' ? 'bodies' : w + 's'}`;
+    const sel = [[S.ed.drawSel.size, 'curve'], [S.ed.profiles.length, 'profile'], [S.ed.faces.length, 'face'], [S.ed.edges.length, 'edge'], [S.ed.pick === 'solid' ? S.ed.selected.size : 0, 'body']].filter(q => q[0]).map(([n, w]) => plural(n, w));
+    const bodyName = S.ed.pick === 'solid' && S.ed.selected.size === 1 ? objById([...S.ed.selected][0])?.name : null;
+    if (S.ed.consTool) parts.push(`<b>${CONS_NAME[S.ed.consTool]}</b> · tap ${CONS_NEED[S.ed.consTool] === 1 ? 'a curve' : `two curves (${S.ed.drawSel.size}/2)`}`, 'Pick another constraint, or Select to stop');
+    else if (S.ed.pickLock && !hasPicks()) parts.push(`<b>Tap ${S.ed.pickLock === 'edge' ? 'edges' : S.ed.pickLock === 'face' ? 'a face' : 'a body'}</b>`, S.ed.pendingRun ? 'The command goes on once you tap it' : 'Then choose the command again');
+    else if (drawing) parts.push(`<b>${S.ed.tool[0].toUpperCase() + S.ed.tool.slice(1)}</b> · draw on the grid or on any face`, `${S.ed.sketch && SK.activeSketch() ? esc(SK.activeSketch().name) + ' · ' : ''}${Draw.dofText ? Draw.dofText() : ''}`);
+    else if (bodyName) parts.push(`<b>${esc(bodyName)}</b> · whole body selected`, 'Tap it again for the face under your finger');
+    else if (sel.length) parts.push(`<b>${sel.join(', ')}</b>`, S.ed.faces.length === 1 && !S.ed.multi ? 'Tap the face again for its whole body' : S.ed.multi ? 'Multi-select: taps add or remove' : '');
+    else parts.push('<b>Tap</b> a face, edge, curve or sketch region', '<span class="kbhint">Space or 🔍 for commands</span>');
+    $('#hud').innerHTML = parts.filter(Boolean).join('<br>');
     return;
   }
   if (S.ed.workspace === 'model' && S.ed.mode === 'object' && S.ed.pick !== 'solid') {
@@ -1278,8 +1493,24 @@ function renderMeasureCard() {
 // properties sheet
 // =====================================================================
 let sheetOpen = false, sheetTab = 'item';
+// the Browser rises from the bottom bar (and stays open while you work in the view)
+let browserOpen = false;
+function toggleBrowser(force) {
+  browserOpen = force ?? !browserOpen;
+  if (browserOpen && sheetOpen && !document.body.classList.contains('sheet-docked')) toggleSheet(false);
+  $('#browser').classList.toggle('open', browserOpen); $('#browser').setAttribute('aria-hidden', String(!browserOpen));
+  document.body.classList.toggle('has-browser', browserOpen);
+  if (browserOpen) renderBrowser();
+  refresh();
+}
+function renderBrowser() {
+  const body = $('#browser-body'), keep = body.scrollTop;
+  body.replaceChildren(...BR.browserTree());
+  body.scrollTop = keep;
+}
 function toggleSheet(force) {
   sheetOpen = force ?? !sheetOpen;
+  if (sheetOpen && browserOpen && !matchMedia('(min-width: 768px), (orientation: landscape) and (min-width: 560px)').matches) toggleBrowser(false); // (phones: one panel at a time)
   $('#sheet').classList.toggle('open', sheetOpen);
   $('#sheet').setAttribute('aria-hidden', String(!sheetOpen));
   document.body.classList.toggle('sheet-docked', sheetOpen && matchMedia('(min-width: 768px), (orientation: landscape) and (min-width: 560px)').matches);
@@ -1408,7 +1639,7 @@ function lookGroups(rerender) {
   const sw = (on, label, note, pv, onClick) => h('button', { class: 'swatch' + (on ? ' on' : ''), onclick: onClick }, pv, h('span', {}, label), note ? h('small', {}, note) : null);
   return [
     group('Theme', h('div', { class: 'swatches' }, Object.entries(view.THEMES).map(([k, t]) => sw(cur('theme', 'midnight') === k, t.name, t.note,
-      h('div', { class: 'pv', style: `background: linear-gradient(180deg, ${t.bg[0]}, ${t.bg[1]})` }, h('b', {}), h('i', { style: `background: linear-gradient(135deg, ${t.chip[1]}, ${t.chip[2]})` })), () => set('theme', k))))),
+      h('div', { class: 'pv', style: `background: ${t.chip[0]}` }, h('b', {}), h('i', { style: `background: ${t.chip[1]}` })), () => set('theme', k))))),
     group('Lighting', h('div', { class: 'swatches three' }, Object.entries(view.LIGHTING).map(([k, L]) => sw(cur('lighting', 'studio') === k, L.name, null,
       h('div', { class: 'ball' }, h('span', { style: `background: ${LIGHT_BALL[k]}` })), () => set('lighting', k)))),
       h('p', { class: 'note' }, view.LIGHTING[cur('lighting', 'studio')].note + '.')),
@@ -1448,7 +1679,7 @@ function settingsTab() {
     group('Display',
       toggle({ label: 'Grid', value: S.settings.grid, onChange: v => set('grid', v) }),
       toggle({ label: 'X-ray', value: S.settings.xray, onChange: v => set('xray', v) }),
-      toggle({ label: 'History strip along the bottom', value: S.settings.timeline === true, onChange: v => set('timeline', v) }),
+      toggle({ label: 'Origin planes', value: S.settings.showOrigin === true, onChange: v => set('showOrigin', v) }),
       toggle({ label: 'Show sketches in Model', value: S.settings.showSketches !== false, onChange: v => set('showSketches', v) }),
       toggle({ label: 'Edge lengths (Edit mode)', value: S.settings.edgeLengths !== false, onChange: v => set('edgeLengths', v) })),
     group('About', h('p', { class: 'note' }, 'StreamLine — precise polygon modelling for the browser. Works offline once loaded; on iPhone use Share → Add to Home Screen for full-screen use.')),
@@ -1638,6 +1869,7 @@ function onKey(e) {
     if (e.shiftKey && k === 'c') { modifier('chamfer'); return; }
     if (k === 'e' && !e.shiftKey) { if (S.ed.profiles.length) startExtrude(); else modifier('pushpull'); return; }
     if ((k === 'escape') && (S.ed.tool !== 'select')) { Draw.resetTool(); setTool('select'); return; }
+    if (k === 'escape' && (S.ed.consTool || S.ed.pickLock)) { S.ed.consTool = null; S.ed.pickLock = null; S.ed.pendingRun = null; refresh(); return; }
     if ((k === 'x' || k === 'delete' || k === 'backspace') && !e.shiftKey) { deleteSelection(); return; }
     if (k === 'enter' && Draw.enter()) { refresh(); return; }
     const pm = { '2': 'edge', '3': 'face', '4': 'solid' };
@@ -1649,7 +1881,8 @@ function onKey(e) {
   }
   if (k === 'tab') { e.preventDefault(); if (S.ed.workspace !== 'model') setWorkspace('model'); setMode(S.ed.mode === 'edit' ? 'object' : 'edit'); return; }
   if (S.ed.mode === 'edit' && ['1', '2', '3'].includes(k)) { setSelectMode(['vert', 'edge', 'face'][+k - 1]); return; }
-  if (k === 'escape') { if (getLast() && getLast().handle) clearLast(); closePopover(); toggleSheet(false); return; }
+  if (k === 'escape' && (S.ed.consTool || S.ed.pickLock)) { S.ed.consTool = null; S.ed.pickLock = null; S.ed.pendingRun = null; refresh(); return; }
+  if (k === 'escape') { if (getLast() && getLast().handle) clearLast(); closePopover(); toggleSheet(false); if (browserOpen) toggleBrowser(false); return; }
   const map = {
     g: () => setTool('move'), r: () => setTool('rotate'), s: () => setTool('scale'), q: () => setTool('select'), m: () => setTool('measure'),
     a: () => (e.altKey ? (S.ed.mode === 'edit' ? (S.ed.editSel = new Set()) : (S.ed.selected = new Set()), selectionChanged()) : selectAllToggle()),
@@ -1792,4 +2025,4 @@ function openPlaneMenu(anchor) {
 }
 function renderActionsForce() { $('#actions').dataset.k = ''; refresh(); }
 
-function openPanelTab(tab) { if (sheetTab !== tab) $('#sheet-body').scrollTop = 0; sheetTab = tab; toggleSheet(true); renderSheet(); }
+function openPanelTab(tab) { if (tab === 'objects') return toggleBrowser(true); if (sheetTab !== tab) $('#sheet-body').scrollTop = 0; sheetTab = tab; toggleSheet(true); renderSheet(); }

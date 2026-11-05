@@ -6,9 +6,9 @@ import * as SK from './sketch.js';
 import { I } from './icons.js';
 import { $, h, toast, popover, closePopover, menuItem } from './ui.js';
 import { fmtLen, fmtAng } from './units.js';
-import { outOfDate } from './projects.js';
+import { outOfDate, syncComponent, openSource, projectName } from './projects.js';
 
-let ctx = null; // { activateSketch(id), selectObj(id), refresh() }
+let ctx = null; // { activateSketch(id), selectObj(id), refresh(), setPlane(k), planeKey(), deleteObj(id), isolateObj(id), setSetting(k, v) }
 export function initBrowser(c) { ctx = c; }
 
 // ---------- labels / icons ----------
@@ -131,8 +131,17 @@ export function deleteStep(id) {
 export function renderTimeline() {
   const el = $('#timeline'); if (!el) return;
   const hist = H.hist(), end = H.markerIndex();
-  document.body.classList.toggle('has-tl', hist.length > 0 && S.settings.timeline === true);
-  if (!hist.length || S.settings.timeline !== true) { el.replaceChildren(); lastEnd = -1; return; }
+  // always shown along the top (Fusion's timeline): playback buttons move the rollback marker, then the steps
+  let row = el.querySelector('.tl-row');
+  if (!row) {
+    const b = (cls, icon, label, fn) => { const x = h('button', { class: 'tl-ctl ' + cls, 'aria-label': label, title: label, html: icon }); x.onclick = e => { e.stopPropagation(); fn(); }; return x; };
+    row = h('div', { class: 'tl-row' });
+    el.replaceChildren(b('tl-first', I.first, 'Roll back to the start', () => rollTo(0)), b('tl-prev', I.prev, 'Step back', () => rollTo(H.markerIndex() - 1)),
+      b('tl-next', I.nextStep, 'Step forward', () => rollTo(H.markerIndex() + 1)), b('tl-last', I.last, 'Roll to the end', () => rollTo(H.hist().length)), h('span', { class: 'tl-sep' }), row);
+  }
+  el.querySelector('.tl-first').disabled = el.querySelector('.tl-prev').disabled = end <= 0;
+  el.querySelector('.tl-next').disabled = el.querySelector('.tl-last').disabled = end >= hist.length;
+  if (!hist.length) { row.replaceChildren(h('span', { class: 'tl-empty' }, 'History · each sketch and feature appears here')); lastEnd = -1; return; }
   const kids = [];
   hist.forEach((rec, i) => {
     if (i === end) kids.push(h('span', { class: 'tl-marker', title: 'Rollback marker' }));
@@ -143,8 +152,6 @@ export function renderTimeline() {
   });
   if (end >= hist.length) kids.push(h('span', { class: 'tl-marker', title: 'Rollback marker' }));
   else kids.push(h('button', { class: 'tl-chip tl-end', onclick: () => rollTo(hist.length), title: 'Roll to end' }, h('span', { class: 'ic', html: I.next }), h('span', { class: 'nm' }, 'To end')));
-  let row = el.querySelector('.tl-row');
-  if (!row) { row = h('div', { class: 'tl-row' }); el.replaceChildren(h('span', { class: 'tl-title' }, 'History'), row); }
   const keep = row.scrollLeft, atEnd = row.scrollLeft + row.clientWidth >= row.scrollWidth - 4;
   row.replaceChildren(...kids);
   row.scrollLeft = atEnd && end >= hist.length ? row.scrollWidth : keep;
@@ -166,7 +173,7 @@ function stepMenu(anchor, rec, i) {
     !sketch ? menuItem(rec.off ? I.eye : I.eyeOff, rec.off ? 'Unsuppress' : 'Suppress', () => toggleStep(rec.id)) : null,
     h('div', { class: 'msep' }),
     menuItem(I.trash, sketch ? 'Delete sketch…' : 'Delete step…', () => setTimeout(() => askDeleteStep(anchor, rec.id), 0)),
-  ), { above: true });
+  ));
 }
 
 // ---------- browser: layers, sketches, bodies ----------
@@ -308,4 +315,90 @@ export function renderHistoryBadge() {
   const el = document.querySelector('#btn-history'); if (!el) return;
   const hist = H.hist(), st = hist.some(r => r.err) ? 'err' : H.markerIndex() < hist.length ? 'rb' : '';
   if (el.dataset.st !== st) { el.dataset.st = st; el.classList.toggle('b-err', st === 'err'); el.classList.toggle('b-rb', st === 'rb'); }
+}
+
+// ---------- Browser (Fusion-style tree, in the sheet that rises from the bottom bar) ----------
+// Origin · Bodies · Components · Sketches · Joints · Layers, each a folder with an eye; rows select (tap), show or
+// hide (eye) and have a ⋯ menu (rename, colour, isolate, layer, delete…)
+const brOpen = { origin: false, bodies: true, components: true, sketches: true, joints: true, layers: false };
+const SWATCHES = ['#b8bcc4', '#9fb6cf', '#c9b79c', '#a7c4a0', '#c4a3b8', '#d0c58f', '#e6e8eb', '#6f7782', '#e07a5f', '#f2cc8f', '#81b29a', '#3d5a80'];
+function setVisibleMany(kind, ids, v) {
+  presOp(v ? 'Show' : 'Hide', () => {
+    for (const id of ids) { const x = kind === 'sketch' ? SK.sketchById(id) : S.doc.objects.find(o => o.id === id); if (x) x.hidden = !v; }
+    if (!v) { const gone = new Set(ids); if (kind === 'sketch') S.ed.profiles = S.ed.profiles.filter(p => !gone.has(p.sk)); else { for (const id of ids) S.ed.selected.delete(id); S.ed.faces = S.ed.faces.filter(f => !gone.has(f.obj)); S.ed.edges = S.ed.edges.filter(e => !gone.has(e.obj)); } }
+  });
+}
+function colourMenu(anchor, o) {
+  popover(anchor, h('div', { class: 'askform' }, h('div', { class: 'mtitle' }, `Colour · ${o.name}`),
+    h('div', { class: 'swgrid' }, ...SWATCHES.map(c => h('button', { class: 'swb' + (o.color === c ? ' on' : ''), style: `background:${c}`, 'aria-label': c, onclick: () => { closePopover(); presOp('Colour', () => { const x = S.doc.objects.find(q => q.id === o.id); if (x) x.color = c; }); } })))), { align: 'right' });
+}
+function rowMenu(anchor, kind, x) {
+  const obj = kind === 'obj', name = x.name;
+  const rename = () => setTimeout(() => askText(anchor, 'Rename', name, n => presOp('Rename', () => { const y = obj ? S.doc.objects.find(q => q.id === x.id) : SK.sketchById(x.id); if (y) y.name = n; })), 0);
+  const items = [h('div', { class: 'mtitle' }, name)];
+  if (obj && x.link) items.push(menuItem(I.history, outOfDate(x.link.pid) ? 'Sync (update available)' : 'Sync', () => syncComponent(x.link.pid)), menuItem(I.folder, 'Open its project', () => openSource(x.link.pid)));
+  if (!obj) items.push(menuItem(I.sketch, 'Edit sketch', () => ctx.activateSketch(x.id)));
+  items.push(menuItem(I.sliders, 'Rename…', rename));
+  if (obj) items.push(menuItem(I.fill, 'Colour…', () => setTimeout(() => colourMenu(anchor, x), 0)), menuItem(I.eye, 'Isolate', () => ctx.isolateObj(x.id)));
+  items.push(menuItem(x.hidden ? I.eye : I.eyeOff, x.hidden ? 'Show' : 'Hide', () => setVisible(obj ? 'obj' : 'sketch', x.id, !!x.hidden)));
+  if ((S.doc.layers || []).length > 1) items.push(menuItem(I.layers, 'Move to layer…', () => setTimeout(() => chooseLayer(anchor, obj ? 'obj' : 'sketch', x.id), 0)));
+  items.push(h('div', { class: 'msep' }));
+  if (obj) items.push(menuItem(I.trash, 'Delete', () => ctx.deleteObj(x.id)));
+  else { const rec = H.hist().find(r => r.kind === 'sketch' && r.sk === x.id); if (rec) items.push(menuItem(I.trash, 'Delete sketch…', () => setTimeout(() => askDeleteStep(anchor, rec.id), 0))); }
+  popover(anchor, h('div', {}, ...items), { align: 'right' });
+}
+function trow(o) {
+  const r = h('div', { class: 'trow' + (o.folder ? ' folder' : '') + (o.open ? ' open' : '') + (o.sel ? ' sel' : '') + (o.dim ? ' dim' : '') + (o.err ? ' err' : ''), style: `--d:${o.depth || 0}` },
+    h('span', { class: 'chev' + (o.folder ? '' : ' none'), html: I.chev }),
+    o.sw ? h('span', { class: 'sw', style: `background:${o.sw}` }) : h('span', { class: 'ti', html: o.icon || '' }),
+    h('span', { class: 'tn' }, o.name),
+    o.badge ? h('span', { class: 'badge' + (o.badgeWarn ? ' warn' : '') }, o.badge) : null,
+    o.meta ? h('span', { class: 'tm' }, o.meta) : null);
+  if (o.eye != null) { const b = h('button', { class: 'ib eye' + (o.eye ? '' : ' off'), 'aria-label': o.eye ? 'Hide' : 'Show', html: o.eye ? I.eye : I.eyeOff }); b.onclick = e => { e.stopPropagation(); o.onEye(); }; r.append(b); }
+  if (o.more) { const b = h('button', { class: 'ib', 'aria-label': 'More', html: I.more }); b.onclick = e => { e.stopPropagation(); o.more(b); }; r.append(b); }
+  else if (!o.folder) r.append(h('span', { style: 'width:36px;flex:none' }));
+  r.onclick = () => o.onTap?.(r);
+  return r;
+}
+const folder = (key, name, icon, count, eye, onEye) => trow({ folder: true, open: brOpen[key], icon, name, meta: String(count), eye, onEye, onTap: () => { brOpen[key] = !brOpen[key]; ctx.refresh(); } });
+export function browserTree() {
+  const out = [], end = H.markerIndex();
+  out.push(trow({ icon: I.component, name: projectName(), meta: S.settings.unit, onTap: () => {} }));
+  // Origin: the three base planes; tap one to draw on it
+  out.push(folder('origin', 'Origin', I.origin, 3, S.settings.showOrigin === true, () => ctx.setSetting('showOrigin', S.settings.showOrigin !== true)));
+  if (brOpen.origin) for (const [k, nm] of [['XY', 'XY plane'], ['XZ', 'XZ plane'], ['YZ', 'YZ plane']]) out.push(trow({ depth: 1, icon: I.plane, name: nm, sel: ctx.planeKey() === k, meta: ctx.planeKey() === k ? 'drawing here' : '', onTap: () => ctx.setPlane(k) }));
+  const bodies = S.doc.objects.filter(o => !o.link), comps = S.doc.objects.filter(o => o.link);
+  out.push(folder('bodies', 'Bodies', I.cube, bodies.length, bodies.some(o => !o.hidden), () => setVisibleMany('obj', bodies.map(o => o.id), !bodies.some(o => !o.hidden))));
+  if (brOpen.bodies) for (const o of bodies) out.push(trow({ depth: 1, sw: o.color, name: o.name, sel: S.ed.selected.has(o.id) && S.ed.pick === 'solid', dim: !layerVisible(o.layer), meta: o.brep ? '' : 'mesh', eye: !o.hidden, onEye: () => setVisible('obj', o.id, !!o.hidden), more: b => rowMenu(b, 'obj', o), onTap: () => ctx.selectObj(o.id) }));
+  if (brOpen.bodies && !bodies.length) out.push(h('p', { class: 'note', style: 'margin:2px 0 6px 46px' }, 'Extrude a closed sketch region to make a body.'));
+  if (comps.length) {
+    out.push(folder('components', 'Components', I.component, comps.length, comps.some(o => !o.hidden), () => setVisibleMany('obj', comps.map(o => o.id), !comps.some(o => !o.hidden))));
+    if (brOpen.components) for (const o of comps) { const od = outOfDate(o.link.pid); out.push(trow({ depth: 1, icon: I.component, name: o.name, sel: S.ed.selected.has(o.id), dim: !layerVisible(o.layer), badge: od ? 'update' : '', eye: !o.hidden, onEye: () => setVisible('obj', o.id, !!o.hidden), more: b => rowMenu(b, 'obj', o), onTap: () => ctx.selectObj(o.id) })); }
+  }
+  const sks = S.doc.sketches || [];
+  out.push(folder('sketches', 'Sketches', I.sketch, sks.length, sks.some(k => !k.hidden), () => setVisibleMany('sketch', sks.map(k => k.id), !sks.some(k => !k.hidden))));
+  if (brOpen.sketches) for (const sk of sks) {
+    const future = H.sketchRecIndex(sk.id) >= end, used = H.firstUsing([sk.id]) >= 0;
+    out.push(trow({ depth: 1, icon: I.sketch, name: sk.name, sel: sk.id === S.ed.editingSketch, dim: future || !layerVisible(sk.layer), meta: future ? 'rolled back' : sk.id === S.ed.editingSketch ? 'editing' : used ? '' : `${sk.ents.filter(e => e.t !== 'dim').length} curves`, eye: !sk.hidden, onEye: () => setVisible('sketch', sk.id, !!sk.hidden), more: b => rowMenu(b, 'sketch', sk),
+      onTap: () => { if (future) { toast('This sketch is after the rollback marker'); return; } ctx.activateSketch(sk.id); } }));
+  }
+  const joints = H.hist().map((r, i) => [r, i]).filter(([r]) => r.op === 'F.mateOp');
+  if (joints.length) {
+    out.push(folder('joints', 'Joints', I.joint, joints.length, null));
+    if (brOpen.joints) for (const [r, i] of joints) out.push(trow({ depth: 1, icon: I.joint, name: recLabel(r).replace(/^Mate /, ''), err: !!r.err, dim: r.off || i >= end, meta: r.err ? '⚠' : r.off ? 'off' : '', more: b => stepMenu(b, r, i), onTap: row => (i < end ? editStep(r.id) : stepMenu(row, r, i)) }));
+  }
+  const L = S.doc.layers || [];
+  out.push(folder('layers', 'Layers', I.layers, L.length, null));
+  if (brOpen.layers) {
+    for (const l of L) {
+      const n = S.doc.objects.filter(o => (o.layer ?? 1) === l.id).length + (S.doc.sketches || []).filter(x => (x.layer ?? 1) === l.id).length;
+      out.push(trow({ depth: 1, icon: S.doc.layer === l.id ? I.check : '', name: l.name, sel: S.doc.layer === l.id, meta: `${n}`, eye: l.visible !== false,
+        onEye: () => presOp(l.visible !== false ? 'Hide layer' : 'Show layer', () => {
+          const x = S.doc.layers.find(q => q.id === l.id); x.visible = x.visible === false;
+          if (!x.visible && S.doc.layer === x.id) { const v = S.doc.layers.find(q => q.visible !== false); if (v) { S.doc.layer = v.id; toast(`Active layer is now ${v.name}`); } }
+        }), onTap: r => layerMenu(r, l) }));
+    }
+    out.push(trow({ depth: 1, icon: I.plus, name: 'New layer', onTap: r => askText(r, 'New layer', `Layer ${L.length + 1}`, name => doAddLayer(name)) }));
+  }
+  return out;
 }

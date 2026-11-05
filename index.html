@@ -24,6 +24,7 @@ try { var t = JSON.parse(localStorage.getItem('streamline.settings.v1') || '{}')
 <div id="boot"><div class="spin"></div><p>Loading the CAD kernel…</p></div>
 <div id="app">
   <main id="viewport">
+    <div id="timeline" class="glass" aria-label="History timeline"></div>
     <div id="hud"></div>
     <canvas id="nav" aria-label="View axes"></canvas>
     <div class="vcol glass" id="vtools-r">
@@ -44,7 +45,6 @@ try { var t = JSON.parse(localStorage.getItem('streamline.settings.v1') || '{}')
     <div id="draw-card" class="card glass" hidden></div>
     <div id="measure-card" class="card glass" hidden></div>
     <div id="cmdhistory" hidden></div>
-    <div id="timeline" class="glass" aria-label="History timeline"></div>
     <div id="cmdbar" hidden>
       <div class="cmdrow" id="cmdlog" title="Tap for the command history"></div>
       <div class="cmdrow" id="cmdprompt"></div>
@@ -59,37 +59,40 @@ try { var t = JSON.parse(localStorage.getItem('streamline.settings.v1') || '{}')
     </div>
   </main>
 
-  <!-- floating Liquid Glass chrome over the full-screen view -->
+  <!-- floating chrome over the full-screen view: top bar + always-on history timeline, bottom tool sets -->
   <header id="topbar">
     <button class="ib glass circ" id="btn-menu" aria-label="Menu"></button>
+    <div class="glass capsule" id="undo-cap">
+      <button class="ib" id="btn-undo" aria-label="Undo"></button>
+      <button class="ib" id="btn-redo" aria-label="Redo"></button>
+    </div>
     <div class="spacer"></div>
-    <button id="layerpill" class="glass" aria-label="Layers and items"></button>
     <button class="ib glass circ" id="btn-look" aria-label="Look: theme, lighting, edges"></button>
-    <button class="ib glass circ" id="btn-history" aria-label="History"></button>
+    <button class="ib glass circ" id="btn-history" aria-label="History list"></button>
     <button class="ib glass circ" id="btn-props" aria-label="Settings"></button>
   </header>
 
   <div id="stationbar">
     <div id="actions" class="scrollrow glass"></div>
     <div class="botrow">
-      <div class="glass capsule" id="undo-cap">
-        <button class="ib" id="btn-undo" aria-label="Undo"></button>
-        <button class="ib" id="btn-redo" aria-label="Redo"></button>
-      </div>
-      <div class="seg glass" id="ws-seg" role="tablist" aria-label="Selection mode">
-        <button data-pick="edge" title="Curves and edges (2)">Edge</button>
-        <button data-pick="face" title="Regions and faces (3)">Face</button>
-        <button data-pick="solid" title="Solids (4)">Solid</button>
-      </div>
+      <button class="ib glass circ" id="btn-browser" aria-label="Browser: bodies, sketches, components"></button>
+      <nav id="toolsets" class="glass scrollrow" role="tablist" aria-label="Tool sets"></nav>
       <button class="ib glass circ" id="btn-cmd" aria-label="Search commands"></button>
     </div>
   </div>
+
+  <section id="browser" class="glass" aria-hidden="true">
+    <div class="br-head">
+      <span class="br-title">Browser</span>
+      <button class="ib" id="browser-close" aria-label="Close"></button>
+    </div>
+    <div id="browser-body"></div>
+  </section>
 
   <section id="sheet" class="glass" aria-hidden="true">
         <div class="sheet-head">
       <div class="seg" id="sheet-tabs">
         <button data-tab="history">History</button>
-        <button data-tab="objects">Items</button>
         <button data-tab="item">Info</button>
         <button data-tab="settings">Settings</button>
       </div>
