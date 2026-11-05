@@ -484,6 +484,13 @@ try {
       L.runOp(L.F.sketchOp('move hole', sk.id, k => { k.ents.find(e => e.t === 'circle').c = [2015, 12]; }));
       return { loc: L.S.doc.objects.find(o => o.id === id).loc, hist: L.H.hist().some(r => r.op === 'F.mateOp'), errs: L.H.hist().filter(r => r.err).map(r => r.err) };
     }, ids);
+    // moving the block afterwards carries the mated pin with it (mates are constraints)
+    const carry = await st(id => {
+      const L = StreamLine, blk = L.S.doc.objects.find(o => o.name.startsWith('Body') && o.id !== id && L.K.worldShape(o).boundingBox.bounds[0][0] > 1999 && L.K.worldShape(o).boundingBox.bounds[0][0] < 2001);
+      L.S.ed.selected = new Set([blk.id]); L.runOp(L.OPS.transform, { mode: 'move', x: 7, y: 3, z: 2 });
+      return L.S.doc.objects.find(o => o.id === id).loc;
+    }, ids);
+    check(Math.abs(carry[0] + 38) < 1e-6 && Math.abs(carry[1] + 25) < 1e-6, `Moving the fixed part carries the mated pin with it (${carry.map(v => +v.toFixed(6)).join(', ')})`);
     check(follow.hist && Math.abs(follow.loc[0] + 45) < 1e-6 && Math.abs(follow.loc[1] + 28) < 1e-6 && !follow.errs.length, `Mate is a history step: moving the hole moves the pin with it (${follow.loc.map(v => +v.toFixed(6)).join(', ')}${follow.errs.length ? ' · ' + follow.errs.join('; ') : ''})`);
     check(Math.abs(loc[0] + 50) < 1e-6 && Math.abs(loc[1] + 30) < 1e-6 && Math.abs(loc[2]) < 1e-9, `Mate: tapping a pin then a hole puts the pin on the hole's axis (moved ${loc.map(v => +v.toFixed(6)).join(', ')})`);
   }

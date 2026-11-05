@@ -538,7 +538,7 @@ export const polarPattern = {
       let q;
       if (o.shape) { const s = guard(() => K.rotated(K.worldShape(o), step * k, c, a), 'Pattern failed'); if (typeof s === 'string') return s; q = newObject(o.name, null, [0, 0, 0], id++); K.setShape(q, s); }
       else { const W = rotateMesh(worldVerts(o), c, a, step * k), anchor = M.centroid(W); q = newObject(o.name, new M.PolyMesh(W.map(w => M.sub(w, anchor)), o.mesh.f.map(f => f.slice())), anchor, id++); }
-      q.color = o.color; q.patternOf = p._base; S.doc.objects.push(q); made.push(q.id);
+      q.color = o.color; q.patternOf = p._base; if (o.link) q.link = { ...o.link }; S.doc.objects.push(q); made.push(q.id);
     }
     S.ed.selected = new Set(made);
   },
@@ -546,8 +546,13 @@ export const polarPattern = {
 // rows (and columns) of copies of the selected bodies: e.g. vent-slot cutters, then Subtract them in one go
 export const linearPattern = {
   label: p => `Linear Pattern ${p.count}${p.count2 > 1 ? '×' + p.count2 : ''}`,
-  defaults: () => ({ count: 3, spacing: 10, dir: 'x', count2: 1, spacing2: 10, dir2: 'y' }),
-  prepare(p) { if (!S.ed.selected.size) return 'Select a body'; p.ids ??= [...S.ed.selected]; p._base ??= S.doc.nextId; },
+  defaults: () => ({ count: 3, dir: 'x', count2: 1, dir2: 'y' }),
+  prepare(p) {
+    if (!S.ed.selected.size) return 'Select a body'; p.ids ??= [...S.ed.selected]; p._base ??= S.doc.nextId;
+    // spacing: the selection's size along the direction plus a fifth (copies sit side by side, not on top)
+    const size = k => { const W = p.ids.map(objById).filter(Boolean).flatMap(o => worldVerts(o)); if (!W.length) return 10; const lo = Math.min(...W.map(q => q[k])), hi = Math.max(...W.map(q => q[k])); return Math.max(1, +((hi - lo) * 1.2).toFixed(2)); };
+    p.spacing ??= size('xyz'.indexOf(p.dir)); p.spacing2 ??= size('xyz'.indexOf(p.dir2));
+  },
   touch: () => ({ ids: [] }),
   reserve: 2000,
   fields: p => [{ key: 'count', label: 'Count', kind: 'int', min: 1, max: 500 }, lenF('spacing', 'Spacing (− flips)'), { key: 'dir', label: 'Direction', kind: 'choice', options: [['x', 'X'], ['y', 'Y'], ['z', 'Z']], wide: true },
@@ -565,7 +570,7 @@ export const linearPattern = {
       for (const oid of p.ids) {
         const o = objById(oid); if (!o) continue;
         const q = newObject(o.name, o.shape ? null : new M.PolyMesh(o.mesh.v.map(v => v.slice()), o.mesh.f.map(f => f.slice())), M.add(o.loc, d), id++);
-        q.rot = o.rot.slice(); q.scl = o.scl.slice(); q.color = o.color; q.layer = o.layer; q.patternOf = p._base;
+        q.rot = o.rot.slice(); q.scl = o.scl.slice(); q.color = o.color; q.layer = o.layer; q.patternOf = p._base; if (o.link) q.link = { ...o.link };
         if (o.shape) K.setShape(q, o.shape); // same local shape, shifted placement (shapes are shared values)
         S.doc.objects.push(q); made.push(q.id);
       }
@@ -1048,7 +1053,8 @@ export const recessOp = {
 // thread / free-form round face, the nearest round edge of the body). World coordinates.
 export function mateGeom(f) {
   const o = objById(f.obj); if (!o || !o.shape) return null;
-  const xf = xfFor(o), pl = xf.toL(f.p), nl = locDir(xf, f.p, f.n);
+  // a mate's faces are kept in the part's own coordinates (lp, ln), so they ride along when the part moves
+  const xf = xfFor(o), pl = f.lp || xf.toL(f.p), nl = f.ln || locDir(xf, f.p, f.n);
   let hit = K.faceAt(o.shape, pl, f.planar === false ? null : nl);
   if (!hit && f.planar !== false) hit = K.faceAt(o.shape, pl, nl);
   if (!hit && f._ax) { // a round face that moved (its sketch changed): the parallel cylinder of the same radius nearest its old axis
@@ -1095,31 +1101,31 @@ export function mateSolve(a, b) {
   }
   return 'Mate a flat face to a flat face, or a round face to a round face';
 }
+// solve one mate: turn the moving part if needed, then slide it into place (a constraint: solved again on
+// every edit and rebuild, so moving the fixed part carries the mated one with it)
+function solveMate(p) {
+  const o = objById(p.a.obj); if (!o) return 'The part it moves no longer exists';
+  if (!objById(p.b.obj)) return 'The part it mates to no longer exists';
+  for (const f of [p.a, p.b]) if (!f.lp) { const ob = objById(f.obj), x = xfFor(ob); f.lp = x.toL(f.p); f.ln = locDir(x, f.p, f.n); }
+  const A0 = mateGeom(p.a), B0 = mateGeom(p.b);
+  if (A0 && B0 && A0.kind === B0.kind) {
+    const da = A0.kind === 'plane' ? A0.n : A0.d, db = B0.kind === 'plane' ? B0.n : B0.d, k = M.dot(da, db);
+    if (Math.abs(k) < 0.9999) turnObject(o, da, A0.kind === 'plane' ? M.mul(db, -1) : (k >= 0 ? db : M.mul(db, -1)), A0.kind === 'plane' ? A0.p : A0.c);
+  }
+  const r = mateSolve(p.a, p.b); if (typeof r === 'string') return r;
+  if (M.len(r.v) > 1e-12) o.loc = M.add(o.loc, r.v).map(v => (Math.abs(v - Math.round(v * 1e9) / 1e9) < 1e-9 ? Math.round(v * 1e9) / 1e9 : v));
+}
 export const mateOp = {
   label: p => `Mate ${objById(p.a.obj)?.name || 'part'} → ${objById(p.b.obj)?.name || 'part'}`,
   touch: p => ({ ids: [p.a.obj], mesh: false }),
-  apply(p) {
-    const o = objById(p.a.obj); if (!o) return 'The part it moves no longer exists';
-    if (!objById(p.b.obj)) return 'The part it mates to no longer exists';
-    // not parallel: turn the moving part first (about its own face / axis) so they line up
-    const A0 = mateGeom(p.a), B0 = mateGeom(p.b);
-    let a = p.a;
-    if (A0 && B0 && A0.kind === B0.kind) {
-      const da = A0.kind === 'plane' ? A0.n : A0.d, db = B0.kind === 'plane' ? B0.n : B0.d, k = M.dot(da, db);
-      if (Math.abs(k) < 0.9999) {
-        // planes: face to face (normals opposite); axes: whichever way is the smaller turn
-        const target = A0.kind === 'plane' ? M.mul(db, -1) : (k >= 0 ? db : M.mul(db, -1));
-        const x0 = xfFor(o), lp = x0.toL(p.a.p), ln = locDir(x0, p.a.p, p.a.n);
-        turnObject(o, da, target, A0.kind === 'plane' ? A0.p : A0.c);
-        // the picked point and its normal turn with the part (a copy: the stored pick stays as tapped)
-        const x1 = xfFor(o), pw = x1.toW(lp), nw = M.norm(M.sub(x1.toW(M.add(lp, ln)), pw));
-        a = { ...p.a, p: pw, n: nw, w: M.dot(nw, pw) };
-      }
-    }
-    const r = mateSolve(a, p.b); if (typeof r === 'string') return r;
-    o.loc = M.add(o.loc, r.v).map(v => (Math.abs(v - Math.round(v * 1e9) / 1e9) < 1e-9 ? Math.round(v * 1e9) / 1e9 : v));
-  },
+  apply(p) { return solveMate(p); },
 };
+// re-solve every mate in the history (after any edit), in order, twice so chains of mates settle
+export function solveMates(recs) {
+  const ms = recs.filter(r => r.op === 'F.mateOp' && !r.off && !r.err);
+  if (!ms.length) return;
+  for (let pass = 0; pass < 2; pass++) for (const r of ms) { try { solveMate(r.params); } catch (e) { /* keep the part where it is */ } }
+}
 
 // ---------- assemblies: linked components ----------
 // S.doc.components[pid] = { name, version, brep } — a copy of another project's solids. An inserted

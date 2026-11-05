@@ -17,7 +17,8 @@ export function objMatrix(o) {
 }
 export function eulerFromMatrix(m) {
   const e = new THREE.Euler().setFromRotationMatrix(m, EULER_ORDER);
-  const r = [e.x / D2R, e.y / D2R, e.z / D2R].map(v => Math.abs(v) < 1e-10 ? 0 : v);
+  // float noise from matrix round trips (−59.99999999999999°) back to the clean angle
+  const r = [e.x / D2R, e.y / D2R, e.z / D2R].map(v => { const q = Math.round(v * 1e6) / 1e6; return Math.abs(q - v) < 1e-7 ? (q === 0 ? 0 : q) : v; });
   return r;
 }
 
@@ -26,7 +27,7 @@ export function turnObject(o, from, to, pivot) {
   const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(...from).normalize(), new THREE.Vector3(...to).normalize());
   const cur = new THREE.Quaternion().setFromEuler(new THREE.Euler(o.rot[0] * D2R, o.rot[1] * D2R, o.rot[2] * D2R, EULER_ORDER));
   const e = new THREE.Euler().setFromQuaternion(q.clone().multiply(cur), EULER_ORDER);
-  const snap = v => { const d = v / D2R, r = Math.round(d * 1e6) / 1e6; return Math.abs(r - d) < 1e-6 ? r : d; };
+  const snap = v => { const d = v / D2R, r = Math.round(d * 1e3) / 1e3; return Math.abs(r - d) < 1e-4 ? r : d; };
   o.rot = [snap(e.x), snap(e.y), snap(e.z)].map(v => (Math.abs(v) < 1e-9 ? 0 : v));
   const rel = new THREE.Vector3(o.loc[0] - pivot[0], o.loc[1] - pivot[1], o.loc[2] - pivot[2]).applyQuaternion(q);
   o.loc = [pivot[0] + rel.x, pivot[1] + rel.y, pivot[2] + rel.z].map(v => { const r = Math.round(v * 1e9) / 1e9; return Math.abs(r - v) < 1e-9 ? r : v; });

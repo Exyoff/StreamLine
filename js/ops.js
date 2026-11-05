@@ -34,6 +34,7 @@ function apply(op) {
   op.handle = null;
   let r;
   try { r = op.def.apply(op.params, op); } catch (err) { console.error(err); r = err.message || 'Operation failed'; }
+  if (typeof r !== 'string' && !op.def.sketchOnly && !op.def.presentation) H.solveConstraints(); // mated parts follow
   return r;
 }
 

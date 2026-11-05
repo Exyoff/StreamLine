@@ -333,7 +333,7 @@ export const duplicate = {
     const src = selectedObjs(); const ids = [];
     src.forEach((o, k) => {
       const c = cloneObj(o); const n = newObject(o.name, c.mesh, M.add(o.loc, [p.x, p.y, p.z]), p._base + k);
-      n.rot = c.rot; n.scl = c.scl; n.color = o.color; copyShape(n, o); S.doc.objects.push(n); ids.push(n.id);
+      n.rot = c.rot; n.scl = c.scl; n.color = o.color; copyShape(n, o); if (o.link) n.link = { ...o.link }; // a copy of a linked part stays linked S.doc.objects.push(n); ids.push(n.id);
     });
     S.ed.selected = new Set(ids); S.ed.active = ids[ids.length - 1];
   },
@@ -354,7 +354,7 @@ export const arrayOp = {
     const src = selectedObjs(); let id = p._base; const ids = [...S.ed.selected];
     for (let i = 1; i < n; i++) for (const o of src) {
       const c = cloneObj(o); const d = newObject(o.name, c.mesh, M.add(o.loc, [p.x * i, p.y * i, p.z * i]), id++);
-      d.rot = c.rot; d.scl = c.scl; d.color = o.color; copyShape(d, o); S.doc.objects.push(d); ids.push(d.id);
+      d.rot = c.rot; d.scl = c.scl; d.color = o.color; copyShape(d, o); if (o.link) d.link = { ...o.link }; S.doc.objects.push(d); ids.push(d.id);
     }
     S.ed.selected = new Set(ids);
   },
