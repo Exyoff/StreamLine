@@ -964,6 +964,67 @@ try {
   });
   check(skf.onFace.xray === false && skf.onFace.grid === 6 && skf.onFace.dark === true && (!skf.hadGround || (skf.free.xray === true && skf.free.dark === false)) && skf.after == null,
     `Editing a sketch on a face keeps the part solid with the grid on the face; a sketch on a free plane ghosts the bodies (${JSON.stringify(skf)})`);
+  // round 17 leftovers: Draft turns a round wall into a cone (and carries a fillet beside a wall along); a bolt circle
+  // on a ring face goes round the face's centre at the tapped radius; turning a part about its mate axis is not
+  // "held by mates" (pulling it off its mate is); the Polygon tool takes a typed centre
+  const r17b = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, K = L.K, XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }), m = await import('./js/ops.js');
+    const out = {}, vol = id => K.volume(L.S.doc.objects.find(o => o.id === id).shape);
+    L.runOp(F.sketchOpNew('cyl', XY(0), null, k => { F.addEntity(k, { t: 'circle', c: [60000, 0], r: 20 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [60000, 0] }], distance: 30, mode: 'new', target: null }); let id = L.S.doc.objects.at(-1).id;
+    L.S.ed.faces = [{ obj: id, n: [1, 0, 0], p: [60020, 0, 15], planar: false }]; L.runOp(F.draftOp, { angle: 3, pull: 'z' }); m.commit();
+    const r1 = 20 - 30 * Math.tan(3 * Math.PI / 180); out.cone = [vol(id), Math.PI * 10 * (400 + 20 * r1 + r1 * r1)];
+    L.runOp(F.sketchOpNew('fil', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 60100, y: 0, w: 40, h: 30 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [60110, 10] }], distance: 20, mode: 'new', target: null }); id = L.S.doc.objects.at(-1).id;
+    L.S.ed.edges = [{ obj: id, a: [60140, 0, 0], b: [60140, 0, 20] }]; L.runOp(F.edgeBlendOp, { kind: 'fillet', size: 5 }); m.commit(); const vb = vol(id);
+    L.S.ed.faces = [{ obj: id, n: [0, -1, 0], p: [60120, 0, 10], planar: true }]; L.runOp(F.draftOp, { angle: 5, pull: 'z' }); m.commit();
+    out.filletWall = { ok: !L.H.hist().at(-1).err && vol(id) < vb - 100, valid: K.isValid(L.S.doc.objects.find(o => o.id === id).shape) };
+    L.runOp(F.sketchOpNew('fl', XY(0), null, k => { F.addEntity(k, { t: 'circle', c: [60300, 0], r: 40 }); F.addEntity(k, { t: 'circle', c: [60300, 0], r: 10 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [60325, 0] }], distance: 10, mode: 'new', target: null }); id = L.S.doc.objects.at(-1).id; const v0 = vol(id);
+    L.S.ed.faces = [{ obj: id, p: [60325, 5, 10], n: [0, 0, 1], w: 10, planar: true }]; L.runOp(F.holeOp, { dia: 5, depth: 0 }); m.updateOp({ pattern: 'circle', count: 6 });
+    const hp = L.getLast().params; out.bolt = { c: [hp.x, hp.y, hp.z].join(), r: hp.radius, cut: v0 - vol(id) }; m.commit(); L.S.ed.faces = [];
+    L.runOp(F.sketchOpNew('ma', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 60500, y: 0, w: 30, h: 20 }); F.addEntity(k, { t: 'circle', c: [60510, 10], r: 3 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [60502, 2] }], distance: 10, mode: 'new', target: null }); const A = L.S.doc.objects.at(-1).id;
+    L.runOp(F.sketchOpNew('mb', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 60600, y: 0, w: 20, h: 20 }); F.addEntity(k, { t: 'circle', c: [60610, 10], r: 3 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [60602, 2] }], distance: 8, mode: 'new', target: null }); const B = L.S.doc.objects.at(-1).id;
+    L.runOp(F.mateOp, { a: { obj: B, n: [0, 0, -1], p: [60613.5, 10, 0], planar: true }, b: { obj: A, n: [0, 0, 1], p: [60513.5, 10, 10], planar: true }, gap: 0, align: 'face', by: 'axis' }); m.commit();
+    L.S.ed.pick = 'solid'; L.S.ed.selected = new Set([B]); L.S.ed.active = B;
+    L.runOp(L.OPS.transform, { mode: 'rotate', axis: 'm', angle: 45 }); out.turn = L.getLast().heldByMate; m.commit();
+    L.runOp(L.OPS.transform, { mode: 'move', x: 0, y: 0, z: 15 }); out.lift = L.getLast().heldByMate; m.commit();
+    L.S.ed.selected = new Set(); L.refresh();
+    return out;
+  });
+  check(Math.abs(r17b.cone[0] - r17b.cone[1]) < 1e-6 && r17b.filletWall.ok && r17b.filletWall.valid, `Draft turns a round wall into the exact cone (${r17b.cone[0].toFixed(3)} mm³) and takes a fillet beside a wall along`);
+  check(r17b.bolt.c === '60300,0,10' && r17b.bolt.r === 25.5 && Math.abs(r17b.bolt.cut - 6 * Math.PI * 6.25 * 10) < 1e-6, `A bolt circle on a ring face goes round its centre at the tapped radius (${r17b.bolt.c} R${r17b.bolt.r}, ${r17b.bolt.cut.toFixed(3)} mm³)`);
+  check(r17b.turn === false && r17b.lift === true, `Turning a part about its mate axis is not "held by mates"; lifting it off its mate is (${r17b.turn}, ${r17b.lift})`);
+  await p.evaluate(() => { const L = StreamLine; L.sketchOn({ plane: 'XY' }); L.refresh(); }); await p.waitForTimeout(600);
+  await p.tap('#tools .tool[data-tool=polygon]'); await p.waitForTimeout(300);
+  await p.tap('#draw-card .field.ax-x .val'); await keypad('60710');
+  await p.tap('#draw-card .field.ax-y .val'); await keypad('5');
+  await (await p.$$('#draw-card .field button.val')).at(-1).tap(); await keypad('10');
+  const poly = await p.evaluate(() => {
+    const L = StreamLine, k = L.SK.sketchById(L.S.ed.editingSketch), ls = k.ents.filter(e => e.t === 'line'), P = ls.map(e => e.a);
+    const c = [0, 1].map(i => P.reduce((s, q) => s + q[i], 0) / (P.length || 1));
+    const flats = ls.length ? 2 * Math.hypot((ls[0].a[0] + ls[0].b[0]) / 2 - c[0], (ls[0].a[1] + ls[0].b[1]) / 2 - c[1]) : 0;
+    L.Draw.resetTool(); L.finishSketchEdit();
+    return { n: ls.length, c: c.map(v => +v.toFixed(6)).join(), flats: +flats.toFixed(6) };
+  });
+  check(poly.n === 6 && poly.c === '60710,5' && poly.flats === 10, `Polygon: the centre can be typed on its card (${poly.n} sides round ${poly.c}, ${poly.flats} across flats)`);
+  // interference: each part's solids are boxed and only overlapping ones intersected (a body of two blocks against one
+  // that overlaps just the first: one pair, the exact overlap), without freezing the app
+  const interf = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    L.runOp(F.sketchOpNew('ia', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 61000, y: 0, w: 20, h: 10 }); F.addEntity(k, { t: 'rect', x: 61100, y: 0, w: 20, h: 10 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [61005, 5] }, { sk: L.S.ed.sketch, pt: [61105, 5] }], distance: 10, mode: 'new', target: null }); const A = L.S.doc.objects.at(-1);
+    L.runOp(F.sketchOpNew('ib', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 61015, y: 0, w: 20, h: 10 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [61030, 5] }], distance: 10, mode: 'new', target: null }); const B = L.S.doc.objects.at(-1);
+    L.runOp(F.sketchOpNew('ic', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 61300, y: 0, w: 20, h: 10 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [61305, 5] }], distance: 10, mode: 'new', target: null }); const C = L.S.doc.objects.at(-1);
+    const res = await L.checkInterference([A, B, C]);
+    document.querySelector('#scrim')?.click(); L.S.ed.selected = new Set(); L.refresh();
+    return { solids: A.shape.solids?.length, res: res.map(x => [x.a === A.id, x.b === B.id, +x.v.toFixed(6)]) };
+  });
+  check(interf.solids === 2 && JSON.stringify(interf.res) === '[[true,true,500]]', `Check interference intersects only the solids whose boxes overlap: one pair, 500 mm³ (${JSON.stringify(interf.res)})`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked

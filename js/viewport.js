@@ -666,6 +666,8 @@ function bindPointer() {
       moved = false; startT = performance.now(); multiTap = null;
       if (e.pointerType === 'mouse' && (e.button === 1 || e.button === 2 || e.shiftKey)) mode = 'pan';
       else if (view.handlers.dragStart && view.handlers.dragStart(p.x, p.y, e)) mode = 'gizmo';
+      // a small control drawn over the view (a gizmo's value bubble): held or slid a little it is still a tap on it
+      else if (view.handlers.pressTarget?.(p.x, p.y)) mode = 'target';
       else { mode = 'pending'; if (e.pointerType !== 'mouse') holdT = setTimeout(() => startCursor(p.x, p.y), 320); }
     } else if (pts.size === 2) {
       clearTimeout(holdT);
@@ -706,6 +708,7 @@ function bindPointer() {
     if (mode === 'cursor') { mode = null; if (e.type === 'pointerup') view.handlers.cursorEnd(); else view.handlers.cursorCancel(); }
     if (mode === 'gizmo') { const r = view.handlers.dragEnd(); mode = null; if (r === 'tap' && e.type === 'pointerup' && pts.size === 0) view.handlers.tap && view.handlers.tap(p.x, p.y, e); } // (a press on a gizmo that never dragged is a tap)
     else if (mode === 'pending' && pts.size === 0 && e.type === 'pointerup') { mode = null; view.handlers.tap && view.handlers.tap(p.x, p.y, e); }
+    else if (mode === 'target' && pts.size === 0 && e.type === 'pointerup') { mode = null; view.handlers.tap && view.handlers.tap(p.sx, p.sy, e); }
     if (pts.size === 0) {
       if (multiTap && performance.now() - multiTap.t < 350) emit(multiTap.n === 3 ? 'gestureRedo' : 'gestureUndo');
       multiTap = null; mode = null;

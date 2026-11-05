@@ -7,7 +7,7 @@ import * as PJ from './projects.js';
 import * as LIB from './library.js';
 import * as BR from './browser.js';
 import { view, camera } from './viewport.js';
-import { initGizmo, gizmoActive, valueTap, typeKey, gizmoPartAt } from './gizmo.js';
+import { initGizmo, gizmoActive, valueTap, valueHit, typeKey, gizmoPartAt } from './gizmo.js';
 import * as OPS from './operators.js';
 import { runOp, undo, redo, canUndo, canRedo, getLast, clearLast, updateOp, resetHistory, mergeLastUndo } from './ops.js';
 import { serialize, deserialize, newObject, xfFor, worldVerts, objMatrix } from './scene.js';
@@ -1039,17 +1039,35 @@ function isolate(on) {
   view.markSelDirty(); refresh(); view.render();
 }
 // overlapping solids (parts that would collide): exact intersection volumes, pair by pair
-function checkInterference(objs) {
+// Check interference: each part's solids get a box, and only solids whose boxes overlap are intersected (the exact,
+// slow test); between tests the UI gets a frame, with a progress toast, so a big assembly does not freeze the app
+let interfRun = 0, lastInterference = null;
+async function checkInterference(objs) {
   const list = (objs && objs.length >= 2 ? objs : S.doc.objects.filter(isShown)).filter(o => o.shape);
   if (list.length < 2) return toast('Interference needs at least two solids');
-  const W = list.map(o => ({ o, w: K.worldShape(o), b: null })); W.forEach(x => { x.b = x.w.boundingBox.bounds; });
-  const hits = [];
+  const run = ++interfRun;
+  const box = s => s.boundingBox.bounds, apart = (a, b) => [0, 1, 2].some(k => a[1][k] < b[0][k] - 1e-9 || b[1][k] < a[0][k] - 1e-9);
+  const W = list.map(o => { const w = K.worldShape(o), so = w.solids?.length > 1 ? w.solids : [w]; return { o, b: box(w), parts: so.map(s => ({ s, b: box(s) })) }; });
+  const pairs = [];
   for (let i = 0; i < W.length; i++) for (let j = i + 1; j < W.length; j++) {
-    const A = W[i], B = W[j];
-    if ([0, 1, 2].some(k => A.b[1][k] < B.b[0][k] || B.b[1][k] < A.b[0][k])) continue;
-    let v = 0; try { const x = A.w.intersect(B.w); v = K.isEmpty(x) ? 0 : K.volume(x); } catch (e) { continue; }
-    if (v > 5e-3) hits.push({ a: A.o, b: B.o, v }); // (rounding-level overlaps are touching, not clashing)
+    if (apart(W[i].b, W[j].b)) continue;
+    const sp = [];
+    for (const a of W[i].parts) for (const b of W[j].parts) if (!apart(a.b, b.b)) sp.push([a.s, b.s]);
+    if (sp.length) pairs.push({ A: W[i], B: W[j], sp });
   }
+  const total = pairs.reduce((n, q) => n + q.sp.length, 0), hits = [];
+  let done = 0, t0 = performance.now();
+  for (const q of pairs) {
+    let v = 0;
+    for (const [a, b] of q.sp) {
+      try { const x = a.intersect(b); v += K.isEmpty(x) ? 0 : K.volume(x); } catch (e) { /* (a pair the kernel cannot intersect is skipped) */ }
+      done++;
+      if (performance.now() - t0 > 150 && done < total) { toast(`Checking interference… ${done} / ${total}`, 5000); await new Promise(r => setTimeout(r, 0)); t0 = performance.now(); if (run !== interfRun) return; }
+    }
+    if (v > 5e-3) hits.push({ a: q.A.o, b: q.B.o, v }); // (rounding-level overlaps are touching, not clashing)
+  }
+  if (run !== interfRun) return;
+  lastInterference = hits.map(x => ({ a: x.a.id, b: x.b.id, v: x.v }));
   if (!hits.length) { toast(`No interference between ${list.length} solids`); return; }
   S.ed.selected = new Set(hits.flatMap(x => [x.a.id, x.b.id])); S.ed.active = hits[0].a.id; S.ed.pick = 'solid';
   popover($('#btn-menu'), h('div', {}, h('div', { class: 'mtitle' }, `Interference · ${hits.length} pair${hits.length > 1 ? 's' : ''}`),
@@ -1254,6 +1272,7 @@ function buildStatic() {
 
 function bindEvents() {
   view.handlers.tap = onTap;
+  view.handlers.pressTarget = (x, y) => valueHit(x, y) || (S.ed.mode === 'object' && Draw.labelHit(x, y));
   $('#btn-cmd').onclick = () => openPalette();
   $('#btn-undo').onclick = () => undo();
   $('#btn-redo').onclick = () => redo();
@@ -1444,7 +1463,7 @@ function renderActions() {
     const faceLinked = faces && S.ed.faces.some(f => objById(f.obj)?.link);
     if (faces === 1) c.push(act(I.plane, 'Plane here', () => planeHere()));
     if (faces && faceLinked) { if (!c.length) c.push(act(I.measure, 'Inquiry', e => openInquiryMenu(e.currentTarget))); }
-    else if (faces) c.push(...(!cyl ? [] : [act(I.thread, 'Thread', () => runOp(F.threadOp), 'primary')]), ...(flat ? [act(I.extrude, 'Push/Pull', () => modifier('pushpull'), prof ? '' : 'primary'), act(I.hole, 'Hole', () => runOp(F.holeOp)), act(I.recess, 'Recess', () => runOp(F.recessOp))] : []), act(I.inset, 'Shell', () => modifier('shell'), flat || prof ? '' : 'primary'), ...(flat ? [act(I.cone, 'Draft', () => runOp(F.draftOp))] : []), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)));
+    else if (faces) c.push(...(!cyl ? [] : [act(I.thread, 'Thread', () => runOp(F.threadOp), 'primary')]), ...(flat ? [act(I.extrude, 'Push/Pull', () => modifier('pushpull'), prof ? '' : 'primary'), act(I.hole, 'Hole', () => runOp(F.holeOp)), act(I.recess, 'Recess', () => runOp(F.recessOp))] : []), act(I.inset, 'Shell', () => modifier('shell'), flat || prof ? '' : 'primary'), ...(flat || cyl ? [act(I.cone, 'Draft', () => runOp(F.draftOp))] : []), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)));
     if (edges) c.push(act(I.fillet, 'Fillet', () => modifier('fillet'), 'primary'), act(I.chamfer, 'Chamfer', () => modifier('chamfer')),
       ...(S.ed.edges.some(q => q.pts) ? [act(I.next, 'Chain', () => growEdges(false)), act(I.select, 'Loop', () => growEdges('loop')), act(I.all, 'All edges', () => growEdges(true))] : []));
     const textSel = curves && [...S.ed.drawSel].some(id => SK.sketchById(S.ed.sketch)?.ents.find(e => e.id === id)?.t === 'text');
@@ -2145,7 +2164,7 @@ boot();
 OPS.setPivotHook(o => {
   const r = H.hist().slice(0, H.markerIndex()).find(x => x.op === 'F.mateOp' && !x.off && x.params?.a?.obj === o.id && x.params.b && F.mateGeom(x.params.b)?.kind === 'axis');
   if (!r) return null;
-  const g = F.mateGeom(r.params.b), b = K.worldShape(o).boundingBox.bounds, mid = [0, 1, 2].map(k => (b[0][k] + b[1][k]) / 2);
+  const g = F.mateGeom(r.params.b), b = K.worldBounds(o), mid = [0, 1, 2].map(k => (b[0][k] + b[1][k]) / 2);
   return M.add(g.c, M.mul(g.d, M.dot(M.sub(mid, g.c), g.d)));
 }, o => {
   const r = H.hist().slice(0, H.markerIndex()).filter(x => x.op === 'F.mateOp' && !x.off && !x.err && x.params?.a?.obj === o.id).map(x => F.mateGeom(x.params.b)).find(g => g?.kind === 'axis');
@@ -2155,6 +2174,7 @@ OPS.setPivotHook(o => {
   return { c: r.c, d: r.d[k] < 0 ? M.mul(r.d, -1) : r.d };
 });
 window.StreamLine = { gizmoPartAt, K, S, view, OPS, F, SK, Draw, Cmd, runOp, undo, redo, getLast, M, serialize, setWorkspace, H, BR, isShown, addSketchedPrim, refresh: () => selectionChanged(),
+  checkInterference: async objs => { await checkInterference(objs); return lastInterference; },
   sketching, startCreateSketch, finishSketchEdit, activateSketch, sketchOn: params => { S.ed.planePick = null; createSketchOn(params); return S.ed.editingSketch; } };
 
 // Primitives are built the parametric way: a sketch on a base plane plus an Extrude / Revolve,

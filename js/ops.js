@@ -32,16 +32,19 @@ function restore(base) {
 }
 function apply(op) {
   op.handle = null;
+  const xf = !op.def.sketchOnly && !op.def.presentation && /^(Move|Rotate)$/.test(op.def.label?.(op.params) || '') ? new Set(op.def.touch?.(op.params)?.ids || []) : null;
+  // (compared by where three points of each part land, not by the angles: −180° and 180° are the same turn)
+  const pose = () => S.doc.objects.filter(o => xf?.has(o.id)).flatMap(o => { const x = xfFor(o); return [[0, 0, 0], [100, 0, 0], [0, 100, 0]].map(q => x.toW(q)); });
+  const orig = xf?.size ? pose() : null;
   let r;
   try { r = op.def.apply(op.params, op); } catch (err) { console.error(err); r = err.message || 'Operation failed'; }
   if (typeof r !== 'string' && !op.def.sketchOnly && !op.def.presentation) { // mated parts follow
-    const xf = /^(Move|Rotate)$/.test(op.def.label?.(op.params) || '') ? new Set(op.def.touch?.(op.params)?.ids || []) : null;
-    // (compared by where three points of each part land, not by the angles: −180° and 180° are the same turn)
-    const pose = () => S.doc.objects.filter(o => xf?.has(o.id)).flatMap(o => { const x = xfFor(o); return [[0, 0, 0], [100, 0, 0], [0, 100, 0]].map(q => x.toW(q)); });
     const before = pose(); H.solveConstraints(op.def.constraint ? { op: op.def.constraint, params: op.params } : null); // (a new mate takes part too)
-    // a move the mates took back (dragging a part along a direction a mate holds)
-    const after = pose();
-    op.heldByMate = !!xf?.size && after.some((q, i) => !before[i] || Math.hypot(q[0] - before[i][0], q[1] - before[i][1], q[2] - before[i][2]) > 1e-3);
+    // a move the mates took back (dragging a part along a direction a mate holds) — not one they only trued up
+    // (a turn about a mate's axis from a pivot a little off it is re-seated on the axis, and that is fine)
+    const after = pose(), far = (A, B) => Math.max(0, ...A.map((q, i) => (B?.[i] ? Math.hypot(q[0] - B[i][0], q[1] - B[i][1], q[2] - B[i][2]) : Infinity)));
+    const undone = far(after, before), asked = orig ? far(before, orig) : 0;
+    op.heldByMate = !!xf?.size && undone > 1e-3 && undone > asked * 0.5;
   }
   return r;
 }

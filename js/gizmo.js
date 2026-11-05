@@ -446,6 +446,8 @@ function typeValue(first) {
   if (first) keypadKey(first);
   return true;
 }
+// (the viewport asks: a press here is on the value bubble — a tap on release, never the precision cursor)
+export const valueHit = (x, y) => !!valueBubble && Math.hypot(valueBubble.x - x, valueBubble.y - y) <= 30;
 export function valueTap(x, y) {
   if (!valueBubble || Math.hypot(valueBubble.x - x, valueBubble.y - y) > 30) return false;
   return typeValue(null);
