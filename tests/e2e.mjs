@@ -140,6 +140,7 @@ try {
   // --- Solid mode
   await p.tap('#ws-seg [data-pick=solid]');
   c = await projW([-10, 8, 4]); await tapV(c.x, c.y);
+  
   check(await st(() => StreamLine.S.ed.selected.size) === 1 && (await ctxBar()).includes('Boolean'), 'Solid mode selects the body; Boolean / Mirror / Shell offered');
   await shot('3-solid');
 
@@ -355,6 +356,26 @@ try {
     return { ok, size: L.getLast()?.params.size };
   });
   check(shrink.ok && shrink.size < 1, `A default fillet too big for a 1 mm plate shrinks to fit (radius ${shrink.size})`);
+  // Mate: a pin's round face onto a hole's round face (same axis), by touch
+  {
+    const ids = await st(() => {
+      const L = StreamLine, F = L.F, XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+      L.runOp(F.sketchOpNew('blk', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 2000, y: 0, w: 30, h: 20 }); F.addEntity(k, { t: 'circle', c: [2010, 10], r: 3 }); }));
+      L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [2002, 2] }], distance: 10, mode: 'new', target: null });
+      L.runOp(F.sketchOpNew('pin', XY(0), null, k => { F.addEntity(k, { t: 'circle', c: [2060, 40], r: 3 }); }));
+      L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [2060, 40] }], distance: 30, mode: 'new', target: null });
+      L.S.ed.selected = new Set(); L.S.ed.pick = 'face'; L.refresh(); return L.S.doc.objects.at(-1).id;
+    });
+    await p.evaluate(() => { [...document.querySelectorAll('#keypad button')].find(b => b.textContent === 'Cancel')?.click(); document.querySelector('#lastop .ib[aria-label=Done]')?.click(); }); await p.waitForTimeout(200);
+    await p.tap('#ws-seg [data-pick=face]');
+    await p.evaluate(() => StreamLine.view.setView('iso')); await p.waitForTimeout(400);
+    await frame([1995, -5, 0], [2070, 50, 30]);
+    let q = await projW([2063, 40, 15]); await tapV(q.x, q.y);
+    await p.locator('#actions .act', { hasText: 'Mate' }).tap(); await p.waitForTimeout(300);
+    q = await projW([2010, 13, 8]); await tapV(q.x, q.y);
+    const loc = await st(id => StreamLine.S.doc.objects.find(o => o.id === id).loc, ids);
+    check(Math.abs(loc[0] + 50) < 1e-6 && Math.abs(loc[1] + 30) < 1e-6 && Math.abs(loc[2]) < 1e-9, `Mate: tapping a pin then a hole puts the pin on the hole's axis (moved ${loc.map(v => +v.toFixed(6)).join(', ')})`);
+  }
   // assemblies: insert a saved project as a linked component, change its source, sync
   const asm = await p.evaluate(async () => {
     const L = StreamLine, PJ = await import('./js/projects.js'), ops = await import('./js/ops.js');

@@ -54,7 +54,7 @@ async function boot() {
     const rail = vis($('#toolrail')), top = vis($('#topbar'));
     const l = rail && rail.left < vr.width / 2 ? rail.right - vr.left : 0;
     const t = top ? top.bottom - vr.top : 0; // (the draw card shifts the picture itself, see renderLastOp)
-    const bottoms = ['#stationbar', '#vtools-r', '#nav', '#lastop'].map(q => vis($(q))).filter(Boolean).map(r => r.top - vr.top).filter(y => y > vr.height / 2);
+    const bottoms = ['#stationbar', '#vtools-r', '#nav', '#lastop', '#cmdbar', '#timeline'].map(q => vis($(q))).filter(Boolean).map(r => r.top - vr.top).filter(y => y > vr.height / 2);
     const b = bottoms.length ? vr.bottom - vr.top - Math.min(...bottoms) : 0;
     return { l: Math.max(0, l), r: 0, t: Math.max(0, t), b: Math.max(0, b) };
   };
@@ -431,6 +431,7 @@ function onTap(x, y) {
   if (S.ed.mode === 'object' && (Draw.EDIT_TOOLS.has(S.ed.tool) || ['trim', 'dim', 'corner', 'extend'].includes(S.ed.tool))) return Draw.tap(x, y);
   if (S.ed.mode === 'object' && Draw.tapLabel(x, y, S.ed.pick !== 'face' || S.ed.editingSketch != null)) return; // Face mode taps go to regions
   if (S.ed.mode === 'object' && S.ed.pick === 'edge') return curveOrEdgeTap(x, y);
+  if (S.ed.mode === 'object' && S.ed.pick === 'face' && S.ed.mateFrom) return mateTap(x, y);
   if (S.ed.mode === 'object' && S.ed.pick === 'face') return regionOrFaceTap(x, y);
   if (S.ed.mode === 'object') {
     const hit = view.pickObject(x, y);
@@ -587,6 +588,46 @@ Draw.setSolidCirclePicker((x, y) => {
   return { r: clean32(M.dist(a, c)), c: c.map(clean32), closed: !!e.closed, len: e.len };
 });
 // ---------- assembly helpers ----------
+// Mate: the first face's body moves so that face lands on the second one — flat faces become coplanar
+// (face to face, or flush), round faces become coaxial (a pin in its hole). It is a normal Move step.
+function faceGeom(f) {
+  const o = objById(f.obj); if (!o || !o.shape) return null;
+  const xf = xfFor(o), pl = xf.toL(f.p), nl = M.norm(M.sub(xf.toL(M.add(f.p, f.n)), xf.toL(f.p)));
+  const hit = K.faceAt(o.shape, pl, f.planar === false ? null : nl); if (!hit) return null;
+  const toWd = d => M.norm(M.sub(xf.toW(M.add(pl, d)), xf.toW(pl)));
+  if (hit.f.geomType === 'PLANE') { const fn = hit.f.normalAt(); return { kind: 'plane', o, n: toWd(M.norm([fn.x, fn.y, fn.z])), p: f.p }; }
+  const cy = K.cylinderOf(hit.f);
+  if (cy) return { kind: 'axis', o, c: xf.toW(cy.c), d: toWd(cy.d), R: cy.R };
+  return null;
+}
+function startMate() {
+  const f = S.ed.faces[0]; if (!f) return;
+  const g = faceGeom(f); if (!g) return toast('Mate works with flat and round (cylindrical) faces');
+  S.ed.mateFrom = f; S.ed.pick = 'face';
+  toast(`Now tap the face to put “${g.o.name}” against`); refresh();
+}
+function mateTap(x, y) {
+  const from = S.ed.mateFrom; S.ed.mateFrom = null;
+  const prev = S.ed.faces; S.ed.faces = []; faceTap(x, y);
+  const to = S.ed.faces[0];
+  if (!to || to.obj === from.obj) { S.ed.faces = prev; toast(to ? 'Pick a face on another body' : 'Mate cancelled'); return refresh(); }
+  const A = faceGeom(from), B = faceGeom(to);
+  if (!A || !B) return toast('Mate works with flat and round (cylindrical) faces');
+  let v;
+  if (A.kind === 'plane' && B.kind === 'plane') {
+    const k = M.dot(A.n, B.n);
+    if (Math.abs(k) < 0.9999) return toast('Those faces are not parallel — rotate the part first');
+    v = M.mul(B.n, M.dot(B.n, M.sub(B.p, A.p))); // slide along the normal onto the other face's plane
+  } else if (A.kind === 'axis' && B.kind === 'axis') {
+    if (Math.abs(M.dot(A.d, B.d)) < 0.9999) return toast('Those axes are not parallel — rotate the part first');
+    const dc = M.sub(B.c, A.c); v = M.sub(dc, M.mul(B.d, M.dot(dc, B.d))); // onto the same axis, keeping its height
+  } else return toast('Mate a flat face to a flat face, or a round face to a round face');
+  S.ed.faces = []; S.ed.pick = 'solid'; S.ed.selected = new Set([A.o.id]); S.ed.active = A.o.id;
+  if (M.len(v) < 1e-9) { toast('Already in place'); return selectionChanged(); }
+  runOp(OPS.transform, { mode: 'move', x: v[0], y: v[1], z: v[2] });
+  toast(`${A.o.name} moved ${fmtLen(M.len(v))} onto ${objById(to.obj).name}${A.kind === 'axis' ? ' (same axis — slide it along with Move)' : ''}`);
+  selectionChanged();
+}
 // show only the selected bodies (a view setting, not saved) until Show all
 function isolate(on) {
   if (on) { const ids = selectedObjs().map(o => o.id); if (!ids.length) return toast('Select the bodies to isolate'); S.ed.isolate = new Set(ids); toast(`Isolated ${ids.length} bod${ids.length === 1 ? 'y' : 'ies'} — Show all brings the rest back`); }
@@ -798,7 +839,7 @@ function renderViewButtons() {
 function act(icon, label, fn, cls = '') { return h('button', { class: 'act ' + cls, onclick: fn }, h('span', { html: icon }), h('span', {}, label)); }
 function renderActions() {
   const row = $('#actions');
-  const key = S.ed.workspace + S.ed.mode + S.ed.selectMode + S.ed.pick + (S.ed.editingSketch ?? '') + (getLast() && getLast().committed && !$('#lastop').hidden ? 'op' : '') + selectedObjs().map(o => o.link ? (PJ.outOfDate(o.link.pid) ? 'L!' : 'L') : '').join('') + S.ed.faces.map(f => f.planar === false ? 'c' : 'f').join('') + [S.ed.drawSel.size, S.ed.profiles.length, S.ed.faces.length, S.ed.edges.length, S.ed.pick === 'solid' ? S.ed.selected.size : 0].join();
+  const key = (S.ed.mateFrom ? 'mate' : '') + (S.ed.isolate ? 'iso' : '') + S.ed.workspace + S.ed.mode + S.ed.selectMode + S.ed.pick + (S.ed.editingSketch ?? '') + (getLast() && getLast().committed && !$('#lastop').hidden ? 'op' : '') + selectedObjs().map(o => o.link ? (PJ.outOfDate(o.link.pid) ? 'L!' : 'L') : '').join('') + S.ed.faces.map(f => f.planar === false ? 'c' : 'f').join('') + [S.ed.drawSel.size, S.ed.profiles.length, S.ed.faces.length, S.ed.edges.length, S.ed.pick === 'solid' ? S.ed.selected.size : 0].join();
   if (row.dataset.k === key) return;
   row.dataset.k = key;
   if (S.ed.workspace === 'draw') {
@@ -864,6 +905,8 @@ function renderActions() {
     if (S.ed.editingSketch != null && SK.sketchById(S.ed.editingSketch)) c.push(act(I.check, 'Finish', () => finishSketchEdit(), 'primary'), act(I.dim, 'Dimension', () => setTool('dim')), ...(curves ? [] : [ act(I.trim, 'Trim', () => setTool('trim')), act(I.line, 'Line', () => setTool('line')), act(I.rect, 'Rectangle', () => setTool('rect')), act(I.circle, 'Circle', () => setTool('circle'))]));
     if (prof) c.push(act(I.extrude, 'Extrude', () => startExtrude(), 'primary'), act(I.revolve, 'Revolve', () => runOp(F.revolve)), ...(prof >= 2 ? [act(I.cone, 'Loft', () => runOp(F.loftOp))] : []), act(I.arc, 'Sweep', () => runOp(F.sweepOp)));
     const flat = S.ed.faces.every(f => f.planar !== false); // push/pull and draft work on flat faces
+    if (S.ed.mateFrom) { row.replaceChildren(act(I.close, 'Cancel mate', () => { S.ed.mateFrom = null; refresh(); }, 'primary')); return; }
+    if (faces === 1 && S.doc.objects.filter(o => o.shape && isShown(o)).length > 1) c.push(act(I.join, 'Mate', () => startMate()));
     if (faces) c.push(...(flat ? [] : [act(I.thread, 'Thread', () => runOp(F.threadOp), 'primary')]), ...(flat ? [act(I.extrude, 'Push/Pull', () => modifier('pushpull'), prof ? '' : 'primary'), act(I.hole, 'Hole', () => runOp(F.holeOp)), act(I.recess, 'Recess', () => runOp(F.recessOp))] : []), act(I.inset, 'Shell', () => modifier('shell'), flat || prof ? '' : 'primary'), ...(flat ? [act(I.cone, 'Draft', () => runOp(F.draftOp))] : []), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)));
     if (edges) c.push(act(I.fillet, 'Fillet', () => modifier('fillet'), 'primary'), act(I.chamfer, 'Chamfer', () => modifier('chamfer')),
       ...(S.ed.edges.some(q => q.pts) ? [act(I.next, 'Chain', () => growEdges(false)), act(I.all, 'All edges', () => growEdges(true))] : []));
@@ -1084,7 +1127,7 @@ function renderLastOp() {
     const docked = !el.hidden && matchMedia('(max-width: 500px)').matches;
     const side = !el.hidden && matchMedia('(orientation: landscape) and (max-height: 500px)').matches;
     // a draw card across the top (phone) pushes the picture down by half its height instead
-    const dc = $('#draw-card'), dcTop = !dc.hidden && matchMedia('(max-width: 500px)').matches && dc.getBoundingClientRect().top < innerHeight / 3;
+    const dc = $('#draw-card'), dcTop = !dc.hidden && S.ed.tool !== 'select' && matchMedia('(max-width: 500px)').matches && dc.getBoundingClientRect().top < innerHeight / 3;
     const dcOff = dcTop ? -Math.max(0, dc.getBoundingClientRect().bottom - $('#topbar').getBoundingClientRect().bottom) / 2 : 0;
     const off = docked ? el.offsetHeight / 2 : dcOff, offX = side ? -(el.offsetWidth + 40) / 2 : 0; // move the model out from under the dialog
     if (Math.abs((view.offsetY || 0) - off) > 1 || Math.abs((view.offsetX || 0) - offX) > 1) { view.offsetY = off; view.offsetX = offX; view.render(); }
