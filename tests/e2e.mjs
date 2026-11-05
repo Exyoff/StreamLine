@@ -417,6 +417,13 @@ try {
     await p.locator('#actions .act', { hasText: 'Mate' }).tap(); await p.waitForTimeout(300);
     q = await projW([2010, 13, 8]); await tapV(q.x, q.y);
     const loc = await st(id => StreamLine.S.doc.objects.find(o => o.id === id).loc, ids);
+    // the mate is a step: when the hole moves (its sketch circle edited), the pin follows on the next rebuild
+    const follow = await st(id => {
+      const L = StreamLine, sk = L.S.doc.sketches.find(k => k.name.startsWith('Sketch') && k.ents.some(e => e.t === 'circle' && e.c[0] === 2010));
+      L.runOp(L.F.sketchOp('move hole', sk.id, k => { k.ents.find(e => e.t === 'circle').c = [2015, 12]; }));
+      return { loc: L.S.doc.objects.find(o => o.id === id).loc, hist: L.H.hist().some(r => r.op === 'F.mateOp'), errs: L.H.hist().filter(r => r.err).map(r => r.err) };
+    }, ids);
+    check(follow.hist && Math.abs(follow.loc[0] + 45) < 1e-6 && Math.abs(follow.loc[1] + 28) < 1e-6 && !follow.errs.length, `Mate is a history step: moving the hole moves the pin with it (${follow.loc.map(v => +v.toFixed(6)).join(', ')}${follow.errs.length ? ' · ' + follow.errs.join('; ') : ''})`);
     check(Math.abs(loc[0] + 50) < 1e-6 && Math.abs(loc[1] + 30) < 1e-6 && Math.abs(loc[2]) < 1e-9, `Mate: tapping a pin then a hole puts the pin on the hole's axis (moved ${loc.map(v => +v.toFixed(6)).join(', ')})`);
   }
   // assemblies: insert a saved project as a linked component, change its source, sync

@@ -617,30 +617,7 @@ Draw.setSolidCirclePicker((x, y) => {
 // ---------- assembly helpers ----------
 // Mate: the first face's body moves so that face lands on the second one — flat faces become coplanar
 // (face to face, or flush), round faces become coaxial (a pin in its hole). It is a normal Move step.
-function faceGeom(f) {
-  const o = objById(f.obj); if (!o || !o.shape) return null;
-  const xf = xfFor(o), pl = xf.toL(f.p), nl = M.norm(M.sub(xf.toL(M.add(f.p, f.n)), xf.toL(f.p)));
-  const hit = K.faceAt(o.shape, pl, f.planar === false ? null : nl); if (!hit) return null;
-  const toWd = d => M.norm(M.sub(xf.toW(M.add(pl, d)), xf.toW(pl)));
-  if (hit.f.geomType === 'PLANE') { // the exact plane (not the float32 tap point)
-    const fn = hit.f.normalAt(), c0 = hit.f.center, c = typeof c0 === 'function' ? c0() : c0;
-    return { kind: 'plane', o, n: toWd(M.norm([fn.x, fn.y, fn.z])), p: xf.toW([c.x, c.y, c.z]) };
-  }
-  const cy = K.cylinderOf(hit.f) || K.coneAxis(hit.f);
-  if (cy) return { kind: 'axis', o, c: xf.toW(cy.c), d: toWd(cy.d) };
-  // a thread or other free-form round face: use the nearest round edge of the body for the axis
-  let best = null;
-  for (const e of o.brep.edges) {
-    if (e.type !== 'CIRCLE' || !e.closed || e.seam) continue;
-    const d = K.polyDist(pl, e.pts); if (!best || d < best.d) best = { d, e };
-  }
-  if (best) {
-    const q = best.e.pts.slice(0, -1), c = [0, 1, 2].map(k => q.reduce((s, v) => s + v[k], 0) / q.length);
-    const n = M.norm(M.cross(M.sub(q[0], c), M.sub(q[Math.floor(q.length / 4)], c)));
-    return { kind: 'axis', o, c: xf.toW(c), d: toWd(n) };
-  }
-  return null;
-}
+const faceGeom = f => F.mateGeom(f);
 function startMate() {
   const f = S.ed.faces[0]; if (!f) return;
   const g = faceGeom(f); if (!g) return toast('Mate works with flat and round (cylindrical) faces');
@@ -653,22 +630,13 @@ function mateTap(x, y) {
   const to = S.ed.faces[0];
   if (!to) { S.ed.faces = prev; toast('Mate cancelled'); return refresh(); }
   if (to.obj === from.obj) { S.ed.faces = prev; S.ed.mateFrom = from; toast('Pick a face on the other body'); return refresh(); }
-  const A = faceGeom(from), B = faceGeom(to);
   const retry = m => { S.ed.mateFrom = from; S.ed.faces = prev; toast(m + ' — tap another face, or Cancel mate'); refresh(); };
-  if (!A || !B) return retry('Mate works with flat and round faces');
-  let v;
-  if (A.kind === 'plane' && B.kind === 'plane') {
-    const k = M.dot(A.n, B.n);
-    if (Math.abs(k) < 0.9999) return retry('Those faces are not parallel (rotate the part first)');
-    v = M.mul(B.n, M.dot(B.n, M.sub(B.p, A.p))); // slide along the normal onto the other face's plane
-  } else if (A.kind === 'axis' && B.kind === 'axis') {
-    if (Math.abs(M.dot(A.d, B.d)) < 0.9999) return retry('Those axes are not parallel (rotate the part first)');
-    const dc = M.sub(B.c, A.c); v = M.sub(dc, M.mul(B.d, M.dot(dc, B.d))); // onto the same axis, keeping its height
-  } else return retry('Mate a flat face to a flat face, or a round face to a round face');
-  S.ed.faces = []; S.ed.pick = 'solid'; S.ed.selected = new Set([A.o.id]); S.ed.active = A.o.id;
-  if (M.len(v) < 1e-9) { toast('Already in place'); return selectionChanged(); }
-  runOp(OPS.transform, { mode: 'move', x: v[0], y: v[1], z: v[2] });
-  toast(`${A.o.name} moved ${fmtLen(M.len(v))} onto ${objById(to.obj).name}${A.kind === 'axis' ? ' (same axis — slide it along with Move)' : ''}`);
+  const err = F.mateSolve(from, to); if (typeof err === 'string') return retry(err);
+  const A = objById(from.obj);
+  S.ed.faces = []; S.ed.pick = 'solid'; S.ed.selected = new Set([A.id]); S.ed.active = A.id;
+  // a Mate step in the history: it is solved again whenever the parts change (e.g. after Sync)
+  if (!runOp(F.mateOp, { a: JSON.parse(JSON.stringify(from)), b: JSON.parse(JSON.stringify(to)) })) return retry('Could not mate those faces');
+  toast(`${A.name} mated to ${objById(to.obj).name}${err.kind === 'axis' ? ' (same axis — slide it along with Move)' : ''}`);
   selectionChanged();
 }
 // show only the selected bodies (a view setting, not saved) until Show all
