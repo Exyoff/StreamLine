@@ -512,6 +512,66 @@ try {
   });
   check(Math.abs(asm.v0 - 8000) < 1e-6 && Math.abs(asm.v1 - 14000) < 1e-6 && asm.stale && asm.fresh && asm.refused,
     `Assemblies: insert a saved project, see it go out of date, Sync to its new version, linked parts stay read-only (${asm.v0.toFixed(0)} → ${asm.v1.toFixed(0)} mm³)`);
+  // round 10: a feature moved inside a part (same volume and area) still gives the part a new version
+  const sigv = await p.evaluate(async () => {
+    const L = StreamLine, PJ = await import('./js/projects.js'), LIB = await import('./js/library.js');
+    await PJ.newProject(); L.addSketchedPrim('cube'); await PJ.saveNow(); const id = L.S.doc.project.id, v0 = (await LIB.get(id)).version;
+    const o = L.S.doc.objects.find(q => q.shape); o.shape = L.K.translated(o.shape, [3, 0, 0]); await PJ.saveNow();
+    return [v0, (await LIB.get(id)).version];
+  });
+  check(sigv[1] === sigv[0] + 1, `A part whose feature moved (same volume and area) gets a new version, so Sync sees it (${sigv.join(' → ')})`);
+  // text → Outline → letters' filled areas selected → Extrude
+  const txt = await p.evaluate(async () => {
+    const L = StreamLine;
+    L.runOp(L.F.newSketch, { plane: 'XY' }); const sk = L.SK.activeSketch();
+    L.runOp(L.F.sketchOp('Text', sk.id, k => { L.F.addEntity(k, { t: 'text', p: [300, 0], h: 10, str: 'DOB', rot: 0 }); }));
+    const id = L.SK.sketchById(sk.id).ents.find(e => e.t === 'text').id; L.S.ed.sketch = sk.id; L.S.ed.drawSel = new Set([id]); L.refresh();
+    const btn = [...document.querySelectorAll('#actions button')].some(b => /Outline/.test(b.textContent));
+    await L.Draw.outlineText();
+    const prof = L.S.ed.profiles.slice(), before = L.S.doc.objects.length;
+    L.runOp(L.F.extrude, { pts: prof, distance: 2, mode: 'new', target: null });
+    const made = L.S.doc.objects.slice(before).filter(o => o.shape), vol = made.reduce((a, o) => a + L.K.volume(o.shape), 0);
+    const top = Math.max(...made.map(o => L.K.worldShape(o).boundingBox.bounds[1][1]));
+    return { btn, n: prof.length, vol, top, text: L.SK.sketchById(sk.id).ents.some(e => e.t === 'text') };
+  });
+  check(txt.btn && txt.n === 3 && !txt.text && txt.vol > 60 && txt.vol < 2 * 3 * 10 * 8 && Math.abs(txt.top - 10) < 0.3,
+    `Text → Outline gives closed letters (D, O, B with their holes) that extrude (${txt.n} areas, ${txt.vol.toFixed(1)} mm³, cap height ${txt.top.toFixed(2)})`);
+  // Plane here: typed coordinates are the model's own (the origin is not the tapped point)
+  const ph = await p.evaluate(async () => {
+    const L = StreamLine, PJ = await import('./js/projects.js');
+    await PJ.newProject(); L.addSketchedPrim('cube'); const o = L.S.doc.objects.find(q => q.shape), z = L.K.worldShape(o).boundingBox.bounds[1][2];
+    L.S.ed.pick = 'face'; L.S.ed.faces = [{ obj: o.id, n: [0, 0, 1], p: [3, 4, z], planar: true }]; L.refresh();
+    [...document.querySelectorAll('#actions button')].find(b => /Plane here/.test(b.textContent))?.click();
+    return { o: L.S.ed.cplane?.o, z };
+  });
+  check(ph.o && Math.abs(ph.o[0]) < 1e-6 && Math.abs(ph.o[1]) < 1e-6 && Math.abs(ph.o[2] - ph.z) < 1e-6, `Plane here: the plane's origin sits over the world origin, so typed X/Y match the model (${ph.o?.map(v => +v.toFixed(6)).join(', ')})`);
+  // selected curves: Rotate starts the 2D command (not the 3D gizmo)
+  const rot = await p.evaluate(async () => {
+    const L = StreamLine;
+    L.runOp(L.F.newSketch, { plane: 'XY' }); const sk = L.SK.activeSketch();
+    L.runOp(L.F.sketchOp('Line', sk.id, k => { L.F.addEntity(k, { t: 'line', a: [500, 0], b: [510, 0] }); }));
+    const ents = () => L.SK.sketchById(sk.id).ents, id = ents()[ents().length - 1].id; L.S.ed.sketch = sk.id; L.S.ed.drawSel = new Set([id]); L.S.ed.pick = 'edge'; L.refresh();
+    [...document.querySelectorAll('#actions button')].find(b => /^\s*Rotate\s*$/.test(b.textContent))?.click();
+    const live = L.Draw.curveCmd(), card = !document.querySelector('#draw-card')?.hidden;
+    L.Draw.typed('500,0'); L.Draw.typed('90');
+    const e = ents().find(q => q.id === id);
+    return { live, card, b: e?.b };
+  });
+  check(rot.live && rot.card && rot.b && Math.abs(rot.b[0] - 500) < 1e-6 && Math.abs(rot.b[1] - 10) < 1e-6, `Selected curves: Rotate runs the 2D command and turns them (end at ${rot.b?.map(v => +v.toFixed(6)).join(', ')})`);
+  // a flat-to-flat mate with a gap (drawer clearance)
+  const gap = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, K = L.K, ops = await import('./js/ops.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    L.runOp(F.sketchOpNew('g1', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 9000, y: 0, w: 20, h: 20 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [9005, 5] }], distance: 10, mode: 'new', target: null }); const a = L.S.doc.objects.at(-1).id;
+    L.runOp(F.sketchOpNew('g2', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 9100, y: 0, w: 10, h: 10 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [9105, 5] }], distance: 5, mode: 'new', target: null }); const b = L.S.doc.objects.at(-1).id;
+    L.runOp(F.mateOp, { a: { obj: b, n: [0, 0, -1], p: [9105, 5, 0], planar: true }, b: { obj: a, n: [0, 0, 1], p: [9005, 5, 10], planar: true }, gap: 0 });
+    const z0 = K.worldShape(L.S.doc.objects.find(o => o.id === b)).boundingBox.bounds[0][2];
+    const fields = (L.F.mateOp.fields(L.getLast().params) || []).map(f => f.key);
+    ops.updateOp({ gap: 0.5 }); ops.commit();
+    return { z0, z1: K.worldShape(L.S.doc.objects.find(o => o.id === b)).boundingBox.bounds[0][2], fields };
+  });
+  check(Math.abs(gap.z0 - 10) < 1e-6 && Math.abs(gap.z1 - 10.5) < 1e-6 && gap.fields.includes('gap'), `Flat mates take a gap: 0 → face to face (z ${+gap.z0.toFixed(6)}), 0.5 mm → stood off (z ${+gap.z1.toFixed(6)})`);
   await shot('5-timeline');
 } catch (e) {
   await p.screenshot({ path: OUT + 'crash.png' }).catch(() => {});
