@@ -526,6 +526,34 @@ export const polarPattern = {
     S.ed.selected = new Set(made);
   },
 };
+// rows (and columns) of copies of the selected bodies: e.g. vent-slot cutters, then Subtract them in one go
+export const linearPattern = {
+  label: p => `Linear Pattern ${p.count}${p.count2 > 1 ? '×' + p.count2 : ''}`,
+  defaults: () => ({ count: 3, spacing: 10, dir: 'x', count2: 1, spacing2: 10, dir2: 'y' }),
+  prepare(p) { if (!S.ed.selected.size) return 'Select a body'; p.ids ??= [...S.ed.selected]; p._base ??= S.doc.nextId; },
+  touch: () => ({ ids: [] }),
+  fields: p => [{ key: 'count', label: 'Count', kind: 'int', min: 1, max: 500 }, lenF('spacing', 'Spacing (− flips)'), { key: 'dir', label: 'Direction', kind: 'choice', options: [['x', 'X'], ['y', 'Y'], ['z', 'Z']], wide: true },
+    { key: 'count2', label: 'Rows', kind: 'int', min: 1, max: 500 }, ...(p.count2 > 1 ? [lenF('spacing2', 'Row spacing'), { key: 'dir2', label: 'Row direction', kind: 'choice', options: [['x', 'X'], ['y', 'Y'], ['z', 'Z']], wide: true }] : [])],
+  apply(p) {
+    const n1 = Math.max(1, Math.round(p.count)), n2 = Math.max(1, Math.round(p.count2 || 1));
+    if (n1 * n2 < 2) return 'Count must make at least 2 copies';
+    if (n1 * n2 > 1000) return 'That is more than 1000 copies';
+    if (n2 > 1 && p.dir2 === p.dir) return 'Rows need a different direction';
+    let id = p._base; const made = [...p.ids];
+    for (let j = 0; j < n2; j++) for (let i = 0; i < n1; i++) {
+      if (!i && !j) continue;
+      const d = M.add(M.mul(AX[p.dir], i * p.spacing), M.mul(AX[p.dir2], j * (p.spacing2 || 0)));
+      for (const oid of p.ids) {
+        const o = objById(oid); if (!o) continue;
+        const q = newObject(o.name, o.shape ? null : new M.PolyMesh(o.mesh.v.map(v => v.slice()), o.mesh.f.map(f => f.slice())), M.add(o.loc, d), id++);
+        q.rot = o.rot.slice(); q.scl = o.scl.slice(); q.color = o.color; q.layer = o.layer;
+        if (o.shape) K.setShape(q, o.shape); // same local shape, shifted placement (shapes are shared values)
+        S.doc.objects.push(q); made.push(q.id);
+      }
+    }
+    S.ed.selected = new Set(made);
+  },
+};
 export const sliceOp = {
   label: () => 'Slice',
   defaults: () => ({ plane: 'z' }),
