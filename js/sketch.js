@@ -440,8 +440,17 @@ export function lineAngle(sk, d) {
   x = Math.atan2(Math.sin(x), Math.cos(x));
   return x * 180 / Math.PI;
 }
+// ---------- dimensions ----------
+// kinds: lin (point to point, aligned) · hor / ver (point to point along X / Y) · pl (point to line, square to it) ·
+// ang (between two lines) · dia / rad (circle, arc). value: the driving value, or null for a driven (reference)
+// dimension that only shows what the sketch measures. at: where its value sits (sketch coordinates).
+// the curves a dimension measures
+export const dimEnts = d => d.kind === 'lin' || d.kind === 'hor' || d.kind === 'ver' ? [d.A.e, d.B.e] : d.kind === 'pl' ? [d.P.e, d.l] : d.kind === 'ang' ? [d.la, d.lb] : [d.e];
+// signed distance of p from the line through l (positive on its left, looking from a to b)
+export function lineSide(l, p) { const dx = l.b[0] - l.a[0], dy = l.b[1] - l.a[1], L = Math.hypot(dx, dy) || 1e-300; return ((p[1] - l.a[1]) * dx - (p[0] - l.a[0]) * dy) / L; }
 export function dimValue(sk, d) {
   if (d.kind === 'hor' || d.kind === 'ver') { const A = refPoint(sk, d.A), B = refPoint(sk, d.B); return A && B ? Math.abs(d.kind === 'hor' ? B[0] - A[0] : B[1] - A[1]) : null; }
+  if (d.kind === 'pl') { const P = refPoint(sk, d.P), l = entById(sk, d.l); return P && l && l.t === 'line' ? Math.abs(lineSide(l, P)) : null; }
   if (d.kind === 'ang') { const v = lineAngle(sk, d); return v == null ? null : Math.abs(v); }
   if (d.kind === 'lin') { const A = refPoint(sk, d.A), B = refPoint(sk, d.B); return A && B ? d2(A, B) : null; }
   const e = entById(sk, d.e); if (!e) return null;
@@ -455,7 +464,7 @@ export function setDimValue(sk, d, v) {
         const a = entById(sk, d.la), b = entById(sk, d.lb);
         if (a && b) { const base = Math.atan2(a.b[1] - a.a[1], a.b[0] - a.a[0]) + d.value * Math.PI / 180, L = d2(b.a, b.b); b.b = [b.a[0] + L * Math.cos(base), b.a[1] + L * Math.sin(base)]; }
       }
-    }, { heavyRefs: d.kind === 'lin' || d.kind === 'hor' || d.kind === 'ver' ? [d.A] : d.kind === 'ang' ? [{ e: d.la, k: 'a' }, { e: d.la, k: 'b' }] : [] });
+    }, { heavyRefs: d.kind === 'lin' || d.kind === 'hor' || d.kind === 'ver' ? [d.A] : d.kind === 'ang' ? [{ e: d.la, k: 'a' }, { e: d.la, k: 'b' }] : d.kind === 'pl' ? [{ e: d.l, k: 'a' }, { e: d.l, k: 'b' }] : [] });
     if (!err) return;
     d.value = null; // fall back to a direct edit below
   }
@@ -466,6 +475,13 @@ export function setDimValue(sk, d, v) {
     d.value = sgn * v; return;
   }
   if (d.value !== undefined) d.value = v;
+  if (d.kind === 'pl') { // the point slides square to the line until it is v away, on the side it was
+    const P = refPoint(sk, d.P), l = entById(sk, d.l); if (!P || !l) return 'Missing point or line';
+    const dx = l.b[0] - l.a[0], dy = l.b[1] - l.a[1], L = Math.hypot(dx, dy); if (L < 1e-12) return 'The line has no length';
+    const side = lineSide(l, P) < 0 ? -1 : 1, nx = -dy / L * side, ny = dx / L * side, cur = Math.abs(lineSide(l, P));
+    movePoint(sk, d.P, [P[0] + nx * (v - cur), P[1] + ny * (v - cur)]);
+    return;
+  }
   if (d.kind === 'lin') {
     const A = refPoint(sk, d.A), B = refPoint(sk, d.B);
     const L = d2(A, B); if (L < 1e-12) return 'Points coincide';
@@ -499,7 +515,7 @@ export function toDXF(sk) {
 export function pruneCons(sk) {
   const ids = new Set(sk.ents.map(e => e.id));
   sk.cons = (sk.cons || []).filter(c => ids.has(c.a) && (c.b == null || ids.has(c.b)) && (!c.p || ids.has(c.p.e)));
-  sk.ents = sk.ents.filter(d => d.t !== 'dim' || (d.kind === 'lin' || d.kind === 'hor' || d.kind === 'ver' ? ids.has(d.A.e) && ids.has(d.B.e) && refPoint(sk, d.A) && refPoint(sk, d.B) : d.kind === 'ang' ? ids.has(d.la) && ids.has(d.lb) : ids.has(d.e)));
+  sk.ents = sk.ents.filter(d => d.t !== 'dim' || (dimEnts(d).every(id => ids.has(id)) && (d.kind === 'lin' || d.kind === 'hor' || d.kind === 'ver' ? refPoint(sk, d.A) && refPoint(sk, d.B) : d.kind === 'pl' ? refPoint(sk, d.P) && entById(sk, d.l)?.t === 'line' : true)));
 }
 export const CONS_LABEL = { h: 'H', v: 'V', par: '∥', perp: '⊥', eq: '=', tan: 'T', conc: '◎', fix: '⚓', mid: 'M' };
 
@@ -616,8 +632,8 @@ export function transformEntities(sk, ids, op, copy = false) {
     sk.cons = (sk.cons || []).filter(c => !(tid.has(c.a) || tid.has(c.b)) || !(c.t === 'fix' || ((op.kind === 'rotate' || op.kind === 'mirror') && (c.t === 'h' || c.t === 'v'))));
     // dimensions on moved geometry now measure what is drawn
     for (const d of sk.ents) if (d.t === 'dim' && d.value != null) {
-      const touches = d.kind === 'lin' ? tid.has(d.A.e) || tid.has(d.B.e) : d.kind === 'ang' ? tid.has(d.la) || tid.has(d.lb) : tid.has(d.e);
-      if (touches) d.value = d.kind === 'ang' ? lineAngle(sk, d) : dimValue(sk, d);
+      const touches = dimEnts(d).some(id => tid.has(id));
+      if (touches) d.value = d.kind === 'ang' ? lineAngle(sk, d) : d.kind === 'hor' || d.kind === 'ver' ? (() => { const A = refPoint(sk, d.A), B = refPoint(sk, d.B); return A && B ? (d.kind === 'hor' ? B[0] - A[0] : B[1] - A[1]) : d.value; })() : dimValue(sk, d);
     }
   }
   return [...tid];
