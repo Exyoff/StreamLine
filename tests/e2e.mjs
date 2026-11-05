@@ -1319,6 +1319,27 @@ try {
   const card2 = await p.evaluate(() => document.querySelectorAll('#lastop .fields > .field').length);
   check(cardA && card1.n === 2 && card1.more && card2 === 4, `On a phone the op card shows its first two settings, the rest behind More (${card1.n} → ${card2})`);
   await closeCard();
+  // closed loops: a four-bar (two links on one ground, a bracket across their far ends) moves as one — turning either
+  // link turns the other about its hinge, the bracket stays on both pins, and no mate is left in conflict
+  const fb = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, m = await import('./js/ops.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }), X0 = 90000;
+    const body = (name, ents, pt, d, z = 0) => { L.runOp(F.sketchOpNew(name, XY(z), null, k => ents.forEach(e => F.addEntity(k, e)))); L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt }], distance: d, mode: 'new', target: null }); m.commit(); L.S.ed.sketch = null; return L.S.doc.objects.filter(o => o.shape).at(-1).id; };
+    const T = body('fbGround', [{ t: 'rect', x: X0 - 15, y: -15, w: 30, h: 60 }, { t: 'circle', c: [X0, 0], r: 3 }, { t: 'circle', c: [X0, 30], r: 3 }], [X0 - 14, -14], 5);
+    const link = y => body('fbLink', [{ t: 'rect', x: X0 - 6, y: y - 6, w: 112, h: 12 }, { t: 'circle', c: [X0, y], r: 3 }, { t: 'circle', c: [X0 + 100, y], r: 3 }], [X0 + 50, y - 5], 5, 5);
+    const A = link(0), B = link(30);
+    const C = body('fbBracket', [{ t: 'rect', x: X0 + 85, y: -15, w: 30, h: 60 }, { t: 'circle', c: [X0 + 100, 0], r: 3 }, { t: 'circle', c: [X0 + 100, 30], r: 3 }], [X0 + 86, -14], 5, 10);
+    const ax = (a, pa, b, pb) => { L.runOp(F.mateOp, { a: { obj: a, p: pa, n: [-1, 0, 0], w: -pa[0], planar: false }, b: { obj: b, p: pb, n: [-1, 0, 0], w: -pb[0], planar: false }, gap: 0, align: 'face' }); m.commit(); };
+    ax(A, [X0 + 3, 0, 7], T, [X0 + 3, 0, 2]); ax(B, [X0 + 3, 30, 7], T, [X0 + 3, 30, 2]); ax(C, [X0 + 103, 0, 12], A, [X0 + 103, 0, 7]); ax(C, [X0 + 103, 30, 12], B, [X0 + 103, 30, 7]);
+    const mine = () => L.H.hist().filter(r => r.op === 'F.mateOp' && [A, B, C].includes(r.params.a.obj));
+    const ctr = id => { const b = L.K.worldBounds(L.S.doc.objects.find(o => o.id === id)); return [0, 1].map(k => +((b[0][k] + b[1][k]) / 2).toFixed(2)).join(); };
+    const turn = (id, ang) => { L.S.ed.selected = new Set([id]); L.S.ed.active = id; L.runOp(L.OPS.transform, { mode: 'rotate', axis: 'm', angle: ang }); m.commit(); };
+    turn(A, 30); const r1 = { B: ctr(B), C: ctr(C), errs: mine().filter(r => r.err).length };
+    turn(B, -50); const r2 = { A: ctr(A), C: ctr(C), errs: mine().filter(r => r.err).length };
+    L.S.ed.selected = new Set(); L.refresh();
+    return { r1, r2 };
+  });
+  check(fb.r1.B === '90043.3,55' && fb.r1.C === '90086.6,65' && !fb.r1.errs && fb.r2.A === '90046.98,-17.1' && fb.r2.C === '90093.97,-19.2' && !fb.r2.errs,
+    `A four-bar moves as one: turning either link turns the other, the bracket stays on both pins, no conflicts (${JSON.stringify(fb)})`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked

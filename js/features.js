@@ -3,7 +3,7 @@ import { S, emit, objById, selectedObjs, isShown } from './state.js';
 import * as SK from './sketch.js';
 import * as M from './mesh.js';
 import { toPolys, boolean, polysToMesh } from './csg.js';
-import { newObject, xfFor, xfOfMatrix, worldVerts, turnObject } from './scene.js';
+import { newObject, xfFor, xfOfMatrix, worldVerts, turnObject, turnAbout } from './scene.js';
 import { defSize } from './operators.js';
 import { fmtLen } from './units.js';
 
@@ -1466,6 +1466,7 @@ export function solveMates(recs) {
   const solve = r => { try { solveMate(r.params); } catch (e) { /* keep the part where it is */ } };
   const solveAll = list => { for (let pass = 0; pass < 2; pass++) list.forEach((r, i) => { solve(r); for (let j = i - 1; j >= 0; j--) if (list[j].params.a.obj === r.params.a.obj) solve(list[j]); }); };
   solveAll(ms);
+  closeLoops(ms, solveAll);
   // a mate left unsatisfied fights another one: say so on its step (red in History) instead of failing silently
   const bad = [];
   for (const r of ms) {
@@ -1478,6 +1479,63 @@ export function solveMates(recs) {
   if (bad.length) {
     for (const r of bad) { const o = objById(r.params.a.obj), pp = prePose.get(r.params); if (o && pp) { o.loc = [...pp.loc]; o.rot = [...pp.rot]; } }
     solveAll(ms.filter(r => !bad.includes(r)));
+  }
+}
+
+// ---------- closing loops (linkages) ----------
+// Mates are solved one after another, each moving its part onto the other: a four-bar (two links on one ground, a
+// bracket across their far ends) puts the bracket on the first link and leaves the second where it was, so the
+// bracket's mate onto the second is left off. A part that can only turn on one hinge — one round mate, any others flat
+// across that axis or on it — and that is not being dragged is turned about the hinge to close the loop: the part the
+// left-off mate goes onto, or the part the mate's own part hangs from. Kept only when the loop then closes.
+const mateOff = r => { try { const v = mateSolve(r.params.a, r.params.b, +r.params.gap || 0); return typeof v === 'string' ? null : v; } catch (e) { return null; } };
+function hingeOf(id, ms) {
+  if (S.ed.driven?.has(id)) return null;
+  const own = ms.filter(r => r.params.a.obj === id); if (!own.length) return null;
+  const G = own.map(r => ({ r, g: mateGeom(r.params.b) })); if (G.some(x => !x.g)) return null;
+  const axes = G.filter(x => x.g.kind === 'axis'); if (!axes.length) return null;
+  const h = axes[0].g;
+  for (const { g } of G) {
+    if (g.kind === 'plane' && Math.abs(M.dot(g.n, h.d)) < 0.9999) return null; // (a flat mate across the axis leaves the turn free)
+    if (g.kind === 'axis') { const dc = M.sub(g.c, h.c); if (Math.abs(M.dot(g.d, h.d)) < 0.9999 || M.len(M.sub(dc, M.mul(h.d, M.dot(dc, h.d)))) > 1e-6) return null; }
+  }
+  return { c: h.c, d: M.norm(h.d) };
+}
+// the turn about a hinge that carries point `from` round to where `to` is (both seen along the hinge's axis)
+function hingeAngle(hg, from, to) {
+  const perp = p => { const v = M.sub(p, hg.c); return M.sub(v, M.mul(hg.d, M.dot(v, hg.d))); };
+  const u = perp(from), v = perp(to); if (M.len(u) < 1e-9 || M.len(v) < 1e-9) return null;
+  return Math.atan2(M.dot(M.cross(u, v), hg.d), M.dot(u, v));
+}
+function closeLoops(ms, solveAll) {
+  for (let round = 0; round < 4; round++) {
+    let fixed = false;
+    for (const r of ms) {
+      const off = mateOff(r); if (!off || M.len(off.v) < 1e-6 || off.kind !== 'axis') continue;
+      const gA = mateGeom(r.params.a), gB = mateGeom(r.params.b); if (!gA || !gB || gA.kind !== 'axis' || gB.kind !== 'axis') continue;
+      const tries = [];
+      // the part it goes onto turns on its hinge, carrying its hole to where the mate's own part has it
+      const hb = hingeOf(r.params.b.obj, ms.filter(q => q !== r)); if (hb) tries.push({ id: r.params.b.obj, hg: hb, from: gB.c, to: gA.c });
+      // or the part this part hangs from (by another round mate) turns, carrying it along to the hole it should be on
+      for (const r1 of ms) {
+        if (r1 === r || r1.params.a.obj !== r.params.a.obj) continue;
+        const g1 = mateGeom(r1.params.b); if (!g1 || g1.kind !== 'axis') continue;
+        const hx = hingeOf(r1.params.b.obj, ms); if (hx && r1.params.b.obj !== r.params.b.obj) tries.push({ id: r1.params.b.obj, hg: hx, from: g1.c, to: M.add(g1.c, off.v) });
+      }
+      for (const t of tries) {
+        const o = objById(t.id), th = o && hingeAngle(t.hg, t.from, t.to); if (th == null || Math.abs(th) < 1e-12) continue;
+        const keep = { loc: [...o.loc], rot: [...o.rot] };
+        const others = new Map(S.doc.objects.map(q => [q.id, { loc: [...q.loc], rot: [...q.rot] }]));
+        turnAbout(o, t.hg.c, t.hg.d, th);
+        solveAll(ms);
+        const now = mateOff(r);
+        if (now && M.len(now.v) < Math.max(1e-6, M.len(off.v) * 1e-6)) { fixed = true; break; }
+        // (the loop does not close this way: everything goes back)
+        for (const q of S.doc.objects) { const k = others.get(q.id); if (k) { q.loc = k.loc; q.rot = k.rot; } }
+        Object.assign(o, keep);
+      }
+    }
+    if (!fixed) return;
   }
 }
 
