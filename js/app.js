@@ -2184,6 +2184,23 @@ function onKey(e) {
 
 boot();
 // console/debug access
+// an inserted assembly shows each part in its own colour (from its project), not one colour for all: the component's
+// shape lists its parts' faces in order, so each B-rep face maps to the part it came from
+const partColorMemo = new Map();
+view.faceColorsOf = o => {
+  const c = o.link && (S.doc.components || {})[o.link.pid];
+  if (!c || !c.parts || c.parts.length < 2 || !o.brep?.faces) return null;
+  const key = o.link.pid + '@' + c.version + '#' + o.brep.faces.length;
+  if (!partColorMemo.has(key)) {
+    let cols = null;
+    try {
+      const counts = c.parts.map(pt => K.deserialize(pt.brep).faces.length);
+      if (counts.reduce((a, b) => a + b, 0) === o.brep.faces.length) { cols = []; c.parts.forEach((pt, i) => { for (let k = 0; k < counts[i]; k++) cols.push(pt.color || o.color); }); }
+    } catch (e) { cols = null; }
+    partColorMemo.set(key, cols);
+  }
+  return partColorMemo.get(key);
+};
 OPS.setPivotHook(o => {
   const r = H.hist().slice(0, H.markerIndex()).find(x => x.op === 'F.mateOp' && !x.off && x.params?.a?.obj === o.id && x.params.b && F.mateGeom(x.params.b)?.kind === 'axis');
   if (!r) return null;
