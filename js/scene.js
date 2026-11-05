@@ -32,6 +32,15 @@ export function turnObject(o, from, to, pivot) {
   const rel = new THREE.Vector3(o.loc[0] - pivot[0], o.loc[1] - pivot[1], o.loc[2] - pivot[2]).applyQuaternion(q);
   o.loc = [pivot[0] + rel.x, pivot[1] + rel.y, pivot[2] + rel.z].map(v => { const r = Math.round(v * 1e9) / 1e9; return Math.abs(r - v) < 1e-9 ? r : v; });
 }
+// turn a part by th (radians) about the world axis through c along d — exactly (no snapping of the angles)
+export function turnAbout(o, c, d, th) {
+  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(...d).normalize(), th);
+  const cur = new THREE.Quaternion().setFromEuler(new THREE.Euler(o.rot[0] * D2R, o.rot[1] * D2R, o.rot[2] * D2R, EULER_ORDER));
+  const e = new THREE.Euler().setFromQuaternion(q.clone().multiply(cur), EULER_ORDER);
+  o.rot = [e.x / D2R, e.y / D2R, e.z / D2R];
+  const rel = new THREE.Vector3(o.loc[0] - c[0], o.loc[1] - c[1], o.loc[2] - c[2]).applyQuaternion(q);
+  o.loc = [c[0] + rel.x, c[1] + rel.y, c[2] + rel.z];
+}
 // Transform helpers in double precision (Matrix4.elements is a plain Array)
 export function xfFor(o) { return xfOfMatrix(objMatrix(o)); }
 // a placement given as a THREE matrix (or its 16 elements, column-major): local → world and back

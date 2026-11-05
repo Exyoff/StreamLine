@@ -39,7 +39,9 @@ function apply(op) {
   let r;
   try { r = op.def.apply(op.params, op); } catch (err) { console.error(err); r = err.message || 'Operation failed'; }
   if (typeof r !== 'string' && !op.def.sketchOnly && !op.def.presentation) { // mated parts follow
-    const before = pose(); H.solveConstraints(op.def.constraint ? { op: op.def.constraint, params: op.params } : null); // (a new mate takes part too)
+    const before = pose();
+    S.ed.driven = xf?.size ? xf : null; // (the parts being moved: a loop is closed by turning the others)
+    try { H.solveConstraints(op.def.constraint ? { op: op.def.constraint, params: op.params } : null); } finally { S.ed.driven = null; } // (a new mate takes part too)
     // a move the mates took back (dragging a part along a direction a mate holds) — not one they only trued up
     // (a turn about a mate's axis from a pivot a little off it is re-seated on the axis, and that is fine)
     const after = pose(), far = (A, B) => Math.max(0, ...A.map((q, i) => (B?.[i] ? Math.hypot(q[0] - B[i][0], q[1] - B[i][1], q[2] - B[i][2]) : Infinity)));
