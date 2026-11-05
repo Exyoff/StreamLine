@@ -2,7 +2,7 @@
 // delete, insert another project as a linked component, and sync components when their source changed.
 import { S, emit } from './state.js';
 import { serialize, deserialize, objMatrix } from './scene.js';
-import { runOp, resetHistory } from './ops.js';
+import { runOp, resetHistory, getLast } from './ops.js';
 import * as H from './history.js';
 import * as K from './kernel.js';
 import * as F from './features.js';
@@ -38,7 +38,9 @@ function exportParts() {
 const sigCache = new WeakMap();
 const shapeSig = sh => { let v = sigCache.get(sh); if (!v) { v = K.massSig(sh); sigCache.set(sh, v); } return v; };
 let saveT = 0, saving = null;
-export function scheduleLibrarySave() { clearTimeout(saveT); saveT = setTimeout(() => saveNow(), 1500); }
+// (not in the middle of a drag: the save renders a thumbnail and exports the solids, which would stall the gizmo)
+const busy = () => { const l = getLast(); return (l && !l.committed) || document.querySelector('#gl')?.dataset.drag === '1'; };
+export function scheduleLibrarySave() { clearTimeout(saveT); saveT = setTimeout(function go() { if (busy()) { saveT = setTimeout(go, 800); return; } saveNow(); }, 1500); }
 export async function saveNow() {
   clearTimeout(saveT);
   if (saving) await saving;

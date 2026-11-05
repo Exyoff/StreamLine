@@ -433,9 +433,10 @@ function findFaces(o, list) {
   const xf = xfFor(o), out = [];
   for (const f of list) {
     const pl = xf.toL(f.p), nl = locDir(xf, f.p, f.n);
-    const hit = K.faceAt(o.shape, pl, nl);
+    const hit = K.faceAt(o.shape, pl, nl, f._fh);
     if (!hit) return null;
     if (hit.q) { const pw = xf.toW(hit.q); Object.assign(f, { p: pw, w: M.dot(f.n, pw) }); } // follow the moved face
+    f._fh = K.faceHint(hit.f);
     out.push(hit.f);
   }
   return out;
@@ -673,6 +674,9 @@ function pathWire(ps, near) {
     if (e.construction || !['line', 'arc', 'spline'].includes(e.t)) continue;
     const pl = SK.entPolyline(e); if (!pl || pl.closed || pl.pts.length < 2) continue;
     const P = pl.pts;
+    // a curve drawn twice (same ends, same length) would make the path double back on itself: keep one
+    const L0 = P.reduce((t, q, i) => (i ? t + d2(q, P[i - 1]) : 0), 0), ea = P[0], eb = P[P.length - 1];
+    if (segs.some(g => Math.abs(g.len - L0) < 1e-6 && ((d2(g.a, ea) < 1e-6 && d2(g.b, eb) < 1e-6) || (d2(g.a, eb) < 1e-6 && d2(g.b, ea) < 1e-6)))) continue;
     segs.push({ a: P[0], b: P[P.length - 1], make: rev => {
       const Q = rev ? P.slice().reverse() : P;
       if (e.t === 'line') return R.makeLine(W(Q[0]), W(Q[Q.length - 1]));
@@ -728,11 +732,16 @@ export const sweepOp = {
     const tool = guard(() => {
       const fc = typeof f.center === 'function' ? f.center() : f.center, c = vec3(fc), spine = pathWire(ps, c); if (!spine) throw new Error('no open path');
       // the outline swept, minus each hole swept the same way (a ring profile makes a tube)
-      const opts = { frenet: true, transitionMode: 'round' };
-      let solid = R.genericSweep(f.clone().outerWire(), spine, opts);
-      let holes = []; try { holes = f.clone().innerWires(); } catch (e) { holes = []; }
-      for (const w of holes) solid = solid.cut(R.genericSweep(w, pathWire(ps, c), opts));
-      return solid;
+      // corners are mitred (exact: a zig-zag spring keeps its full cross-section); if that fails, rounded
+      const run = mode => {
+        const opts = { frenet: true, transitionMode: mode };
+        let solid = R.genericSweep(f.clone().outerWire(), mode === 'right' ? spine : pathWire(ps, c), opts);
+        let holes = []; try { holes = f.clone().innerWires(); } catch (e) { holes = []; }
+        for (const w of holes) solid = solid.cut(R.genericSweep(w, pathWire(ps, c), opts));
+        if (!K.isValid(solid) || !(K.volume(solid) > 0)) throw new Error('invalid sweep');
+        return solid;
+      };
+      try { return run('right'); } catch (e) { return run('round'); }
     }, 'Sweep failed — the profile should sit at the start of the path');
     if (typeof tool === 'string') return tool;
     return applyBody(p, tool, 'Sweep');
@@ -944,10 +953,16 @@ function patternCheck(p) {
   if ((p.count || 1) * (p.pattern === 'grid' ? p.rows || 1 : 1) > 400) return 'That is more than 400 copies';
 }
 // pattern copies whose centre is not on the tapped face (they may miss the part, or cut somewhere else)
+// a typed centre off the face's plane is slid onto it (a hole starts at the face it was drilled into, never buried)
+function ontoFace(p, fr) {
+  const c = fr.xf.toL([p.x, p.y, p.z]), q = fr.xf.toL(p.faces[0].p), n = fr.n, d = M.dot(M.sub(c, q), n);
+  if (Math.abs(d) < 1e-9) return c;
+  const cc = M.sub(c, M.mul(n, d)); [p.x, p.y, p.z] = fr.xf.toW(cc).map(v => +v.toFixed(9)); return cc;
+}
 function offFaceCheck(face, c, offs, what) {
   let off = 0;
   for (const { d } of offs) { try { if (K.R.measureDistanceBetween(face, K.R.makeVertex(M.add(c, d))) > 1e-4) off++; } catch (e) {} }
-  if (off === offs.length && offs.length > 1) return `None of the ${what}s land on the face — check the spacing and direction`;
+  if (off === offs.length) return offs.length > 1 ? `None of the ${what}s land on the face — check the spacing and direction` : `The ${what} centre is off the face — check its X / Y / Z`;
   if (off) emit('toast', `${off} of ${offs.length} ${what}s fall outside the face`);
 }
 // how deep a drill of radius r from c along n must go to come out of the material it starts in
@@ -994,7 +1009,7 @@ export const holeOp = {
     const f = findFaces(o, p.faces)?.[0]; if (!f) return 'The face it was drilled into no longer exists';
     followCentre(p, before);
     const pe = patternCheck(p); if (pe) return pe;
-    const fr = faceFrame(o, p.faces[0]), n = fr.n, c = fr.xf.toL([p.x, p.y, p.z]);
+    const fr = faceFrame(o, p.faces[0]), n = fr.n, c = ontoFace(p, fr);
     const bb = o.shape.boundingBox.bounds, through = Math.hypot(...[0, 1, 2].map(k => bb[1][k] - bb[0][k])) * 2 + 10;
     const r = p.dia / 2;
     // depth 0: through the wall it starts in (a port in a box side), or through everything when asked
@@ -1032,7 +1047,7 @@ export const recessOp = {
     const f = findFaces(o, p.faces)?.[0]; if (!f) return 'The face for the recess no longer exists';
     followCentre(p, before);
     const pe = patternCheck(p); if (pe) return pe;
-    const fr = faceFrame(o, p.faces[0]), n = fr.n, c0 = fr.xf.toL([p.x, p.y, p.z]);
+    const fr = faceFrame(o, p.faces[0]), n = fr.n, c0 = ontoFace(p, fr);
     // the outline in face coordinates (x along a, y along b)
     const s = p.size, w = p.width, hs = s / 2, hw = w / 2;
     let poly;
@@ -1068,14 +1083,15 @@ export const recessOp = {
 const mateLocalCache = new WeakMap();
 function mateLocal(o, f, pl, nl) {
   let m = mateLocalCache.get(o.shape); if (!m) { m = new Map(); mateLocalCache.set(o.shape, m); }
-  const key = [...pl, ...nl].map(v => v.toFixed(7)).join() + (f.edgeAxis ? 'e' : f.planar === false ? 'c' : 'p') + (f._ax ? JSON.stringify(f._ax) : '');
+  const key = [...pl, ...nl].map(v => v.toFixed(7)).join() + (f.edgeAxis ? 'e' : f.planar === false ? 'c' : 'p') + (f._ax ? JSON.stringify(f._ax) : '') + (f._fh ? JSON.stringify(f._fh) : '');
   if (m.has(key)) return m.get(key);
   const r = mateLocalFind(o, f, pl, nl); m.set(key, r); return r;
 }
 function mateLocalFind(o, f, pl, nl) {
   if (f.edgeAxis) return circleAxisNear(o, pl, Infinity);
-  let hit = K.faceAt(o.shape, pl, f.planar === false ? null : nl);
-  if (!hit && f.planar !== false) hit = K.faceAt(o.shape, pl, nl);
+  let hit = K.faceAt(o.shape, pl, f.planar === false ? null : nl, f.planar === false ? null : f._fh);
+  if (!hit && f.planar !== false) hit = K.faceAt(o.shape, pl, nl, f._fh);
+  if (hit && f.planar !== false && hit.f.geomType === 'PLANE') f._fh = K.faceHint(hit.f);
   if (!hit && f._ax) { // a round face that moved (its sketch changed): the parallel cylinder of the same radius nearest its old axis
     let best = null;
     o.shape.faces.forEach((fc, i) => {
@@ -1140,17 +1156,20 @@ function solveMate(p) {
   const A0 = mateGeom(p.a), B0 = mateGeom(p.b);
   if (A0 && B0 && A0.kind === B0.kind) {
     const da = A0.kind === 'plane' ? A0.n : A0.d, db = B0.kind === 'plane' ? B0.n : B0.d, k = M.dot(da, db);
-    if (Math.abs(k) < 0.9999) turnObject(o, da, A0.kind === 'plane' ? M.mul(db, -1) : (k >= 0 ? db : M.mul(db, -1)), A0.kind === 'plane' ? A0.p : A0.c);
+    // flat faces: face to face (normals opposed — the part is turned round if both face the same way) or flush
+    // (same way: tops level); older mates (no choice stored) keep the nearer of the two
+    const tgt = A0.kind === 'plane' ? (p.align === 'flush' || (!p.align && k > 0.9999) ? db : M.mul(db, -1)) : (k >= 0 ? db : M.mul(db, -1));
+    if (M.dot(da, tgt) < 0.9999) turnObject(o, da, tgt, A0.kind === 'plane' ? A0.p : A0.c);
   }
   const r = mateSolve(p.a, p.b, +p.gap || 0); if (typeof r === 'string') return r;
   if (M.len(r.v) > 1e-12) o.loc = M.add(o.loc, r.v).map(v => (Math.abs(v - Math.round(v * 1e9) / 1e9) < 1e-9 ? Math.round(v * 1e9) / 1e9 : v));
 }
 export const mateOp = {
   constraint: 'F.mateOp',
-  label: p => `Mate ${objById(p.a.obj)?.name || 'part'} → ${objById(p.b.obj)?.name || 'part'}`,
+  label: p => `Mate ${objById(p.a.obj)?.name || 'part'} → ${objById(p.b.obj)?.name || 'part'}${p.b.edgeAxis || p.a.edgeAxis || mateGeom(p.b)?.kind === 'axis' ? ' (axis)' : ` (${p.align === 'flush' ? 'flush' : 'flat'}${+p.gap ? ', gap ' + fmtLen(+p.gap) : ''})`}`,
   touch: p => ({ ids: [p.a.obj], mesh: false }),
   // flat-to-flat mates take a gap: a clearance (0.5 mm round a drawer), or − to overlap
-  fields: p => (mateGeom(p.a)?.kind === 'plane' ? [lenF('gap', 'Gap (− overlaps)')] : []),
+  fields: p => (mateGeom(p.a)?.kind === 'plane' ? [{ key: 'align', label: 'Faces', kind: 'choice', options: [['face', 'Face to face'], ['flush', 'Flush']], wide: true }, lenF('gap', 'Gap (− overlaps)')] : []),
   apply(p) { return solveMate(p); },
 };
 // re-solve every mate in the history (after any edit), in order, twice so chains of mates settle
@@ -1158,7 +1177,10 @@ export function solveMates(recs) {
   const ms = recs.filter(r => r.op === 'F.mateOp' && !r.off && (!r.err || r.conflict));
   if (!ms.length) return;
   for (const r of ms) if (r.conflict) { delete r.err; r.conflict = false; }
-  for (let pass = 0; pass < 2; pass++) for (const r of ms) { try { solveMate(r.params); } catch (e) { /* keep the part where it is */ } }
+  // earlier mates win: after each mate, the part's earlier mates are solved again (latest to earliest), so a new
+  // mate that contradicts them is the one left unsatisfied (and flagged), not the hinge that was there first
+  const solve = r => { try { solveMate(r.params); } catch (e) { /* keep the part where it is */ } };
+  for (let pass = 0; pass < 2; pass++) ms.forEach((r, i) => { solve(r); for (let j = i - 1; j >= 0; j--) if (ms[j].params.a.obj === r.params.a.obj) solve(ms[j]); });
   // a mate left unsatisfied fights another one: say so on its step (red in History) instead of failing silently
   for (const r of ms) {
     let off = 0; try { const v = mateSolve(r.params.a, r.params.b, +r.params.gap || 0); off = typeof v === 'string' ? 0 : M.len(v.v); } catch (e) {}
