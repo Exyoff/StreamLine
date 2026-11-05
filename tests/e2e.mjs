@@ -618,6 +618,60 @@ try {
     return L.H.hist().filter(r => r.op === 'F.mateOp').map(r => r.err || '');
   });
   check(conf.some(e => /Conflicts/.test(e)), `Two mates that can't both hold: one is flagged (“${conf.filter(Boolean)[0] || 'none'}”)`);
+  // round 12: a hole on a hinge block keeps its place on the block's face when the block slides along a long wall
+  const hb = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, K = L.K, PJ = await import('./js/projects.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    await PJ.newProject();
+    L.runOp(F.sketchOpNew('base', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 0, y: 0, w: 160, h: 40 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [5, 5] }], distance: 15, mode: 'new', target: null }); const id = L.S.doc.objects.at(-1).id;
+    L.runOp(F.sketchOpNew('blk', XY(15), { obj: id }, k => { F.addEntity(k, { t: 'rect', x: 140, y: 10, w: 15, h: 20 }); })); const bs = L.S.ed.sketch;
+    L.runOp(F.extrude, { pts: [{ sk: bs, pt: [145, 15] }], distance: 15, mode: 'join', target: id });
+    L.S.ed.faces = [{ obj: id, n: [0, -1, 0], w: -10, p: [147.5, 10, 22.5], planar: true }];
+    L.runOp(F.holeOp, { dia: 4, x: 147.5, y: 10, z: 24 });
+    L.runOp(F.sketchOp('shift', bs, k => { k.ents.find(e => e.t === 'rect').x = 120; }));
+    const h = L.H.hist().filter(r => r.op === 'F.holeOp').at(-1).params;
+    // a centre typed off the face's plane is slid onto it (no buried hole)
+    L.S.ed.faces = [{ obj: id, n: [0, 0, 1], w: 15, p: [50, 20, 15], planar: true }];
+    L.runOp(F.holeOp, { dia: 4, depth: 3, x: 50, y: 20, z: 9 });
+    const h2 = L.getLast().params;
+    return { c: [h.x, h.y, h.z], c2: [h2.x, h2.y, h2.z], errs: L.H.hist().filter(r => r.err).map(r => r.err) };
+  });
+  check(Math.abs(hb.c[0] - 127.5) < 1e-6 && Math.abs(hb.c[1] - 10) < 1e-6 && Math.abs(hb.c[2] - 24) < 1e-6 && Math.abs(hb.c2[2] - 15) < 1e-9 && !hb.errs.length,
+    `A hole on a block keeps its height when the block slides along a long wall (${hb.c.map(v => +v.toFixed(6)).join(', ')}); a centre typed off the face lands on it (z ${hb.c2[2]})`);
+  // flat mates: face to face turns a part round when both faces point the same way; Flush keeps them level
+  const al = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, K = L.K, ops = await import('./js/ops.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    L.runOp(F.sketchOpNew('a', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 400, y: 0, w: 20, h: 20 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [405, 5] }], distance: 10, mode: 'new', target: null }); const a = L.S.doc.objects.at(-1).id;
+    L.runOp(F.sketchOpNew('b', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: 500, y: 0, w: 10, h: 10 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [505, 5] }], distance: 4, mode: 'new', target: null }); const b = L.S.doc.objects.at(-1).id;
+    // both tops (+Z): face to face puts b upside down on a's top
+    L.runOp(F.mateOp, { a: { obj: b, n: [0, 0, 1], p: [505, 5, 4], planar: true }, b: { obj: a, n: [0, 0, 1], p: [405, 5, 10], planar: true }, gap: 0, align: 'face' });
+    const bb = () => K.worldShape(L.S.doc.objects.find(o => o.id === b)).boundingBox.bounds;
+    const z1 = [bb()[0][2], bb()[1][2]], lab = L.H.hist().at(-1).label;
+    ops.updateOp({ align: 'flush' }); ops.commit();
+    return { z1, z2: [bb()[0][2], bb()[1][2]], lab, card: document.querySelector('#lastop')?.textContent.includes('null') };
+  });
+  check(Math.abs(al.z1[0] - 10) < 1e-6 && Math.abs(al.z1[1] - 14) < 1e-6 && Math.abs(al.z2[1] - 10) < 1e-6 && /flat/.test(al.lab) && !al.card,
+    `Flat mate: face to face turns the part over (z ${al.z1.map(v => +v.toFixed(6)).join('..')}), Flush levels the tops (z ${al.z2.map(v => +v.toFixed(6)).join('..')}); “${al.lab}”`);
+  // a body sketched on a hinged (mated) part follows it when an earlier Rotate changes
+  const hp = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, K = L.K, ops = await import('./js/ops.js'), PJ = await import('./js/projects.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+    await PJ.newProject();
+    L.runOp(F.sketchOpNew('blk', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: -10, y: -10, w: 20, h: 20 }); F.addEntity(k, { t: 'circle', c: [0, 0], r: 2 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [-8, -8] }], distance: 10, mode: 'new', target: null }); const A = L.S.doc.objects.at(-1).id;
+    L.runOp(F.sketchOpNew('bar', XY(10), null, k => { F.addEntity(k, { t: 'rect', x: -5, y: -5, w: 105, h: 10 }); F.addEntity(k, { t: 'circle', c: [0, 0], r: 2 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [50, 0] }], distance: 4, mode: 'new', target: null }); const B = L.S.doc.objects.at(-1).id;
+    L.runOp(F.mateOp, { a: { obj: B, n: [1, 0, 0], p: [2, 0, 12], planar: false }, b: { obj: A, n: [1, 0, 0], p: [2, 0, 5], planar: false }, gap: 0 });
+    L.S.ed.selected = new Set([B]); L.S.ed.active = B; L.runOp(L.OPS.transform, { mode: 'rotate', axis: 'z', angle: 30, pivot: [50, 0, 0] });
+    const at = a => [90 * Math.cos(a * Math.PI / 180), 90 * Math.sin(a * Math.PI / 180)], c30 = at(30);
+    L.runOp(F.sketchOpNew('plate', XY(14), { obj: B }, k => { F.addEntity(k, { t: 'circle', c: c30, r: 2 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: c30 }], distance: 3, mode: 'new', target: null }); const P = L.S.doc.objects.at(-1).id;
+    const rec = L.H.hist().find(r => /Rotate/.test(r.label || '')); L.BR.editStep(rec.id); ops.updateOp({ angle: 60 }); ops.commit();
+    const bb = K.worldShape(L.S.doc.objects.find(o => o.id === P)).boundingBox.bounds;
+    return { got: [0, 1].map(k => (bb[0][k] + bb[1][k]) / 2), want: at(60), errs: L.H.hist().filter(r => r.err).map(r => r.err) };
+  });
+  check(Math.hypot(hp.got[0] - hp.want[0], hp.got[1] - hp.want[1]) < 1e-3 && !hp.errs.length, `A plate sketched on a hinged part follows it when its Rotate changes (at ${hp.got.map(v => +v.toFixed(3)).join(', ')}, want ${hp.want.map(v => +v.toFixed(3)).join(', ')})`);
   await shot('5-timeline');
 } catch (e) {
   await p.screenshot({ path: OUT + 'crash.png' }).catch(() => {});

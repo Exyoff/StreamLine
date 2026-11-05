@@ -648,7 +648,7 @@ function mateTap(x, y) {
   const A = objById(from.obj);
   S.ed.faces = []; S.ed.selected = new Set([A.id]); S.ed.active = A.id; // (stays in Face mode for the next mate)
   // a Mate step in the history: it is solved again whenever the parts change (e.g. after Sync)
-  if (!runOp(F.mateOp, { a: JSON.parse(JSON.stringify(from)), b: JSON.parse(JSON.stringify(to)), gap: 0 })) return retry('Could not mate those faces');
+  if (!runOp(F.mateOp, { a: JSON.parse(JSON.stringify(from)), b: JSON.parse(JSON.stringify(to)), gap: 0, align: 'face' })) return retry('Could not mate those faces');
   toast(`${A.name} mated to ${objById(to.obj).name}${err.kind === 'axis' ? ' (same axis — slide it along with Move)' : ' — set a Gap on the card'}`);
   view.markSelDirty(); refresh(); // (the Mate card stays open: a flat mate's Gap can be typed right away)
 }
@@ -1181,7 +1181,7 @@ function renderLastOp() {
       h('div', { class: 'title' }, op.def.label(op.params), op.info ? h('small', {}, op.info) : null),
       fields.length ? h('button', { class: 'ib', 'aria-label': 'Collapse', onclick: () => { lastCollapsed = !lastCollapsed; renderLastOp(); }, html: lastCollapsed ? '▴' : '▾' }) : null,
       h('button', { class: 'ib', 'aria-label': 'Done', onclick: () => clearLast(), html: I.check })),
-    fields.length ? h('div', { class: 'fields' }, fieldEls) : null);
+    ...(fields.length ? [h('div', { class: 'fields' }, fieldEls)] : [])); // (replaceChildren would print a null)
 }
 
 function renderMeasureCard() {

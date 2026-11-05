@@ -203,7 +203,9 @@ export function polyMid(pts) {
 }
 export function polyDist(p, pts) { let d = Infinity; for (let k = 1; k < pts.length; k++) d = Math.min(d, ptSegDist(p, pts[k - 1], pts[k])); return pts.length === 1 ? dist3(p, pts[0]) : d; }
 // face of `shape` under a local point (and roughly facing n, when given)
-export function faceAt(shape, p, n = null) {
+// the area and centre of a face (local), remembered with a face pick so a moved face is found again by its size
+export function faceHint(f) { try { const c0 = f.center, c = typeof c0 === 'function' ? c0() : c0; return { a: R.measureArea(f), c: [c.x, c.y, c.z] }; } catch (e) { return null; } }
+export function faceAt(shape, p, n = null, hint = null) {
   const v = R.makeVertex(p), faces = shape.faces;
   let best = null;
   faces.forEach((f, i) => {
@@ -226,8 +228,12 @@ export function faceAt(shape, p, n = null) {
     const dw = (c.x - p[0]) * n[0] + (c.y - p[1]) * n[1] + (c.z - p[2]) * n[2];
     let q = [p[0] + n[0] * dw, p[1] + n[1] * dw, p[2] + n[2] * dw];
     const out = R.measureDistanceBetween(f, R.makeVertex(q));
-    const score = Math.abs(dw) + 4 * out;
-    if (out > t.tol * 4 + 1e-6) q = [c.x, c.y, c.z]; // (the point is off the face: follow its centre instead)
+    let score = Math.abs(dw) + 4 * out;
+    // known size: a face of about the same area wins over a big one that merely contains the point (a block that
+    // moved along a long wall), and the point keeps its place on the face (a hole stays 9 mm up, not at the centre)
+    if (hint && hint.a > 0) { let a = 0; try { a = R.measureArea(f); } catch (e) {} if (a > 0) score += 4 * Math.sqrt(hint.a) * Math.abs(Math.log(a / hint.a)); }
+    if (hint && hint.c) { const qs = [p[0] + c.x - hint.c[0], p[1] + c.y - hint.c[1], p[2] + c.z - hint.c[2]]; if (R.measureDistanceBetween(f, R.makeVertex(qs)) <= t.tol * 4 + 1e-6) q = qs; }
+    if (R.measureDistanceBetween(f, R.makeVertex(q)) > t.tol * 4 + 1e-6) q = [c.x, c.y, c.z]; // (the point is off the face: follow its centre instead)
     if (!alt || score < alt.score) alt = { d: 0, i, f, dw, q, score };
   });
   return alt;

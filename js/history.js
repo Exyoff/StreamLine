@@ -92,7 +92,12 @@ export function regenerate(from = 0) {
     cps[i] = snapObjs();
     const rec = h[i];
     delete rec.err;
-    if (rec.kind === 'sketch') { followFace(rec.sk, moved); continue; }
+    if (rec.kind === 'sketch') {
+      // a sketch on a mated part: settle the mates so far first, so it lands where the part really is
+      const sk = (S.doc.sketches || []).find(k => k.id === rec.sk);
+      if (sk?.face && postSolve && h.slice(0, i).some(r => r.op === 'F.mateOp')) try { postSolve(h.slice(0, i)); } catch (e) {}
+      followFace(rec.sk, moved); continue;
+    }
     if (rec.off) continue;
     const def = defOf(rec);
     if (!def) { rec.err = 'Unknown operation'; failed.push(rec); continue; }
