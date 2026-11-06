@@ -1,7 +1,7 @@
 // Offline support: cache the app shell, serve cache-first and refresh in the background.
 // (a new version fetches every file from the server, not from the browser's HTTP cache — GitHub Pages lets that keep
 // a file ten minutes, and the old one would then be served from here until its next refresh)
-const CACHE = 'streamline-v87';
+const CACHE = 'streamline-v88';
 const ASSETS = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/state.js', 'js/units.js', 'js/mesh.js', 'js/scene.js', 'js/ops.js', 'js/operators.js',

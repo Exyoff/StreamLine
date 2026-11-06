@@ -556,9 +556,11 @@ body.has-tl #toast { bottom: calc(var(--botH) + var(--sab) + var(--tlh) + 14px);
 body.has-handle #toast { bottom: auto; top: calc(var(--topH) + 10px); transform: translate(-50%, -10px) scale(.96); }
 body.has-handle #toast.show { transform: translate(-50%, 0) scale(1); }
 /* choice rows with many options wrap instead of pushing the dialog sideways */
-.field .seg:has(> button:nth-child(4)) { flex-wrap: wrap; height: auto; row-gap: 4px; border-radius: 18px; }
-.field .seg:has(> button:nth-child(4)) > button { flex: 1 0 auto; min-width: 30%; border-radius: 14px; }
+.field .seg:has(> button:nth-child(4)) { flex-wrap: wrap; height: auto; row-gap: 4px; }
+.field .seg:has(> button:nth-child(4)) > button { flex: 1 0 auto; min-width: 30%; }
 /* (wrapped into rows it is a grid: a pill round two rows of buttons read as a circle with a grid inside) */
+.seg.wrapped { border-radius: 18px; }
+.seg.wrapped > button { border-radius: 14px; }
 #lastop .cardwarn { color: var(--danger); font-size: 12px; line-height: 1.35; padding: 2px 4px 6px; }
 
 /* ---------- modern pass: gradient accent, soft depth ---------- */
@@ -609,8 +611,7 @@ body.has-handle #toast.show { transform: translate(-50%, 0) scale(1); }
 .lookpop .swatch .ball { height: 38px; border-radius: 9px; }
 .lookpop .swatch .ball span { width: 28px; height: 28px; }
 .lookpop .mtitle { padding-left: 4px; }
-.field.row4 .seg { flex-wrap: nowrap !important; border-radius: 999px; }
-.field.row4 .seg > button { border-radius: 999px; }
+.field.row4 .seg { flex-wrap: nowrap !important; }
 .field.row4 .seg > button { flex: 1 1 0 !important; min-width: 0 !important; padding: 0 4px; }
 
 /* ---------- bottom bar: Browser · tool sets · search ---------- */
