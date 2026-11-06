@@ -781,3 +781,7 @@ body.sketching #toolsets .tset.on { background: var(--accent-soft); }
 #popover .conrow .k { min-width: 30px; text-align: center; color: #ffd60a; font: 700 12px var(--mono); }
 #popover .conrow .cn { flex: 1; }
 #popover .conrow .cdel { width: 34px; height: 34px; background: rgba(255,69,58,.14); color: #ff6b61; }
+
+/* rubber band (double tap and hold, then drag): solid blue to the right (window), dashed green to the left (crossing) */
+#band { position: absolute; z-index: 4; pointer-events: none; border: 1.5px solid #3d8bfd; background: rgba(61,139,253,.12); border-radius: 2px; }
+#band.crossing { border: 1.5px dashed #34c759; background: rgba(52,199,89,.10); }

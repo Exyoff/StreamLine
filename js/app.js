@@ -837,6 +837,36 @@ function smartTapInner(x, y) {
   setPickKind('face'); return faceTap(x, y);
 }
 
+// ---------- rubber band: double tap and hold, then drag ----------
+// a sketch open: its curves; otherwise the bodies. Dragged right (window) it takes what lies wholly inside; dragged
+// left (crossing), whatever it touches. Multi-select on adds to the pick.
+function bandSelect(x0, y0, x1, y1) {
+  const L = Math.min(x0, x1), R = Math.max(x0, x1), T = Math.min(y0, y1), B = Math.max(y0, y1);
+  if (R - L < 6 && B - T < 6) return;
+  const crossing = x1 < x0, inside = q => q.front && q.x >= L && q.x <= R && q.y >= T && q.y <= B;
+  // (a segment crossing the box: either end inside, or it cuts one of the box's sides)
+  const segHits = (a, b) => { if (inside(a) || inside(b)) return true; if (!a.front || !b.front) return false;
+    const cut = (p, q, r, t) => { const d = (q.x - p.x) * (t.y - r.y) - (q.y - p.y) * (t.x - r.x); if (Math.abs(d) < 1e-9) return false; const u = ((r.x - p.x) * (t.y - r.y) - (r.y - p.y) * (t.x - r.x)) / d, v = ((r.x - p.x) * (q.y - p.y) - (r.y - p.y) * (q.x - p.x)) / d; return u >= 0 && u <= 1 && v >= 0 && v <= 1; };
+    const C = [{ x: L, y: T }, { x: R, y: T }, { x: R, y: B }, { x: L, y: B }]; return C.some((c, i) => cut(a, b, c, C[(i + 1) % 4])); };
+  const takes = W => { const Q = W.map(w => view.project(w)); if (!crossing) return Q.every(inside); for (let i = 1; i < Q.length; i++) if (segHits(Q[i - 1], Q[i])) return true; return Q.length === 1 && inside(Q[0]); };
+  if (sketching()) {
+    const k = SK.sketchById(S.ed.editingSketch);
+    const ids = k.ents.filter(e => e.t !== 'dim' && !e.proj && takes(SK.entPolyline(e).pts.map(p => SK.toW(k.plane, p)))).map(e => e.id);
+    S.ed.drawSel = new Set([...(S.ed.multi ? S.ed.drawSel : []), ...ids]);
+    toast(ids.length ? `${ids.length} curve${ids.length > 1 ? 's' : ''} ${crossing ? 'touched by' : 'inside'} the box` : `No curves ${crossing ? 'touch' : 'lie wholly inside'} the box`);
+    return selectionChanged();
+  }
+  // bodies: their outline points (crossing also takes a body the box lies within)
+  const ids = S.doc.objects.filter(isShown).filter(o => { const W = worldVerts(o); if (!W.length) return false;
+    const Q = W.map(w => view.project(w)); if (!crossing) return Q.every(inside);
+    if (Q.some(inside)) return true; const hit = view.pickObject((L + R) / 2, (T + B) / 2); return hit?.id === o.id; }).map(o => o.id);
+  if (!ids.length) { toast(`No bodies ${crossing ? 'touch' : 'lie wholly inside'} the box`); return; }
+  setPickKind('solid');
+  S.ed.selected = new Set([...(S.ed.multi ? S.ed.selected : []), ...ids]); S.ed.active = ids[ids.length - 1];
+  toast(`${ids.length} bod${ids.length > 1 ? 'ies' : 'y'} picked`);
+  selectionChanged();
+}
+
 // ---------- precision cursor: hold (or drag) a finger on the view ----------
 // a cursor rides 72 px above the finger with a magnifier over it and a label of what is under it; letting go picks
 // that (the same as a tap there). Lets a finger pick a 1 mm edge or a small hole rim exactly.
@@ -1386,6 +1416,7 @@ function buildStatic() {
 
 function bindEvents() {
   view.handlers.tap = onTap;
+  view.handlers.bandEnd = bandSelect;
   view.handlers.pressTarget = (x, y) => valueHit(x, y) || (S.ed.mode === 'object' && Draw.labelHit(x, y));
   // (a press on a dimension's value that slides moves the value: the dimension line follows)
   view.handlers.targetDrag = (phase, x, y) => S.ed.mode === 'object' && Draw.dimDragAt(phase, x, y);
@@ -2176,9 +2207,10 @@ function openViewsMenu() {
 function openHelp() {
   popover($('#btn-menu'), h('div', { class: 'note', style: 'padding:10px 12px;max-width:360px' },
     h('div', { class: 'mtitle', style: 'padding:0 0 6px' }, 'Touch'),
-    h('div', {}, '1 finger drag — orbit · 2 fingers — pan & pinch zoom'),
-    h('div', {}, 'Tap — select · 2-finger tap — undo · 3-finger tap — redo'),
-    h('div', {}, 'Tap axis bubbles (top-right) for exact Top/Front/Right ortho views; drag them to orbit.'),
+    h('div', {}, 'Tap — select (tap the same spot again: edge → face → body) · hold — precision cursor with a magnifier'),
+    h('div', {}, 'Double tap, hold and drag — selection box: drag right for what lies inside, left for whatever it touches'),
+    h('div', {}, 'Drag the cube — orbit; tap a cube face for that view · zoom bar — zoom · 2 fingers — pan & pinch zoom'),
+    h('div', {}, '2-finger tap — undo · 3-finger tap — redo'),
     h('div', {}, 'Drag gizmo arrows to move along an axis, squares for a plane, rings to rotate. Snapping follows the magnet button.'),
     h('div', {}, 'After any operation, the card at the bottom lets you type exact values — tap a number to open the calculator keypad.'),
     h('div', { class: 'mtitle', style: 'padding:10px 0 6px' }, 'Keyboard (iPad / desktop)'),
