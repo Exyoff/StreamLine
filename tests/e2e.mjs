@@ -1471,6 +1471,23 @@ try {
     L.S.ed.selected = new Set(); L.refresh(); return { before, after, rebuilt, turned };
   });
   check(sw.turned === 30 && sw.after === sw.before && sw.rebuilt === sw.before, `A part mated onto a turned part rides along with it, and a rebuild agrees (${JSON.stringify(sw)})`);
+  // a tapped hole: an M6 thread in a hole drilled at 5 mm; and a fillet that fails after an earlier change opens its
+  // card from Edit parameters, where a smaller radius fixes it
+  const tf = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, K = L.K, m = await import('./js/ops.js'), B = await import('./js/browser.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }), X5 = 100000, out = {};
+    L.runOp(F.sketchOpNew('tp', XY(0), null, k => F.addEntity(k, { t: 'rect', x: X5, y: 0, w: 30, h: 30 }))); L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [X5 + 5, 5] }], distance: 12, mode: 'new', target: null }); m.commit(); L.S.ed.sketch = null;
+    const id = L.S.doc.objects.at(-1).id, ext = L.H.hist().at(-2).op === 'F.extrude' ? L.H.hist().at(-2) : L.H.hist().filter(r => r.op === 'F.extrude').at(-1), vol = () => K.volume(L.S.doc.objects.find(o => o.id === id).shape), v0 = vol();
+    L.S.ed.faces = [{ obj: id, n: [0, 0, 1], w: 12, p: [X5 + 15, 15, 12], planar: true }]; L.runOp(F.holeOp, { tap: true, size: 6 }); m.commit();
+    const hr = L.H.hist().at(-1); out.tap = { label: hr.label, dia: hr.params.dia, removed: +(v0 - vol()).toFixed(2), valid: K.isValid(L.S.doc.objects.find(o => o.id === id).shape) };
+    L.S.ed.edges = [{ obj: id, a: [X5, 30, 12], b: [X5 + 30, 30, 12] }]; L.runOp(F.edgeBlendOp, { kind: 'fillet', size: 5 }); m.commit();
+    const fil = L.H.hist().at(-1), extR = L.H.hist().filter(r => r.op === 'F.extrude').at(-1);
+    B.editStep(extR.id); m.updateOp({ distance: 3.5 }); m.commit(); out.failed = !!fil.err;
+    B.editStep(fil.id); out.opened = !!L.getLast() && !L.getLast().committed === false; m.updateOp({ size: 1 }); m.commit();
+    out.fixed = !L.H.hist().find(r => r.id === fil.id).err;
+    L.S.ed.selected = new Set(); L.S.ed.edges = []; L.refresh(); return out;
+  });
+  check(tf.tap.label === 'Tapped hole M6×1' && tf.tap.dia === 5 && tf.tap.removed > Math.PI * 6.25 * 12 && tf.tap.removed < Math.PI * 9 * 12 && tf.tap.valid && tf.failed && tf.fixed,
+    `A tapped M6 hole is drilled at Ø5 and threaded (${JSON.stringify(tf.tap)}); a fillet that failed opens for editing and a smaller radius fixes it (${tf.failed} → ${tf.fixed})`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
