@@ -2224,7 +2224,7 @@ function openHelp() {
     h('div', { class: 'mtitle', style: 'padding:0 0 6px' }, 'Touch'),
     h('div', {}, 'Tap — select (tap the same spot again: edge → face → body) · hold — precision cursor with a magnifier'),
     h('div', {}, 'While the cursor is up, the Multi button beside it: tap — Multi-select on/off · hold it and move the cursor — selection box (right: what lies inside, left: whatever it touches)'),
-    h('div', {}, 'Drag the cube — orbit; tap a cube face for that view · zoom bar — zoom · 2 fingers — pan & pinch zoom'),
+    h('div', {}, 'Drag the cube — orbit; tap a cube face for that view · zoom bar — zoom · 2 fingers — pan & pinch zoom · double tap, hold and drag — pan'),
     h('div', {}, '2-finger tap — undo · 3-finger tap — redo'),
     h('div', {}, 'Drag gizmo arrows to move along an axis, squares for a plane, rings to rotate. Snapping follows the magnet button.'),
     h('div', {}, 'After any operation, the card at the bottom lets you type exact values — tap a number to open the calculator keypad.'),

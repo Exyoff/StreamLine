@@ -275,6 +275,7 @@ npm run test:e2e     # drives the real UI in an emulated iPhone: Draw → CAD �
 |---|---|
 | tap | select: an edge, face or body (tap the same spot again to step edge → face → body), a sketch curve, a profile or a constraint |
 | hold | precision cursor with a magnifier; it picks what is under it on release |
+| double tap, hold and drag | move the camera (pan); it never turns the view |
 | hold, then the **Multi** button beside the cursor | tap it: Multi-select on or off (each pick then adds to the others). Hold it and move the cursor: a selection box from where the cursor was — dragged right it picks what lies wholly inside, dragged left whatever it touches (sketch curves in a sketch, bodies outside one), picked when the button is let go |
 | drag the orientation cube | orbit (turntable, Z-up); tap a cube face for an exact view |
 | zoom bar (right) | slide up / down to zoom |
@@ -282,7 +283,7 @@ npm run test:e2e     # drives the real UI in an emulated iPhone: Draw → CAD �
 | drag a gizmo | push / pull, extrude, fillet, move or rotate what is selected; tap its value bubble to type |
 | 2-finger tap / 3-finger tap | undo / redo |
 
-Outside a sketch one finger never moves the view: only the cube, the zoom bar and two fingers do. In a sketch, a finger dragged on empty space pans.
+Outside a sketch one finger never turns or zooms the view: the cube turns it, the zoom bar zooms, and two fingers — or a double tap held and dragged — move it. In a sketch, a finger dragged on empty space pans.
 
 Keyboard (iPad or desktop): `Tab` `1 2 3` `G R S` `E I F X A` `⌘Z` `⇧⌘Z` `N` `.` and numpad views.
 
