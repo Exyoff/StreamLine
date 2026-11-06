@@ -1488,6 +1488,36 @@ try {
   });
   check(tf.tap.label === 'Tapped hole M6×1' && tf.tap.dia === 5 && tf.tap.removed > Math.PI * 6.25 * 12 && tf.tap.removed < Math.PI * 9 * 12 && tf.tap.valid && tf.failed && tf.fixed,
     `A tapped M6 hole is drilled at Ø5 and threaded (${JSON.stringify(tf.tap)}); a fillet that failed opens for editing and a smaller radius fixes it (${tf.failed} → ${tf.fixed})`);
+  // audit P1s: Extrude's Operation tried in any order starts from the body as it was; Subtract takes the first body
+  // tapped as the target; a constraint the others contradict is refused (no line shrunk to nothing); a boss sketch on
+  // a face with a hole under its centroid still follows the face when the body grows
+  const ap = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, K = L.K, m = await import('./js/ops.js'), B = await import('./js/browser.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }), X6 = 101000, out = {};
+    const vol = id => +Math.abs(K.volume(L.S.doc.objects.find(o => o.id === id).shape)).toFixed(2);
+    const block = (x, y, w, h, d) => { L.runOp(F.sketchOpNew('b', XY(0), null, k => F.addEntity(k, { t: 'rect', x, y, w, h }))); L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [x + 1, y + 1] }], distance: d, mode: 'new', target: null }); m.commit(); L.S.ed.sketch = null; return L.S.doc.objects.at(-1).id; };
+    const blk = block(X6, -15, 40, 30, 10);
+    L.runOp(F.sketchOpNew('c', XY(0), null, k => F.addEntity(k, { t: 'circle', c: [X6 + 40, 0], r: 10 }))); const csk = L.S.ed.sketch; L.S.ed.sketch = null; L.S.ed.selected = new Set();
+    L.runOp(F.extrude, { pts: [{ sk: csk, pt: [X6 + 40, 0] }], distance: 10, mode: 'new', target: null }, { interactive: true });
+    out.ext = ['join', 'cut', 'intersect', 'new'].map(mode => { m.updateOp({ mode }); return vol(blk); }).join(); m.commit();
+    const a = block(X6 + 200, 0, 40, 30, 10), b = block(X6 + 225, 10, 30, 30, 18);
+    L.S.ed.selected = new Set([a, b]); L.S.ed.active = b; L.runOp(F.bodyBoolean, { kind: 'subtract' }); m.commit();
+    out.bool = [!!L.S.doc.objects.find(o => o.id === a) && vol(a), !!L.S.doc.objects.find(o => o.id === b)].join();
+    L.runOp(F.sketchOpNew('cs', XY(0), null, k => { const l1 = F.addEntity(k, { t: 'line', a: [X6 + 400, 0], b: [X6 + 440, 0] }); F.addEntity(k, { t: 'line', a: [X6 + 440, 0], b: [X6 + 440, 20] }); k.cons = [{ id: ++k.nextEnt, t: 'h', a: l1.id }]; }));
+    const sk3 = L.S.ed.sketch; L.S.ed.sketch = null; L.activateSketch(sk3);
+    const l1 = L.SK.sketchById(sk3).ents.find(e => e.t === 'line').id; L.S.ed.drawSel = new Set([l1]); L.Draw.constrain('v');
+    const e1 = L.SK.entById(L.SK.sketchById(sk3), l1); out.cons = [+L.SK.d2(e1.a, e1.b).toFixed(3), (L.SK.sketchById(sk3).cons || []).map(c => c.t).join('')].join();
+    L.S.ed.drawSel = new Set(); L.S.ed.tool = 'select'; L.finishSketchEdit();
+    L.runOp(F.sketchOpNew('base', XY(0), null, k => { F.addEntity(k, { t: 'rect', x: X6 + 600, y: -10, w: 20, h: 15 }); F.addEntity(k, { t: 'circle', c: [X6 + 610, -2.5], r: 3 }); }));
+    L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [X6 + 601, -9] }], distance: 8, mode: 'new', target: null }); m.commit(); L.S.ed.sketch = null;
+    const base = L.S.doc.objects.at(-1).id, ext = L.H.hist().at(-1);
+    L.runOp(F.sketchOpNew('top', XY(8), { obj: base, n: [0, 0, 1], p: [X6 + 601, -9, 8] }, k => F.addEntity(k, { t: 'circle', c: [X6 + 616, 0], r: 2 })));
+    const tsk = L.S.ed.sketch; L.runOp(F.extrude, { pts: [{ sk: tsk, pt: [X6 + 616, 0] }], distance: 5, mode: 'join', target: base }); m.commit(); L.S.ed.sketch = null;
+    B.editStep(ext.id); m.updateOp({ distance: 12 }); m.commit();
+    out.face = [L.SK.sketchById(tsk).plane.o[2], +K.worldBounds(L.S.doc.objects.find(o => o.id === base))[1][2].toFixed(3)].join();
+    L.S.ed.selected = new Set(); L.refresh(); return out;
+  });
+  check(ap.ext === '13570.8,10429.2,1570.8,12000' && ap.bool === '9000,false' && ap.cons === '40,h' && ap.face === '12,17',
+    `Extrude's Operation in any order starts afresh; Subtract cuts the first body tapped; a contradicting constraint is refused; a boss sketch follows its face (${JSON.stringify(ap)})`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked

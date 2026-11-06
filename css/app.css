@@ -463,7 +463,9 @@ body:has(#popover:not([hidden])) #toast { opacity: 0; }
   body.ws-model #lastop { top: calc(var(--topH) - 2px); left: calc(var(--sal) + 144px); max-height: calc(100% - var(--topH) - var(--bot) - var(--tlh) - var(--cmdh) - 8px); }
   /* (the sketch tools' card stands beside the rail, like a step's card: on the right it covered the zoom bar, the
      cube and the view tools) */
-  #draw-card { left: calc(var(--sal) + 144px); right: auto; top: calc(var(--topH) + 40px); }
+  /* (up under the timeline and no lower than the bottom bar, scrolling if need be: lower, its typed fields sat under
+     the bar and a tap on them landed on the bar) */
+  body #draw-card { left: calc(var(--sal) + 144px); right: auto; top: calc(var(--topH) - 2px); max-height: calc(100% - var(--topH) - var(--bot) - var(--cmdh) - 6px); overflow-y: auto; overscroll-behavior: contain; }
   #toast { top: calc(var(--topH) + 4px); }
   #keypad { left: auto; right: calc(var(--sar) + 8px); width: min(430px, 56vw); transform: none; max-height: calc(100dvh - 16px); overflow-y: auto; padding-top: 4px; }
   #keypad .kd { padding: 0 8px 2px; }

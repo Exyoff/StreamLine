@@ -36,8 +36,12 @@ function apply(op) {
   // (compared by where three points of each part land, not by the angles: −180° and 180° are the same turn)
   const pose = () => S.doc.objects.filter(o => xf?.has(o.id)).flatMap(o => { const x = xfFor(o); return [[0, 0, 0], [100, 0, 0], [0, 100, 0]].map(q => x.toW(q)); });
   const orig = xf?.size ? pose() : null;
+  // a body the step changes that its starting point did not keep (an Extrude's target, found only as it runs): keep it
+  // now, as it was, so the next try — another Operation — starts from it again and not from this one's result
+  const pre = op.base && !op.base.all ? S.doc.objects.filter(o => !op.base.clones.has(o.id)).map(o => ({ o, shape: o.shape, mesh: o.mesh, brep: o.brep, faceOf: o.faceOf })) : null;
   let r;
   try { r = op.def.apply(op.params, op); } catch (err) { console.error(err); r = err.message || 'Operation failed'; }
+  if (pre) for (const q of pre) if (q.o.shape !== q.shape || q.o.mesh !== q.mesh) op.base.clones.set(q.o.id, cloneObj({ ...q.o, shape: q.shape, mesh: q.mesh, brep: q.brep, faceOf: q.faceOf }, op.base.shareMesh));
   if (typeof r !== 'string' && !op.def.sketchOnly && !op.def.presentation) { // mated parts follow
     const before = pose();
     S.ed.driven = xf?.size ? xf : null; // (the parts being moved: a loop is closed by turning the others)

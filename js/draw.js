@@ -690,7 +690,15 @@ export function constrain(t) {
   else if (t === 'conc') { if (curves.length !== 2) return toast('Select 2 circles/arcs'); add = [{ t, a: curves[0].id, b: curves[1].id }]; }
   else if (t === 'fix') { if (!ents.length) return toast('Select entities to fix'); add = ents.filter(e => e.t !== 'dim').map(e => ({ t, a: e.id, v: fixValuesOf(e) })); }
   const ids = add;
-  const ok = runOp(F.sketchOp(`Constrain ${SK.CONS_LABEL[t]}`, s.id, k => editAndSolve(k, kk => { kk.cons = kk.cons || []; for (const c of ids) kk.cons.push({ id: ++kk.nextEnt, ...c }); })));
+  // (a constraint the others contradict — Vertical on a Horizontal line, Parallel across a right angle — is met by
+  // shrinking a curve to nothing: the solver calls that solved. Refused, and the sketch is left as it was)
+  const size = k => new Map(k.ents.filter(e => e.t !== 'dim').map(e => [e.id, e.t === 'line' ? SK.d2(e.a, e.b) : e.r != null ? e.r : e.t === 'rect' ? Math.min(Math.abs(e.w), Math.abs(e.h)) : 1]));
+  const ok = runOp(F.sketchOp(`Constrain ${SK.CONS_LABEL[t]}`, s.id, k => {
+    const before = size(k);
+    const err = editAndSolve(k, kk => { kk.cons = kk.cons || []; for (const c of ids) kk.cons.push({ id: ++kk.nextEnt, ...c }); });
+    if (err) return err;
+    for (const [id, v] of size(k)) { const v0 = before.get(id); if (v0 > 1e-6 && v < Math.max(1e-6, v0 * 1e-4)) return `${CONS_NAMES[t] || 'This constraint'} contradicts the sketch's other constraints (it would shrink ${entName(SK.entById(k, id)) || 'a curve'} to nothing) — delete the one it fights in Constrain first`; }
+  }));
   if (ok) toast(`${CONS_NAMES[t] || 'Constraint'} applied · ${dofText()}`);
 }
 import { fixValues as fixValuesOf } from './constraints.js';
@@ -863,9 +871,17 @@ export function cardContent() {
   // remaining command tools (ellipse, text, hatch, edit commands, inquiry): show the prompt and a way out
   if (EDIT_TOOLS.has(t)) {
     const pr = prompt(), name = { ellipse: 'Ellipse', text: 'Text', hatch: 'Hatch', move: 'Move', copy: 'Copy', rotate: 'Rotate', scale: 'Scale', mirror: 'Mirror', offset: 'Offset', erase: 'Erase', explode: 'Explode', arrayrect: 'Array', arraypolar: 'Polar array', dist: 'Distance', id: 'Point', angle: 'Angle', area: 'Area', radius: 'Radius', list: 'List' }[t] || t;
-    return h('div', {}, title(name, pr.text.replace(/:$/, '').replace(/ or$/, '')),
+    const c = st.cmd, quit = () => { resetTool(); S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); };
+    // Offset: its distance is a field (it asked for a typed value with nowhere to type it on a phone)
+    const offF = t === 'offset' ? h('div', { class: 'fields' }, field({ label: 'Distance', kind: 'len', value: acad.offsetDist ?? 5, min: 1e-9, cls: 'wide', onCommit: v => { if (v > 0) { acad.offsetDist = v; if (st.cmd) st.cmd.stage = 'pick'; emit('drawcard'); } } })) : null;
+    if (t === 'offset' && acad.offsetDist == null) acad.offsetDist = 5;
+    // Area by points: Total ends it with the result (Done threw the points away), as does tapping the first point again
+    const total = t === 'area' && c?.stage === 'collect' && c.pts.length >= 3 ? btn('Total', () => { reportArea(c.pts, c.ptsW); endInquiry(); }, 'primary') : null;
+    const discards = INQUIRY.has(t) && c && (c.pts?.length || c.base);
+    return h('div', {}, title(name, (t === 'offset' ? (c?.stage === 'side' ? 'tap the side to offset to' : 'tap a curve to offset') : t === 'area' && c?.stage === 'collect' ? (c.pts.length >= 3 ? 'tap more corners, or Total' : 'tap the corners') : pr.text.replace(/:$/, '').replace(/ or$/, ''))),
+      offF,
       pr.options && pr.options.length ? h('div', { class: 'btnrow', style: 'justify-content:flex-start;flex-wrap:wrap' }, ...pr.options.map(([l, k]) => btn(l, () => typed(k)))) : null,
-      h('div', { class: 'btnrow' }, btn('Done', () => { resetTool(); S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); }, 'primary')));
+      h('div', { class: 'btnrow' }, total, btn(discards ? 'Cancel' : 'Done', quit, total ? '' : 'primary')));
   }
   return null;
 }
@@ -1150,9 +1166,12 @@ function drawPreview(s) {
   const c = st.cmd;
   if (c && INQUIRY.has(c.tool) && p) {
     const f = fromPt();
-    if (f) { previewGroup.add(lineObj([W(f), W(p)], m)); view.label(W(p), c.tool === 'angle' && c.stage === 'p2' ? fmtAng(SK.angleAt(c.base, c.p1, p)) : fmtLen(SK.d2(f, p)), 'readout'); }
-    if (c.tool === 'angle' && c.stage === 'p2') previewGroup.add(lineObj([W(c.base), W(c.p1)], m));
-    if (c.tool === 'area' && c.pts.length > 1) previewGroup.add(lineObj([...c.pts, p].map(W), matL(C.prev, true, 0.6), true));
+    // (the corners picked so far drawn where they were tapped, on a body in 3D; the running label is the side's length,
+    // or the angle — never an area in mm)
+    const fW = c.tool === 'area' ? c.ptsW?.at(-1) : c.tool === 'angle' ? (c.stage === 'p2' ? c.baseW : c.baseW) : null;
+    if (f) { previewGroup.add(lineObj([fW || W(f), W(p)], m)); if (c.tool !== 'angle' || c.stage !== 'p2') view.label(W(p), fmtLen(fW ? Math.hypot(...W(p).map((v, i) => v - fW[i])) : SK.d2(f, p)), 'readout'); }
+    if (c.tool === 'angle' && c.stage === 'p2') previewGroup.add(lineObj([c.baseW || W(c.base), c.p1W || W(c.p1)], m));
+    if (c.tool === 'area' && c.pts.length > 1) previewGroup.add(lineObj([...(c.ptsW || c.pts.map(W)), W(p)], matL(C.prev, true, 0.6), true));
   }
   if (c && c.stage === 'second' && p && c.base && ['move', 'copy', 'rotate', 'scale', 'mirror'].includes(c.tool)) {
     const b = c.base, ids = selIds();
@@ -1406,7 +1425,7 @@ function cmdTap(s, raw, wpp) {
 export function enter() {
   const t = tool(), c = st.cmd;
   if (['line', 'rect', 'circle', 'arc', 'dim', 'trim', 'extend', 'corner'].includes(t)) { resetTool(); S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); return true; } // Enter ends the command
-  if (c && c.tool === 'area' && c.stage === 'collect' && c.pts.length >= 3) { reportArea(c.pts); endInquiry(); return true; }
+  if (c && c.tool === 'area' && c.stage === 'collect' && c.pts.length >= 3) { reportArea(c.pts, c.ptsW); endInquiry(); return true; }
   if (c && c.tool === 'spline' && c.pts.length >= 2) { placeSpline(c, false); return true; }
   if (c && c.tool === 'text' && c.stage === 'height') { acad.textH ??= defSize() / 8; c.stage = 'string'; emit('drawcard'); return true; }
   if (c && c.stage === 'select') {
@@ -1534,7 +1553,7 @@ function endInquiry() {
 function inquiryPoint(c, p) {
   const t = c.tool, s = sk();
   // on a body, ID and DIST use the 3D point on it (not the drawing plane under it)
-  const w3 = (t === 'id' || t === 'dist') && solidPointAt && tapXY ? solidPointAt(...tapXY) : null;
+  const w3 = (t === 'id' || t === 'dist' || t === 'angle' || t === 'area') && solidPointAt && tapXY ? solidPointAt(...tapXY) : null;
   const W = w3 || SK.toW(s.plane, p), P2 = w3 ? SK.toP(s.plane, w3) : p;
   if (t === 'id') {
     log(`ID  X = ${f4(W[0])}  Y = ${f4(W[1])}  Z = ${f4(W[2])}${w3 ? '   (on a body)' : `   (sketch ${f4(p[0])}, ${f4(p[1])})`}`);
@@ -1549,20 +1568,35 @@ function inquiryPoint(c, p) {
     result = { type: 'dist', pts: [c.base, P2], text: fmtLen(L) };
     return endInquiry();
   }
+  // (Angle and Area take the 3D points tapped on a body, like Distance: flattened onto the drawing plane, a 90° corner
+  // on a wall read 131.19°)
   if (t === 'angle') {
-    if (c.stage === 'base') { c.base = p; c.stage = 'p1'; return; }
-    if (c.stage === 'p1') { c.p1 = p; c.stage = 'p2'; return; }
-    const ang = SK.angleAt(c.base, c.p1, p);
+    if (c.stage === 'base') { c.base = P2; c.baseW = W; c.stage = 'p1'; return; }
+    if (c.stage === 'p1') { c.p1 = P2; c.p1W = W; c.stage = 'p2'; return; }
+    const a = c.p1W.map((v, i) => v - c.baseW[i]), b = W.map((v, i) => v - c.baseW[i]);
+    const la = Math.hypot(...a), lb = Math.hypot(...b); if (la < 1e-12 || lb < 1e-12) return toast('Tap three different points');
+    const ang = Math.acos(Math.max(-1, Math.min(1, (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (la * lb)))) * 180 / Math.PI;
     log(`MEASUREGEOM  Angle = ${fmtAng(ang)}   (supplement ${fmtAng(180 - ang)})`);
-    result = { type: 'angle', pts: [c.base, c.p1, p], text: fmtAng(ang) };
+    result = { type: 'angle', pts: [c.base, c.p1, P2], w: [c.baseW, c.p1W, W], text: fmtAng(ang) };
     return endInquiry();
   }
-  if (t === 'area') { c.pts.push(p); return; }
+  if (t === 'area') {
+    c.ptsW ??= [];
+    // the first corner tapped again closes the outline
+    if (c.pts.length >= 3 && Math.hypot(...W.map((v, i) => v - c.ptsW[0][i])) < view.worldPerPixel(W) * 14) { reportArea(c.pts, c.ptsW); return endInquiry(); }
+    c.pts.push(P2); c.ptsW.push(W); emit('drawcard'); return;
+  }
 }
-function reportArea(pts) {
-  const { area, perimeter } = SK.polygonArea(pts);
+// a polygon's area and perimeter from its 3D corners (Newell's normal), or the drawing plane's 2D ones
+function reportArea(pts, ptsW) {
+  let area, perimeter;
+  if (ptsW && ptsW.length === pts.length) {
+    const n = [0, 0, 0]; perimeter = 0;
+    for (let i = 0; i < ptsW.length; i++) { const a = ptsW[i], b = ptsW[(i + 1) % ptsW.length]; n[0] += (a[1] - b[1]) * (a[2] + b[2]); n[1] += (a[2] - b[2]) * (a[0] + b[0]); n[2] += (a[0] - b[0]) * (a[1] + b[1]); perimeter += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]); }
+    area = Math.hypot(...n) / 2;
+  } else ({ area, perimeter } = SK.polygonArea(pts));
   log(`AREA  Area = ${fmtArea(area)},  Perimeter = ${fmtLen(perimeter)}`);
-  result = { type: 'area', pts, text: fmtArea(area) };
+  result = { type: 'area', pts, w: ptsW, text: fmtArea(area) };
 }
 function inquiryTap(c, s, raw, wpp) {
   if (c.tool === 'radius') {
@@ -1603,12 +1637,12 @@ function listSelection() {
 }
 function drawResult(s, W) {
   const m = matL(0x6fe0a0, true, 0.95);
-  const P = result.pts;
+  const P = result.pts, Q = result.w && result.w.length === P.length ? result.w : P.map(W); // (the 3D points, when tapped on a body)
   if (result.type === 'dist') previewGroup.add(lineObj(P.map(W), m));
-  if (result.type === 'angle') previewGroup.add(lineObj([W(P[1]), W(P[0]), W(P[2])], m));
-  if (result.type === 'area') previewGroup.add(lineObj(P.map(W), m, true));
-  const at = result.type === 'area' ? [P.reduce((a, p) => a + p[0], 0) / P.length, P.reduce((a, p) => a + p[1], 0) / P.length] : result.type === 'dist' ? [(P[0][0] + P[1][0]) / 2, (P[0][1] + P[1][1]) / 2] : P[0];
-  view.label(W(at), result.text, 'measure');
+  if (result.type === 'angle') previewGroup.add(lineObj([Q[1], Q[0], Q[2]], m));
+  if (result.type === 'area') previewGroup.add(lineObj(Q, m, true));
+  const at = result.type === 'area' ? [0, 1, 2].map(k => Q.reduce((a, q) => a + q[k], 0) / Q.length) : result.type === 'dist' ? W([(P[0][0] + P[1][0]) / 2, (P[0][1] + P[1][1]) / 2]) : Q[0];
+  view.label(at, result.text, 'measure');
 }
 
 
