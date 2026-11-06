@@ -732,6 +732,7 @@ function onTap(x, y) {
   if (keypadOpen()) { closeKeypad(false); return; }
   if (sheetOpen && !document.body.classList.contains('sheet-docked')) { toggleSheet(false); return; }
   if (S.ed.planePick) return planePickTap(x, y);
+  if (Draw.fillPending() && sketching()) return Draw.fillTap(x, y); // (Fill region: the area to fill)
   if (S.ed.pickFace) return facePickTap(x, y);
   if (S.ed.tool === 'measure') return measureTap(x, y);
   if (S.ed.workspace === 'draw') return Draw.tap(x, y);
@@ -1315,9 +1316,9 @@ const TOOLS = {
 };
 // ---------- tool sets (Fusion's toolbar tabs, along the bottom) → their tools down the left rail ----------
 // an entry is a modal tool (t: the S.ed.tool it sets), a constraint (c: its kind) or a command (run)
-const CONS_NEED = { h: 1, v: 1, fix: 1, par: 2, perp: 2, eq: 2, tan: 2, conc: 2 };
-const CONS_ICON = { h: 'cH', v: 'cV', par: 'cPar', perp: 'cPerp', eq: 'cEq', tan: 'cTan', conc: 'cConc', fix: 'cFix' };
-const CONS_NAME = { h: 'Horizontal', v: 'Vertical', par: 'Parallel', perp: 'Perpendicular', eq: 'Equal', tan: 'Tangent', conc: 'Concentric', fix: 'Fix' };
+const CONS_NEED = { h: 1, v: 1, fix: 1, par: 2, perp: 2, eq: 2, tan: 2, conc: 2, on: 2 };
+const CONS_ICON = { h: 'cH', v: 'cV', par: 'cPar', perp: 'cPerp', eq: 'cEq', tan: 'cTan', conc: 'cConc', fix: 'cFix', on: 'point' };
+const CONS_NAME = { h: 'Horizontal', v: 'Vertical', par: 'Parallel', perp: 'Perpendicular', eq: 'Equal', tan: 'Tangent', conc: 'Concentric', fix: 'Fix', on: 'On curve' };
 // Fusion's two modes: designing the part (Solid · Modify · Assemble · Construct · Inspect, with Create Sketch first),
 // and a sketch being edited (Create · Modify · Constrain · Inspect, with Finish Sketch) — the drawing tools only exist
 // inside a sketch
@@ -1342,7 +1343,7 @@ function toolsetDefs() {
       A('text', 'Text', I.text, () => acadTool('text')), A('ellipse', 'Ellipse', I.circle, () => acadTool('ellipse')), T('dim', 'Dimension', I.dim), T('project', 'Project', I.project)] },
     { id: 'skmodify', label: 'Modify', icon: I.trim, tools: [sel, T('corner', 'Fillet', I.corner), T('trim', 'Trim', I.trim), A('extend', 'Extend', I.extend, () => acadTool('extend')), A('offset', 'Offset', I.offset, () => acadTool('offset')),
       A('skmirror', 'Mirror', I.flip, () => acadTool('mirror')), A('skmove', 'Move', I.move, () => acadTool('move')), A('skcopy', 'Copy', I.dup, () => acadTool('copy')), A('skrotate', 'Rotate', I.rotate, () => acadTool('rotate')), A('skscale', 'Scale', I.scale, () => acadTool('scale')),
-      A('skpattern', 'Pattern', I.array, () => acadTool('arrayrect')), A('cons', 'Construction', I.construction, () => Draw.toggleConstruction()), A('skdelete', 'Delete', I.trash, () => Draw.deleteSelected())] },
+      A('skpattern', 'Pattern', I.array, () => acadTool('arrayrect')), A('skfill', 'Fill region', I.array, () => Draw.fillRegionStart()), A('cons', 'Construction', I.construction, () => Draw.toggleConstruction()), A('skdelete', 'Delete', I.trash, () => Draw.deleteSelected())] },
     { id: 'constrain', label: 'Constrain', icon: I.constrain, tools: [sel, ...Object.keys(CONS_NEED).map(k => ({ id: 'c-' + k, c: k, label: k === 'perp' ? 'Perpend.' : CONS_NAME[k], icon: I[CONS_ICON[k]] })),
       T('dim', 'Dimension', I.dim), A('cons2', 'Construction', I.construction, () => Draw.toggleConstruction())] },
     { id: 'skinspect', label: 'Inspect', icon: I.measure, tools: [sel, A('dist', 'Distance', I.measure, () => acadTool('dist')), A('angle', 'Angle', I.angle, () => acadTool('angle')), A('area', 'Area', I.area, () => acadTool('area')), A('radius', 'Radius', I.radius, () => acadTool('radius'))] },
@@ -1407,6 +1408,8 @@ function syncSelected() {
 // ---------- constraints as tools (Fusion): pick the constraint, then tap the curves it applies to ----------
 function startConstraint(kind) {
   S.ed.tool = 'select'; Draw.resetTool();
+  // Point on curve: a point, then the curve (Fusion's coincident)
+  if (kind === 'on') { S.ed.consTool = 'on'; S.ed.drawSel = new Set(); toast('On curve: tap a point (a line\'s end, a corner, a centre), then the line or circle it stays on', 3200); refresh(); return; }
   // curves already picked: apply straight away
   if (S.ed.drawSel.size >= CONS_NEED[kind] || (kind === 'fix' && S.ed.drawSel.size)) { Draw.constrain(kind); S.ed.consTool = kind; S.ed.drawSel = new Set(); refresh(); return; }
   S.ed.consTool = kind; S.ed.drawSel = new Set(); setPickKind('edge');
@@ -1415,8 +1418,13 @@ function startConstraint(kind) {
 }
 function consTap(x, y) {
   const kind = S.ed.consTool, multi = S.ed.multi;
+  if (kind === 'on') { Draw.coincidentTap(x, y); refresh(); return; }
+  const before = new Set(S.ed.drawSel);
   S.ed.multi = true; // (picks build up until the constraint has what it needs)
   try { curveOrEdgeTap(x, y); } finally { S.ed.multi = multi; }
+  // a rectangle's side for a line constraint: the rectangle becomes four lines, and that side is the pick
+  if (['h', 'v', 'par', 'perp', 'eq', 'tan'].includes(kind)) { const k = SK.sketchById(S.ed.editingSketch);
+    for (const id of [...S.ed.drawSel]) if (!before.has(id) && SK.entById(k, id)?.t === 'rect') { const side = Draw.rectSideAt(id, x, y); S.ed.drawSel.delete(id); if (side != null) { S.ed.drawSel = new Set([...[...S.ed.drawSel].filter(q => SK.entById(SK.sketchById(S.ed.editingSketch), q)), side]); } } }
   if (S.ed.drawSel.size >= CONS_NEED[kind]) { Draw.constrain(kind); S.ed.drawSel = new Set(); refresh(); }
 }
 function buildStatic() {
@@ -1638,7 +1646,7 @@ function renderActions() {
     const textSel = curves && [...S.ed.drawSel].some(id => SK.sketchById(S.ed.sketch)?.ents.find(e => e.id === id)?.t === 'text');
     if (textSel) c.push(act(I.extrude, 'Outline', () => Draw.outlineText(), 'primary'));
     if (curves && !sketching()) c.push(act(I.sketch, 'Edit sketch', () => activateSketch(S.ed.sketch), 'primary'), act(I.next, 'Chain', () => chainCurves()));
-    else if (curves) c.push(act(I.next, 'Chain', () => chainCurves()), act(I.move, 'Move', () => acadTool('move')), act(I.dup, 'Copy', () => acadTool('copy')), act(I.rotate, 'Rotate', () => acadTool('rotate')), act(I.flip, 'Mirror', () => acadTool('mirror')), act(I.scale, 'Scale', () => acadTool('scale')), act(I.inset, 'Offset', () => acadTool('offset')), act(I.array, 'Array', () => acadTool('arrayrect')), act(I.constrain, 'Constrain', e => openConstrainMenu(e.currentTarget)), act(I.line, 'Construction', () => Draw.toggleConstruction()), act(I.trash, 'Delete', () => Draw.deleteSelected(), 'danger'));
+    else if (curves) c.push(act(I.next, 'Chain', () => chainCurves()), act(I.move, 'Move', () => acadTool('move')), act(I.dup, 'Copy', () => acadTool('copy')), act(I.rotate, 'Rotate', () => acadTool('rotate')), act(I.flip, 'Mirror', () => acadTool('mirror')), act(I.scale, 'Scale', () => acadTool('scale')), act(I.inset, 'Offset', () => acadTool('offset')), act(I.array, 'Array', () => acadTool('arrayrect')), act(I.array, 'Fill region', () => Draw.fillRegionStart()), act(I.constrain, 'Constrain', e => openConstrainMenu(e.currentTarget)), act(I.line, 'Construction', () => Draw.toggleConstruction()), act(I.trash, 'Delete', () => Draw.deleteSelected(), 'danger'));
     if (S.ed.isolate) c.push(act(I.eye, 'Show all', () => isolate(false), 'primary'));
     if (solids >= 2) c.push(act(I.intersect, 'Interference', () => checkInterference(selectedObjs())));
     if (solids && !S.ed.isolate) c.push(act(I.eye, 'Isolate', () => isolate(true)));
@@ -1784,7 +1792,7 @@ function commands() {
     C('Line', 'L', tool('line'), 'polyline pline draw'), C('Rectangle', '⇧R', tool('rect'), 'rect box draw'), C('Circle', 'C', tool('circle'), 'draw'), C('Arc', '', tool('arc'), 'draw'),
     ...Object.entries(Draw.MODES).flatMap(([t, L]) => L.map(([m, label]) => C(`${({ rect: 'Rectangle', circle: 'Circle', arc: 'Arc' })[t]} · ${label}`, '', () => setTool(t, m), 'draw mode ' + m))),
     C('Spline', '', tool('spline'), 'curve'), C('Polygon', '', tool('polygon'), 'hexagon'), C('Ellipse', '', () => acadTool('ellipse')), C('Text', '', () => acadTool('text')), C('Hatch', '', () => acadTool('hatch')),
-    C('Curve fillet / chamfer', '', tool('corner'), 'corner round'), C('Trim curve', '', tool('trim')), C('Extend curve', '', () => setTool('extend')), C('Offset curve', '', () => acadTool('offset')), C('Dimension', '', tool('dim'), 'dim measure constraint'),
+    C('Curve fillet / chamfer', '', tool('corner'), 'corner round'), C('Trim curve', '', tool('trim')), C('Extend curve', '', () => setTool('extend')), C('Offset curve', '', () => acadTool('offset')), C('Fill region with copies', '', () => Draw.fillRegionStart(), 'pattern fill area vents perforation honeycomb array inside'), C('Point on curve (constraint)', '', () => startConstraint('on'), 'coincident lock point line'), C('Dimension', '', tool('dim'), 'dim measure constraint'),
     C('Extrude', 'E', () => (S.ed.profiles.length ? startExtrude() : modifier('pushpull')), 'push pull'), C('Revolve', '', () => runOp(F.revolve)), C('Loft', '', () => runOp(F.loftOp)), C('Sweep', '', () => runOp(F.sweepOp)),
     C('Fillet edges', 'F', () => modifier('fillet'), 'round'), C('Chamfer edges', '⇧C', () => modifier('chamfer'), 'bevel'), C('Push / pull face (offset face)', 'O', () => modifier('pushpull'), 'offset face move face'),
     C('Shell', 'H', () => modifier('shell'), 'hollow'), C('Draft', '', () => runOp(F.draftOp), 'taper'), C('Thicken', '', () => runOp(F.thickenOp)), C('Mirror', 'M', () => modifier('mirror')), C('Slice', '', () => runOp(F.sliceOp), 'cut split'),
@@ -2427,7 +2435,7 @@ OPS.setPivotHook(o => {
   const k = [0, 1, 2].reduce((a, i) => (Math.abs(r.d[i]) > Math.abs(r.d[a]) ? i : a), 0);
   return { c: r.c, d: r.d[k] < 0 ? M.mul(r.d, -1) : r.d };
 });
-window.StreamLine = { gizmoPartAt, K, S, view, OPS, F, SK, Draw, Cmd, runOp, undo, redo, getLast, M, serialize, setWorkspace, H, BR, isShown, addSketchedPrim, refresh: () => selectionChanged(),
+window.StreamLine = { gizmoPartAt, startConstraint, K, S, view, OPS, F, SK, Draw, Cmd, runOp, undo, redo, getLast, M, serialize, setWorkspace, H, BR, isShown, addSketchedPrim, refresh: () => selectionChanged(),
   checkInterference: async objs => { await checkInterference(objs); return lastInterference; }, valueHit,
   sketching, startCreateSketch, finishSketchEdit, activateSketch, sketchOn: params => { S.ed.planePick = null; createSketchOn(params); return S.ed.editingSketch; } };
 

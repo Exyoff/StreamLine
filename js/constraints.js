@@ -67,6 +67,11 @@ function residuals(sk, ctx) {
       }
       case 'conc': if (b && a.c && b.c) r.push(a.c[0] - b.c[0], a.c[1] - b.c[1]); break;
       case 'fix': for (const k of PARAMS[a.t] || []) { const [f, i] = k.split('.'); const v = i == null ? a[f] : a[f][+i]; r.push(v - c.v[k]); } break;
+      case 'on': { // point c.p lies on curve a (Fusion's coincident to a curve): on a line, or on a circle / arc's rim
+        const p = pt(sk, c.p); if (!p) break;
+        if (a.t === 'line') r.push(lineDist(a, p)); else if (a.r != null && a.c) r.push(d2(p, a.c) - a.r);
+        break;
+      }
       case 'mid': { // point c.p is the midpoint of line a
         const p = pt(sk, c.p); if (p) r.push(p[0] - (a.a[0] + a.b[0]) / 2, p[1] - (a.a[1] + a.b[1]) / 2); break;
       }
