@@ -448,6 +448,24 @@ export function lineAngle(sk, d) {
 // dimension that only shows what the sketch measures. at: where its value sits (sketch coordinates).
 // the curves a dimension measures
 export const dimEnts = d => d.kind === 'lin' || d.kind === 'hor' || d.kind === 'ver' ? [d.A.e, d.B.e] : d.kind === 'pl' ? [d.P.e, d.l] : d.kind === 'ang' ? [d.la, d.lb] : [d.e];
+// where a dimension's label sits travels with what it measures: it is kept with the points it measured from when it
+// was placed (atRef: their middle then), and moves as far as their middle has moved since — curves moved, rotated or
+// solved, the label goes with them instead of floating where it was
+export function dimAnchor(sk, d) {
+  const mid = e => (e && e.t === 'line' ? [(e.a[0] + e.b[0]) / 2, (e.a[1] + e.b[1]) / 2] : null);
+  const P = d.kind === 'lin' || d.kind === 'hor' || d.kind === 'ver' ? [refPoint(sk, d.A), refPoint(sk, d.B)]
+    : d.kind === 'pl' ? [refPoint(sk, d.P), mid(entById(sk, d.l))] : d.kind === 'ang' ? [mid(entById(sk, d.la)), mid(entById(sk, d.lb))]
+    : [entById(sk, d.e)?.c];
+  if (P.some(q => !q)) return null;
+  return [P.reduce((a, q) => a + q[0], 0) / P.length, P.reduce((a, q) => a + q[1], 0) / P.length];
+}
+export function dimAt(sk, d) {
+  if (!d.at) return null;
+  if (!d.atRef) { const a0 = dimAnchor(sk, d); if (a0) d.atRef = a0; return d.at; } // (one placed before this: it travels from here on)
+  const a = dimAnchor(sk, d);
+  return a ? [d.at[0] + a[0] - d.atRef[0], d.at[1] + a[1] - d.atRef[1]] : d.at;
+}
+export function setDimAt(sk, d, at) { d.at = at.slice(); const a = dimAnchor(sk, d); if (a) d.atRef = a; else delete d.atRef; }
 // signed distance of p from the line through l (positive on its left, looking from a to b)
 export function lineSide(l, p) { const dx = l.b[0] - l.a[0], dy = l.b[1] - l.a[1], L = Math.hypot(dx, dy) || 1e-300; return ((p[1] - l.a[1]) * dx - (p[0] - l.a[0]) * dy) / L; }
 export function dimValue(sk, d) {

@@ -494,7 +494,7 @@ function defaultAt(s, d) {
 // the dimension on screen: { lines, arrows, text, tx, ty } (screen pixels) — or null
 function dimLayout(s, d) {
   const text = dimText(s, d); if (text == null) return null;
-  const at = d.at || defaultAt(s, d); if (!at) return null;
+  const at = SK.dimAt(s, d) || defaultAt(s, d); if (!at) return null;
   const W = p => view.project(SK.toW(s.plane, p)), lines = [], arrows = [];
   const arrow = (tip, from) => { // a filled arrowhead at tip, pointing away from from (screen points)
     const dx = tip.x - from.x, dy = tip.y - from.y, L = Math.hypot(dx, dy); if (L < 1e-6) return;
@@ -616,7 +616,7 @@ function placeDim(s, P, at) {
   else { const e = SK.entById(s, P.e); if (!e) { st.dimPend = null; return; } d = { t: 'dim', kind: P.kind, e: P.e, value: P.kind === 'dia' ? 2 * e.r : e.r }; }
   st.dimPend = null;
   if (d.value == null || !isFinite(d.value) || (d.kind !== 'ang' && Math.abs(d.value) < 1e-9)) { toast('Nothing to measure there'); view.render(); emit('drawcard'); return; }
-  d.at = at.slice();
+  SK.setDimAt(s, d, at); // (kept with what it measures: it travels with them)
   // (on projected geometry only: it follows the body, so the size is shown, never driven — a Ø150 rim went to Ø130)
   const proj = SK.dimEnts(d).every(id => SK.entById(s, id)?.proj);
   const driven = proj || dimRedundant(s, d); if (driven) d.value = null;
@@ -662,7 +662,7 @@ export function dimDragAt(phase, x, y) {
   if (phase === 'start') {
     const L = dimLabelAt(x, y); if (!L) return false;
     const s = sk(); if (!s || s.pending) return false;
-    const at0 = L.dim.at ? L.dim.at.slice() : null, cur = L.dim.at || defaultAt(s, L.dim); if (!cur) return false;
+    const at0 = L.dim.at ? { at: L.dim.at.slice(), ref: L.dim.atRef?.slice() } : null, cur = SK.dimAt(s, L.dim) || defaultAt(s, L.dim); if (!cur) return false;
     dimDrag = { sk: s.id, id: L.dim.id, at0, grab: v2.sub(planePt(x, y, s), cur) };
     dimSel = { sk: s.id, id: L.dim.id }; emit('selection');
     return true;
@@ -670,9 +670,9 @@ export function dimDragAt(phase, x, y) {
   if (!dimDrag) return false;
   const s = SK.sketchById(dimDrag.sk), d = s && SK.entById(s, dimDrag.id);
   if (!d) { dimDrag = null; return false; }
-  if (phase === 'move') { d.at = v2.sub(planePt(x, y, s), dimDrag.grab); view.render(); return true; }
-  const at = d.at, k = dimDrag; d.at = k.at0; if (d.at == null) delete d.at; dimDrag = null;
-  if (phase === 'end' && at) runOp(F.sketchOp('Move dimension', k.sk, kk => { const dd = SK.entById(kk, k.id); if (dd) dd.at = at; }));
+  if (phase === 'move') { SK.setDimAt(s, d, v2.sub(planePt(x, y, s), dimDrag.grab)); view.render(); return true; }
+  const at = d.at, k = dimDrag; if (k.at0) { d.at = k.at0.at; if (k.at0.ref) d.atRef = k.at0.ref; else delete d.atRef; } else { delete d.at; delete d.atRef; } dimDrag = null;
+  if (phase === 'end' && at) runOp(F.sketchOp('Move dimension', k.sk, kk => { const dd = SK.entById(kk, k.id); if (dd) SK.setDimAt(kk, dd, at); }));
   view.render(); emit('selection');
   return true;
 }

@@ -1581,6 +1581,16 @@ try {
     check(onOk && on.cons === 'on' && on.L[0].join() === [X9, 0, X9 + 60, 0].join() && on.L[1][1] === 0, `Point on curve: a line's end goes onto another line, which stays put (${JSON.stringify(on)})`);
     check(par.cons === 'h,v,h,v,par' && par.L.length === 5 && Math.abs(par.L[4][1] - par.L[4][3]) < 1e-6, `Parallel to a rectangle's side: the rectangle becomes four square lines and the side is used (${JSON.stringify(par)})`);
     check(fill.n1 === 59 && fill.n2 > fill.n1 && fill.both === '-20,-10,0,10,20', `Fill region repeats a motif over an area (${fill.n1} wholly inside, ${fill.n2} by centre); a pattern goes both ways (${fill.both})`); }
+  // a dimension's label travels with what it measures (the curves moved: it moves as far)
+  const dtv = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, SK = L.SK, m = await import('./js/ops.js'), X10 = 105000; let lid;
+    L.runOp(F.sketchOpNew('dt', { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }, null, k => { const l = F.addEntity(k, { t: 'line', a: [X10, 0], b: [X10 + 40, 0] }); lid = l.id; const d = { id: ++k.nextEnt, t: 'dim', kind: 'lin', A: { e: l.id, k: 'a' }, B: { e: l.id, k: 'b' }, value: 40 }; k.ents.push(d); SK.setDimAt(k, d, [X10 + 20, -10]); }));
+    const sk = L.S.ed.sketch; L.S.ed.sketch = null;
+    const at = () => { const k = SK.sketchById(sk); return SK.dimAt(k, k.ents.find(e => e.t === 'dim')).map(v => +v.toFixed(3)).join(); };
+    L.runOp(F.sketchOp('Move', sk, kk => { SK.transformEntities(kk, [lid], { kind: 'move', d: [30, 15] }); })); m.commit();
+    return at();
+  });
+  check(dtv === '105050,5', `A dimension's label travels with the curves it measures (${dtv})`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
