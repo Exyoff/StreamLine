@@ -657,6 +657,7 @@ export const polarPattern = {
   },
 };
 // rows (and columns) of copies of the selected bodies: e.g. vent-slot cutters, then Subtract them in one go
+const GOES = [['pos', '+'], ['neg', '−'], ['both', 'Both ways']];
 export const linearPattern = {
   label: p => `Linear Pattern ${p.count}${p.count2 > 1 ? '×' + p.count2 : ''}`,
   defaults: () => ({ count: 3, dir: 'x', count2: 1, dir2: 'y' }),
@@ -668,16 +669,20 @@ export const linearPattern = {
   },
   touch: () => ({ ids: [] }),
   reserve: 2000,
-  fields: p => [{ key: 'count', label: 'Count', kind: 'int', min: 1, max: 500 }, lenF('spacing', 'Spacing (− flips)'), { key: 'dir', label: 'Direction', kind: 'choice', options: [['x', 'X'], ['y', 'Y'], ['z', 'Z']], wide: true },
-    { key: 'count2', label: 'Rows', kind: 'int', min: 1, max: 500 }, ...(p.count2 > 1 ? [lenF('spacing2', 'Row spacing'), { key: 'dir2', label: 'Row direction', kind: 'choice', options: [['x', 'X'], ['y', 'Y'], ['z', 'Z']], wide: true }] : [])],
+  // (Goes: + along the axis, − the other way, or both ways from the original — Fusion's symmetric pattern)
+  fields: p => [{ key: 'count', label: 'Count', kind: 'int', min: 1, max: 500 }, lenF('spacing', 'Spacing'), { key: 'dir', label: 'Direction', kind: 'choice', options: [['x', 'X'], ['y', 'Y'], ['z', 'Z']], wide: true },
+    { key: 'side', label: 'Goes', kind: 'choice', options: GOES, wide: true },
+    { key: 'count2', label: 'Rows', kind: 'int', min: 1, max: 500 }, ...(p.count2 > 1 ? [lenF('spacing2', 'Row spacing'), { key: 'dir2', label: 'Row direction', kind: 'choice', options: [['x', 'X'], ['y', 'Y'], ['z', 'Z']], wide: true }, { key: 'side2', label: 'Rows go', kind: 'choice', options: GOES, wide: true }] : [])],
   apply(p) {
     const n1 = Math.max(1, Math.round(p.count)), n2 = Math.max(1, Math.round(p.count2 || 1));
-    if (n1 * n2 < 2) return 'Count must make at least 2 copies';
-    if (n1 * n2 > 1000) return 'That is more than 1000 copies';
+    const span = (n, d) => (d === 'neg' ? [-(n - 1), 0] : d === 'both' ? [-(n - 1), n - 1] : [0, n - 1]);
+    const [i0, i1] = span(n1, p.side), [j0, j1] = span(n2, p.side2);
+    if ((i1 - i0 + 1) * (j1 - j0 + 1) < 2) return 'Count must make at least 2 copies';
+    if ((i1 - i0 + 1) * (j1 - j0 + 1) > 1000) return 'That is more than 1000 copies';
     if (n2 > 1 && p.dir2 === p.dir) return 'Rows need a different direction';
     let id = p._base; const made = [...p.ids];
     if (S.doc.nextId < p._base + 2000) S.doc.nextId = p._base + 2000;
-    for (let j = 0; j < n2; j++) for (let i = 0; i < n1; i++) {
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
       if (!i && !j) continue;
       const d = M.add(M.mul(AX[p.dir], i * p.spacing), M.mul(AX[p.dir2], j * (p.spacing2 || 0)));
       for (const oid of p.ids) {

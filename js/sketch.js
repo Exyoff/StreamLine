@@ -521,7 +521,7 @@ export function pruneCons(sk) {
   sk.cons = (sk.cons || []).filter(c => ids.has(c.a) && (c.b == null || ids.has(c.b)) && (!c.p || ids.has(c.p.e)));
   sk.ents = sk.ents.filter(d => d.t !== 'dim' || (dimEnts(d).every(id => ids.has(id)) && (d.kind === 'lin' || d.kind === 'hor' || d.kind === 'ver' ? refPoint(sk, d.A) && refPoint(sk, d.B) : d.kind === 'pl' ? refPoint(sk, d.P) && entById(sk, d.l)?.t === 'line' : true)));
 }
-export const CONS_LABEL = { h: 'H', v: 'V', par: '∥', perp: '⊥', eq: '=', tan: 'T', conc: '◎', fix: '⚓', mid: 'M' };
+export const CONS_LABEL = { h: 'H', v: 'V', par: '∥', perp: '⊥', eq: '=', tan: 'T', conc: '◎', fix: '⚓', mid: 'M', on: '⊙' };
 
 // ---------- 2D corner fillet / chamfer ----------
 // Finds two lines meeting at the corner nearest p (within tol), then rounds (arc radius r) or bevels (distance r).
@@ -744,15 +744,49 @@ export function angleAt(v, p1, p2) {
 
 
 // ---------- AutoCAD ARRAYRECT / ARRAYPOLAR (copies) ----------
-export function arrayRect(sk, ids, cols, rows, dx, dy) {
+// (cdir / rdir: 'pos' runs the columns / rows along +X / +Y, 'neg' the other way, 'both' to each side — as Fusion's
+// one-direction / symmetric pattern; a negative spacing also flips it)
+export function arrayRect(sk, ids, cols, rows, dx, dy, cdir = 'pos', rdir = 'pos') {
   cols = Math.max(1, Math.round(cols)); rows = Math.max(1, Math.round(rows));
-  if (cols * rows < 2) return 'Need at least 2 items';
-  if (cols * rows > 2000) return 'Too many items';
+  const span = (n, d) => (d === 'neg' ? [-(n - 1), 0] : d === 'both' ? [-(n - 1), n - 1] : [0, n - 1]);
+  const [c0, c1] = span(cols, cdir), [r0, r1] = span(rows, rdir);
+  if ((c1 - c0 + 1) * (r1 - r0 + 1) < 2) return 'Need at least 2 items';
+  if ((c1 - c0 + 1) * (r1 - r0 + 1) > 2000) return 'Too many items';
   const made = [];
-  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+  for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
     if (!r && !c) continue;
     made.push(...transformEntities(sk, ids, { kind: 'move', d: [c * dx, r * dy] }, true));
   }
+  return made;
+}
+// Fill region: copies of the picked curves (the motif) laid on a grid over a closed region, kept where the whole
+// copy lies inside it (or, keep 'centre', where its middle does) — vents, knurls, perforations. The grid runs from the
+// motif where it is, so it stays one of the copies. stagger: every other row shifted half a step (honeycomb, brick).
+const pip = (P, poly) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) if ((poly[i][1] > P[1]) !== (poly[j][1] > P[1]) && P[0] < (poly[j][0] - poly[i][0]) * (P[1] - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) c = !c; return c; };
+export function fillRegion(sk, ids, at, dx, dy, stagger = false, keep = 'whole') {
+  if (!(Math.abs(dx) > 1e-9 && Math.abs(dy) > 1e-9)) return 'Spacing must not be 0';
+  const r = regionAt(sk, at); if (!r) return 'The area it filled is no longer there';
+  const motif = ids.map(id => entById(sk, id)).filter(Boolean); if (!motif.length) return 'The curves it repeats are gone';
+  const M = motif.flatMap(e => entPolyline(e).pts), xs = M.map(q => q[0]), ys = M.map(q => q[1]);
+  const mb = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], mc = [(mb[0] + mb[2]) / 2, (mb[1] + mb[3]) / 2];
+  // (the motif's outline points, sampled, for "the whole copy inside")
+  const probe = keep === 'centre' ? [mc] : M.filter((_, i) => i % Math.max(1, Math.floor(M.length / 48)) === 0).concat([mc]);
+  const inside = P => pip(P, r.outer) && !r.holes.some(h => pip(P, h));
+  const O = r.outer, ox = O.map(q => q[0]), oy = O.map(q => q[1]);
+  const ax = Math.abs(dx), ay = Math.abs(dy);
+  const i0 = Math.floor((Math.min(...ox) - mb[2]) / ax) - 1, i1 = Math.ceil((Math.max(...ox) - mb[0]) / ax) + 1;
+  const j0 = Math.floor((Math.min(...oy) - mb[3]) / ay) - 1, j1 = Math.ceil((Math.max(...oy) - mb[1]) / ay) + 1;
+  if ((i1 - i0 + 1) * (j1 - j0 + 1) > 20000) return 'The spacing is too small for this area';
+  const offs = [];
+  for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+    const d = [i * ax + (stagger && j % 2 ? ax / 2 : 0), j * ay];
+    if (Math.abs(d[0]) < 1e-12 && Math.abs(d[1]) < 1e-12) continue;
+    if (probe.every(q => inside([q[0] + d[0], q[1] + d[1]]))) offs.push(d);
+  }
+  if (!offs.length) return 'No copy fits in that area at this spacing';
+  if (offs.length > 2000) return `That is ${offs.length} copies — make the spacing larger (2000 at most)`;
+  const made = [];
+  for (const d of offs) made.push(...transformEntities(sk, ids, { kind: 'move', d }, true));
   return made;
 }
 export function arrayPolar(sk, ids, center, n, total = 360) {

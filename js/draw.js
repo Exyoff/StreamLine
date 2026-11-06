@@ -32,7 +32,7 @@ export const drawMode = { rect: 'corner', circle: 'center', arc: 'center' };
 export function setDrawMode(t, m) { if (!MODES[t] || !MODES[t].some(x => x[0] === m)) return; drawMode[t] = m; resetTool(); }
 const mode = t => drawMode[t] || (MODES[t] && MODES[t][0][0]);
 const modeName = t => (MODES[t] || []).find(x => x[0] === mode(t))?.[1] || '';
-export function resetTool() { result = null; st.p2 = null; st.pressed = false; st.arcMode = false; st.lastDir = null; if (tool() !== 'line') lineOpts.construction = false; Object.assign(st, { cmd: null, last: null, dimLine: null, dimPend: null, start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null }); view.render(); emit('drawcard'); }
+export function resetTool() { result = null; st.p2 = null; st.pressed = false; st.arcMode = false; st.lastDir = null; if (tool() !== 'line') lineOpts.construction = false; Object.assign(st, { onPend: null, cmd: null, last: null, dimLine: null, dimPend: null, start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null }); view.render(); emit('drawcard'); }
 // In the studio (unified 3D workspace) each stroke draws on the plane under the finger: a body face,
 // or the construction plane (ground). Curves on the same plane share one sketch, created on demand.
 export const studio = () => S.ed.workspace === 'model';
@@ -332,7 +332,7 @@ function gripUp() {
 let armed = null;
 // a constraint glyph is picked like anything else: it lights up with the curves it ties, and Delete removes it
 let consSel = null; // { sk, cid, t }
-const CONS_NAMES = { h: 'Horizontal', v: 'Vertical', par: 'Parallel', perp: 'Perpendicular', eq: 'Equal', tan: 'Tangent', conc: 'Concentric', fix: 'Fix', mid: 'Midpoint' };
+const CONS_NAMES = { h: 'Horizontal', v: 'Vertical', par: 'Parallel', perp: 'Perpendicular', eq: 'Equal', tan: 'Tangent', conc: 'Concentric', fix: 'Fix', mid: 'Midpoint', on: 'Point on curve' };
 export const consSelected = () => consSel;
 export const consName = t => CONS_NAMES[t] || 'Constraint';
 export function clearConsSel() { if (consSel) { consSel = null; renderKey = ''; } }
@@ -683,23 +683,86 @@ export function constrain(t) {
   const ents = [...S.ed.drawSel].map(id => SK.entById(s, id)).filter(Boolean);
   const lines = ents.filter(e => e.t === 'line'), curves = ents.filter(e => e.t === 'circle' || e.t === 'arc');
   let add = [];
+  if (['h', 'v', 'par', 'perp', 'eq'].includes(t) && ents.some(e => e.t === 'rect') && lines.length < (t === 'h' || t === 'v' ? 1 : 2)) return toast(`A rectangle is one shape: use the ${CONS_NAMES[t]} tool in Constrain and tap the rectangle's side — it becomes four lines`, 3600);
   if (t === 'h' || t === 'v') { if (!lines.length) return toast('Select one or more lines'); add = lines.map(l => ({ t, a: l.id })); }
   else if (t === 'par' || t === 'perp') { if (lines.length !== 2) return toast('Select exactly 2 lines'); add = [{ t, a: lines[0].id, b: lines[1].id }]; }
   else if (t === 'eq') { const g = lines.length === 2 ? lines : curves.length === 2 ? curves : null; if (!g) return toast('Select 2 lines or 2 circles/arcs'); add = [{ t, a: g[0].id, b: g[1].id }]; }
   else if (t === 'tan') { const pair = lines.length === 1 && curves.length === 1 ? [lines[0], curves[0]] : curves.length === 2 ? curves : null; if (!pair) return toast('Select a line and a circle/arc, or 2 circles/arcs'); add = [{ t, a: pair[0].id, b: pair[1].id }]; }
   else if (t === 'conc') { if (curves.length !== 2) return toast('Select 2 circles/arcs'); add = [{ t, a: curves[0].id, b: curves[1].id }]; }
   else if (t === 'fix') { if (!ents.length) return toast('Select entities to fix'); add = ents.filter(e => e.t !== 'dim').map(e => ({ t, a: e.id, v: fixValuesOf(e) })); }
-  const ids = add;
+  commitCons(t, add);
+}
+function commitCons(t, ids, opts = {}) {
+  const s = sk(); if (!s) return false;
   // (a constraint the others contradict — Vertical on a Horizontal line, Parallel across a right angle — is met by
   // shrinking a curve to nothing: the solver calls that solved. Refused, and the sketch is left as it was)
   const size = k => new Map(k.ents.filter(e => e.t !== 'dim').map(e => [e.id, e.t === 'line' ? SK.d2(e.a, e.b) : e.r != null ? e.r : e.t === 'rect' ? Math.min(Math.abs(e.w), Math.abs(e.h)) : 1]));
   const ok = runOp(F.sketchOp(`Constrain ${SK.CONS_LABEL[t]}`, s.id, k => {
     const before = size(k);
-    const err = editAndSolve(k, kk => { kk.cons = kk.cons || []; for (const c of ids) kk.cons.push({ id: ++kk.nextEnt, ...c }); });
+    const err = editAndSolve(k, kk => { kk.cons = kk.cons || []; for (const c of ids) kk.cons.push({ id: ++kk.nextEnt, ...c }); }, opts);
     if (err) return err;
     for (const [id, v] of size(k)) { const v0 = before.get(id); if (v0 > 1e-6 && v < Math.max(1e-6, v0 * 1e-4)) return `${CONS_NAMES[t] || 'This constraint'} contradicts the sketch's other constraints (it would shrink ${entName(SK.entById(k, id)) || 'a curve'} to nothing) — delete the one it fights in Constrain first`; }
   }));
   if (ok) toast(`${CONS_NAMES[t] || 'Constraint'} applied · ${dofText()}`);
+  return ok;
+}
+// Point on curve (Fusion's coincident to a line, circle or arc): tap the point — a line's end, a corner, a centre or
+// the origin — then the curve it is to stay on
+export const onPending = () => st.onPend;
+export function coincidentTap(x, y) {
+  const s = sk(); if (!s) return;
+  const raw = planePt(x, y), wpp = view.worldPerPixel(SK.toW(s.plane, raw));
+  if (!st.onPend) {
+    const r = SK.snapPoint(s, raw, { pxTol: 18, wpp, refPts: [] });
+    const ref = r.ref && r.kind !== 'Mid' && SK.refPoint(s, r.ref) ? r.ref : r.kind === 'Origin' ? { e: 0, k: 'o' } : null;
+    if (!ref) { toast('Tap a point first: a line\'s end, a corner, a centre or the origin'); return; }
+    st.onPend = ref; view.render(); emit('drawcard'); toast('Now the line, circle or arc it goes on'); return;
+  }
+  const e = SK.pickEntity(s, raw, 14 * wpp), P = st.onPend;
+  if (!e || !['line', 'circle', 'arc'].includes(e.t)) { toast('Tap a line, circle or arc'); return; }
+  if (e.id === P.e) { toast('A point is already on its own curve — tap another one'); return; }
+  st.onPend = null;
+  // (the curve holds still and the point goes onto it — not the line tilting to reach the point)
+  commitCons('on', [{ t: 'on', a: e.id, p: P }], { heavyRefs: e.t === 'line' ? [{ e: e.id, k: 'a' }, { e: e.id, k: 'b' }] : [{ e: e.id, k: 'c' }] });
+  view.render(); emit('drawcard');
+}
+// a rectangle's side for a line constraint (Parallel, Perpendicular, Equal…): the rectangle becomes four lines that
+// stay square (Horizontal / Vertical), and the side under the finger is the one picked — the whole rectangle
+// could not be made parallel to anything
+export function rectSideAt(rid, x, y) {
+  const s = sk(), e = s && SK.entById(s, rid); if (!e || e.t !== 'rect') return null;
+  const raw = planePt(x, y), cs = SK.rectCorners(e);
+  const segD = (a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1e-300, t = Math.max(0, Math.min(1, ((raw[0] - a[0]) * dx + (raw[1] - a[1]) * dy) / L2)); return Math.hypot(a[0] + dx * t - raw[0], a[1] + dy * t - raw[1]); };
+  let side = 0; for (let i = 1; i < 4; i++) if (segD(cs[i], cs[(i + 1) % 4]) < segD(cs[side], cs[(side + 1) % 4])) side = i;
+  let got = null;
+  runOp(F.sketchOp('Rectangle to lines', s.id, k => {
+    const r = SK.entById(k, rid); if (!r) return 'Rectangle missing';
+    const lines = SK.explodeRect(k, r); k.cons = k.cons || [];
+    lines.forEach((l, i) => k.cons.push({ id: ++k.nextEnt, t: i % 2 === 0 ? 'h' : 'v', a: l.id }));
+    got = lines[side].id;
+  }));
+  return got;
+}
+// Fill region: the picked curves, repeated over a closed area tapped next
+export const fillPending = () => !!st.fillPend;
+export function fillRegionStart() {
+  const s = sk(); if (!s) { toast('Open a sketch first'); return; }
+  const ids = [...S.ed.drawSel].filter(id => SK.entById(s, id) && SK.entById(s, id).t !== 'dim');
+  if (!ids.length) { toast('Pick the curves to repeat first (a hole, a slot, a shape), then Fill region'); return; }
+  st.fillPend = { ids }; toast('Now tap inside the closed area to fill', 2600); emit('drawcard'); view.render();
+}
+export function fillTap(x, y) {
+  const s = sk(), f = st.fillPend; if (!s || !f) return;
+  const at = planePt(x, y), r = SK.regionAt(s, at);
+  if (!r) { toast('Tap inside a closed area (its outline must be closed)'); return; }
+  st.fillPend = null;
+  const P = f.ids.map(id => SK.entById(s, id)).filter(Boolean).flatMap(e => SK.entPolyline(e).pts), xs = P.map(q => q[0]), ys = P.map(q => q[1]);
+  const w = Math.max(...xs) - Math.min(...xs), h = Math.max(...ys) - Math.min(...ys), gap = Math.max(w, h) * 0.5 || 2;
+  const ids = f.ids;
+  runOp(F.sketchOp('Fill region', s.id, (k, p) => { const res = SK.fillRegion(k, ids, at, p.dx, p.dy, p.stagger, p.keep); if (typeof res === 'string') return res; },
+    [{ key: 'dx', label: 'Spacing X', kind: 'len' }, { key: 'dy', label: 'Spacing Y', kind: 'len' }, { key: 'stagger', label: 'Stagger rows', kind: 'bool' }, { key: 'keep', label: 'Keep copies', kind: 'choice', options: [['whole', 'Wholly inside'], ['centre', 'Centre inside']], wide: true }]),
+  { dx: +(w + gap).toFixed(3), dy: +(h + gap).toFixed(3), stagger: false, keep: 'whole' });
+  emit('drawcard'); view.render();
 }
 import { fixValues as fixValuesOf } from './constraints.js';
 let dofCache = { k: null, v: 0 };
@@ -1085,6 +1148,7 @@ function renderSketches() {
     // never taken by the glyph
     const seen = new Map();
     for (const c of act.cons || []) {
+      if (c.t === 'on') { const q0 = SK.refPoint(act, c.p); const q = q0 && view.project(SK.toW(act.plane, q0)); if (q && q.front) labs.push({ c, text: SK.CONS_LABEL.on, cls: 'cons' + (consSel && consSel.cid === c.id && consSel.sk === act.id ? ' on' : ''), x: q.x + 16, y: q.y - 18, w: 22, h: 20 }); continue; }
       const e = SK.entById(act, c.a); if (!e) continue;
       const n = seen.get(e.id) || 0; seen.set(e.id, n + 1);
       let x, y;
@@ -1202,6 +1266,7 @@ function drawPreview(s) {
     for (const e of ghost.ents) previewGroup.add(lineObj([W(e.a), W(e.b)], m));
   }
   if (st.dimPend?.kind === 'pt' && tool() === 'dim') { const q = SK.refPoint(s, st.dimPend.A); if (q) previewGroup.add(marker(W(q), 0x4f8ff7)); }
+  if (st.onPend) { const q = SK.refPoint(s, st.onPend); if (q) previewGroup.add(marker(W(q), 0x4f8ff7)); } // (Point on curve: the point picked)
   if (p && st.snap && !['select', 'trim', 'dim', 'extend'].includes(t) && (!EDIT_TOOLS.has(t) || pointStage())) {
     crosshair(s, p);
     const k = st.snap.kind || '';
@@ -1330,9 +1395,11 @@ function runSelectionCommand(t) {
     const w = Math.max(...bb.map(p => p[0])) - Math.min(...bb.map(p => p[0])), hh = Math.max(...bb.map(p => p[1])) - Math.min(...bb.map(p => p[1]));
     const st0 = S.settings.snapStep, dx = Math.ceil((w * 1.5 || 10) / st0) * st0, dy = Math.ceil((hh * 1.5 || 10) / st0) * st0;
     S.ed.drawSel = new Set();
-    runOp(F.sketchOp('ArrayRect', s.id, (k, p) => { const r = SK.arrayRect(k, ids, p.cols, p.rows, p.dx, p.dy); if (typeof r === 'string') return r; },
-      [{ key: 'cols', label: 'Columns', kind: 'int', min: 1, max: 200 }, { key: 'rows', label: 'Rows', kind: 'int', min: 1, max: 200 }, { key: 'dx', label: 'Column spacing', kind: 'len' }, { key: 'dy', label: 'Row spacing', kind: 'len' }]),
-    { cols: 3, rows: 2, dx, dy });
+    const DIRS = [['pos', '+'], ['neg', '−'], ['both', 'Both ways']];
+    runOp(F.sketchOp('ArrayRect', s.id, (k, p) => { const r = SK.arrayRect(k, ids, p.cols, p.rows, p.dx, p.dy, p.cdir, p.rdir); if (typeof r === 'string') return r; },
+      [{ key: 'cols', label: 'Columns', kind: 'int', min: 1, max: 200 }, { key: 'rows', label: 'Rows', kind: 'int', min: 1, max: 200 }, { key: 'dx', label: 'Column spacing', kind: 'len' }, { key: 'dy', label: 'Row spacing', kind: 'len' },
+        { key: 'cdir', label: 'Columns go (X)', kind: 'choice', options: DIRS, wide: true }, { key: 'rdir', label: 'Rows go (Y)', kind: 'choice', options: DIRS, wide: true }]),
+    { cols: 3, rows: 2, dx, dy, cdir: 'pos', rdir: 'pos' });
     st.cmd = null; S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('cmd'); return;
   }
   if (t === 'list') { listSelection(); st.cmd = null; S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); return; }

@@ -1558,6 +1558,29 @@ try {
     const l1 = await lines(), dx = l1[0][0] - l0[0][0], same = l1.every((l, i) => Math.abs(l[0] - l0[i][0] - dx) < 1e-6 && Math.abs(l[2] - l0[i][2] - dx) < 1e-6 && l[1] === l0[i][1] && l[3] === l0[i][3]);
     await p.evaluate(() => { const L = StreamLine; L.Draw.resetTool(); L.S.ed.drawSel = new Set(); L.S.ed.tool = 'select'; L.finishSketchEdit(); });
     check(dx > 1 && same, `The sketch Move gizmo's X arrow moves the picked curves along X only (ΔX ${dx.toFixed(3)}, Y kept: ${same})`); }
+  // Point on curve (a line's end onto another line, which stays put); a rectangle's side made Parallel (it becomes four
+  // square lines); Fill region (a Ø6 circle over a 100 × 60 rectangle); patterns that go both ways
+  { const X9 = 104000;
+    const mk = ents => p.evaluate(ents => { const L = StreamLine, F = L.F; L.runOp(F.sketchOpNew('cn', { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }, null, k => ents.forEach(e => F.addEntity(k, e)))); const sk = L.S.ed.sketch; L.S.ed.sketch = null; L.activateSketch(sk); L.refresh(); }, ents);
+    const done = () => p.evaluate(() => { const L = StreamLine; L.S.ed.consTool = null; L.S.ed.drawSel = new Set(); L.S.ed.tool = 'select'; L.finishSketchEdit(); });
+    const tapS = async w => { const q = await projW(w); await tapV(q.x, q.y); };
+    const lines = () => p.evaluate(() => { const L = StreamLine, k = L.SK.sketchById(L.S.ed.editingSketch); return { L: k.ents.filter(e => e.t === 'line').map(e => [...e.a, ...e.b].map(v => +v.toFixed(3))), cons: (k.cons || []).map(c => c.t).join() }; });
+    await mk([{ t: 'line', a: [X9, 0], b: [X9 + 60, 0] }, { t: 'line', a: [X9 + 20, 20], b: [X9 + 40, 40] }]); await p.waitForTimeout(1000);
+    await p.evaluate(() => StreamLine.startConstraint?.('on')); await p.waitForTimeout(200);
+    const onOk = await p.evaluate(() => StreamLine.S.ed.consTool === 'on');
+    await tapS([X9 + 20, 20, 0]); await tapS([X9 + 50, 0, 0]);
+    const on = await lines(); await done();
+    await mk([{ t: 'rect', x: X9, y: 0, w: 60, h: 40 }, { t: 'line', a: [X9, 70], b: [X9 + 60, 90] }]); await p.waitForTimeout(1000);
+    await p.evaluate(() => StreamLine.startConstraint?.('par')); await p.waitForTimeout(200);
+    await tapS([X9 + 30, 0, 0]); await tapS([X9 + 30, 80, 0]);
+    const par = await lines(); await done();
+    const fill = await p.evaluate(X9 => { const L = StreamLine, SK = L.SK, k = { ents: [], nextEnt: 0 }; const add = e => { e.id = ++k.nextEnt; k.ents.push(e); return e; };
+      add({ t: 'rect', x: X9, y: 0, w: 100, h: 60 }); const c = add({ t: 'circle', c: [X9 + 10, 10], r: 3 });
+      const n1 = SK.fillRegion(k, [c.id], [X9 + 55, 35], 9, 9, false, 'whole').length, n2 = SK.fillRegion({ ...k, ents: k.ents.slice(0, 2) }, [c.id], [X9 + 55, 35], 9, 9, false, 'centre').length;
+      const a = { ents: [{ id: 1, t: 'line', a: [0, 0], b: [5, 0] }], nextEnt: 1 }; SK.arrayRect(a, [1], 3, 1, 10, 10, 'both', 'pos'); return { n1, n2, both: a.ents.map(e => e.a[0]).sort((x, y) => x - y).join() }; }, X9);
+    check(onOk && on.cons === 'on' && on.L[0].join() === [X9, 0, X9 + 60, 0].join() && on.L[1][1] === 0, `Point on curve: a line's end goes onto another line, which stays put (${JSON.stringify(on)})`);
+    check(par.cons === 'h,v,h,v,par' && par.L.length === 5 && Math.abs(par.L[4][1] - par.L[4][3]) < 1e-6, `Parallel to a rectangle's side: the rectangle becomes four square lines and the side is used (${JSON.stringify(par)})`);
+    check(fill.n1 === 59 && fill.n2 > fill.n1 && fill.both === '-20,-10,0,10,20', `Fill region repeats a motif over an area (${fill.n1} wholly inside, ${fill.n2} by centre); a pattern goes both ways (${fill.both})`); }
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
