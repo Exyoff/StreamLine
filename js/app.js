@@ -837,7 +837,7 @@ function smartTapInner(x, y) {
   setPickKind('face'); return faceTap(x, y);
 }
 
-// ---------- rubber band: double tap and hold, then drag ----------
+// ---------- selection box (rubber band): drawn with the precision cursor while its Multi button is held ----------
 // a sketch open: its curves; otherwise the bodies. Dragged right (window) it takes what lies wholly inside; dragged
 // left (crossing), whatever it touches. Multi-select on adds to the pick.
 function bandSelect(x0, y0, x1, y1) {
@@ -933,16 +933,32 @@ function initCursor() {
   cv.width = 124 * dpr; cv.height = 124 * dpr;
   let raf = 0;
   const schedule = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (cur) placeCursor(); }); };
+  // the Multi button beside the cursor (on the side away from the finger, for the other hand's thumb): tapped, it
+  // turns Multi-select on or off, so the cursor's pick adds to the others; held, the cursor drags a selection box
+  // from where it was — right for what lies inside, left for whatever it touches — picked when the button is let go
+  const mb = $('#curmulti'); mb.querySelector('.ic').innerHTML = I.multi;
+  let held = null;
+  const placeMulti = () => { const vp = $('#viewport').getBoundingClientRect(), left = cur.fx > vp.width / 2;
+    mb.style.left = left ? `calc(var(--sal) + 92px)` : ''; mb.style.right = left ? '' : `calc(var(--sar) + 64px)`; mb.classList.toggle('on', !!S.ed.multi); };
+  const endBand = pick => { if (!held) return; view.hideBand(); mb.classList.remove('held');
+    const h0 = held; held = null; if (!cur) return;
+    if (pick && Math.hypot(cur.x - h0.x0, cur.y - h0.y0) > 6) { cur.banded = true; bandSelect(h0.x0, h0.y0, cur.x, cur.y); }
+    else if (pick && performance.now() - h0.t < 450) { S.ed.multi = !S.ed.multi; mb.classList.toggle('on', S.ed.multi); toast(S.ed.multi ? 'Multi-select on — each pick adds to the others' : 'Multi-select off'); refresh(); } };
+  mb.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); if (!cur) return; try { mb.setPointerCapture(e.pointerId); } catch (err) {}
+    held = { x0: cur.x, y0: cur.y, t: performance.now() }; mb.classList.add('held'); });
+  mb.addEventListener('pointerup', e => { e.stopPropagation(); endBand(true); });
+  mb.addEventListener('pointercancel', () => endBand(false));
   view.handlers.cursorStart = (fx, fy) => {
     if (keypadOpen()) closeKeypad(false);
     cur = { fx, fy, x: fx, y: fy + CUR_DY };
-    $('#pcursor').hidden = false; $('#loupe').hidden = false; document.body.classList.add('has-cursor');
-    placeCursor();
+    $('#pcursor').hidden = false; $('#loupe').hidden = false; mb.hidden = false; document.body.classList.add('has-cursor');
+    placeCursor(); placeMulti();
   };
-  view.handlers.cursorMove = (fx, fy) => { if (!cur) return; cur.x = fx; cur.y = fy + CUR_DY; schedule(); };
-  const close = () => { cur = null; $('#pcursor').hidden = true; $('#loupe').hidden = true; document.body.classList.remove('has-cursor'); showHover(null); };
-  view.handlers.cursorEnd = () => { if (!cur) return; const { x, y } = cur; close(); onTap(x, y); };
-  view.handlers.cursorCancel = () => close();
+  view.handlers.cursorMove = (fx, fy) => { if (!cur) return; cur.x = fx; cur.y = fy + CUR_DY; if (held) view.drawBand(held.x0, held.y0, cur.x, cur.y); schedule(); };
+  const close = () => { cur = null; $('#pcursor').hidden = true; $('#loupe').hidden = true; mb.hidden = true; document.body.classList.remove('has-cursor'); showHover(null); };
+  // (the finger let go while the button is still held: the box is picked; after a box, letting go picks nothing more)
+  view.handlers.cursorEnd = () => { if (!cur) return; if (held) endBand(true); const { x, y, banded } = cur; close(); if (!banded) onTap(x, y); };
+  view.handlers.cursorCancel = () => { if (held) endBand(false); close(); };
 }
 // ---------- zoom bar (right side): push the handle up to zoom in, down to zoom out; it springs back ----------
 function initZoomBar() {
@@ -1416,7 +1432,6 @@ function buildStatic() {
 
 function bindEvents() {
   view.handlers.tap = onTap;
-  view.handlers.bandEnd = bandSelect;
   view.handlers.pressTarget = (x, y) => valueHit(x, y) || (S.ed.mode === 'object' && Draw.labelHit(x, y));
   // (a press on a dimension's value that slides moves the value: the dimension line follows)
   view.handlers.targetDrag = (phase, x, y) => S.ed.mode === 'object' && Draw.dimDragAt(phase, x, y);
@@ -2208,7 +2223,7 @@ function openHelp() {
   popover($('#btn-menu'), h('div', { class: 'note', style: 'padding:10px 12px;max-width:360px' },
     h('div', { class: 'mtitle', style: 'padding:0 0 6px' }, 'Touch'),
     h('div', {}, 'Tap — select (tap the same spot again: edge → face → body) · hold — precision cursor with a magnifier'),
-    h('div', {}, 'Double tap, hold and drag — selection box: drag right for what lies inside, left for whatever it touches'),
+    h('div', {}, 'While the cursor is up, the Multi button beside it: tap — Multi-select on/off · hold it and move the cursor — selection box (right: what lies inside, left: whatever it touches)'),
     h('div', {}, 'Drag the cube — orbit; tap a cube face for that view · zoom bar — zoom · 2 fingers — pan & pinch zoom'),
     h('div', {}, '2-finger tap — undo · 3-finger tap — redo'),
     h('div', {}, 'Drag gizmo arrows to move along an axis, squares for a plane, rings to rotate. Snapping follows the magnet button.'),

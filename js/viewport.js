@@ -705,14 +705,15 @@ function renderFrame() {
 // ---------- pointer / gestures ----------
 function bindPointer() {
   const pts = new Map();
-  let mode = null, startT = 0, moved = false, pinch = null, multiTap = null, lastTap = null, band = null;
-  // double tap and hold, then drag: a selection rectangle (rubber band). Dragged right it takes what lies wholly
-  // inside (window); dragged left, whatever it touches (crossing) — as in AutoCAD and Fusion
+  let mode = null, startT = 0, moved = false, pinch = null, multiTap = null;
+  // the selection rectangle (rubber band), drawn by the app while the precision cursor's Multi button is held: dragged
+  // right it takes what lies wholly inside (window), dragged left whatever it touches (crossing), as in AutoCAD and Fusion
   const bandEl = document.createElement('div'); bandEl.id = 'band'; bandEl.hidden = true; container.appendChild(bandEl);
-  const drawBand = (x0, y0, x1, y1) => {
+  view.drawBand = (x0, y0, x1, y1) => {
     bandEl.hidden = false; bandEl.classList.toggle('crossing', x1 < x0);
     Object.assign(bandEl.style, { left: Math.min(x0, x1) + 'px', top: Math.min(y0, y1) + 'px', width: Math.abs(x1 - x0) + 'px', height: Math.abs(y1 - y0) + 'px' });
   };
+  view.hideBand = () => { bandEl.hidden = true; };
   const rel = e => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
   document.addEventListener('gesturestart', e => e.preventDefault());
   document.addEventListener('gesturechange', e => e.preventDefault());
@@ -731,15 +732,11 @@ function bindPointer() {
     pts.set(e.pointerId, { ...p, sx: p.x, sy: p.y, t: e.timeStamp || performance.now() });
     if (pts.size === 1) {
       moved = false; startT = performance.now(); multiTap = null;
-      const again = lastTap && performance.now() - lastTap.t < 380 && Math.hypot(p.x - lastTap.x, p.y - lastTap.y) < 40 && view.handlers.bandEnd;
-      lastTap = null;
       if (e.pointerType === 'mouse' && (e.button === 1 || e.button === 2 || e.shiftKey)) mode = 'pan';
       // a small control drawn over the view (a value bubble, a dimension, a constraint glyph) comes first — it sits on
       // top of the curves' drag points — and held or slid a little it is still a tap on it
       else if (view.handlers.pressTarget?.(p.x, p.y)) mode = 'target';
-      // (a handle first: a face tapped and its arrow dragged at once is a push/pull, not a selection box)
       else if (view.handlers.dragStart && view.handlers.dragStart(p.x, p.y, e)) mode = 'gizmo';
-      else if (again && e.pointerType !== 'mouse') mode = 'band?'; // (the second tap of a double tap: held and dragged it draws the band)
       else { mode = 'pending'; if (e.pointerType !== 'mouse') holdT = setTimeout(() => startCursor(p.x, p.y), 320); }
     } else if (pts.size === 2) {
       clearTimeout(holdT);
@@ -761,8 +758,6 @@ function bindPointer() {
     const thr = e.pointerType === 'mouse' ? 3 : 8;
     if (Math.hypot(q.x - p.sx, q.y - p.sy) > thr) { moved = true; if (multiTap && pts.size >= 2) multiTap = null; }
     p.x = q.x; p.y = q.y;
-    if (mode === 'band?' && moved) { mode = 'band'; band = { x0: p.sx, y0: p.sy }; }
-    if (mode === 'band') { drawBand(band.x0, band.y0, q.x, q.y); return; }
     if (mode === 'pending' && moved) { clearTimeout(holdT); if (cursorOn() && !view.cam.lock2D) { mode = 'cursor'; view.handlers.cursorStart(p.sx, p.sy); } else mode = view.cam.lock2D ? 'pan' : 'none'; }
     // (a press on a dimension's value that slides moves the value: the dimension line follows)
     if (mode === 'target' && moved && view.handlers.targetDrag?.('start', p.sx, p.sy)) mode = 'tdrag';
@@ -785,11 +780,9 @@ function bindPointer() {
     // a quick tap whose hold timer fired late (the phone was busy) is still a tap: the events' own times decide
     if (mode === 'cursor' && !moved && e.type === 'pointerup' && pts.size === 0 && (e.timeStamp || performance.now()) - p.t < 320) { view.handlers.cursorCancel && view.handlers.cursorCancel(); mode = 'pending'; }
     if (mode === 'cursor') { mode = null; if (e.type === 'pointerup') view.handlers.cursorEnd(); else view.handlers.cursorCancel(); }
-    if (mode === 'band') { bandEl.hidden = true; mode = null; if (e.type === 'pointerup') view.handlers.bandEnd(band.x0, band.y0, p.x, p.y); band = null; return; }
-    if (mode === 'band?') mode = pts.size === 0 && e.type === 'pointerup' ? 'pending' : null; // (no drag: an ordinary second tap)
-    if (mode === 'gizmo') { const r = view.handlers.dragEnd(); mode = null; if (r === 'tap' && e.type === 'pointerup' && pts.size === 0) { lastTap = { x: p.x, y: p.y, t: performance.now() }; view.handlers.tap && view.handlers.tap(p.x, p.y, e); } } // (a press on a gizmo that never dragged is a tap)
-    else if (mode === 'pending' && pts.size === 0 && e.type === 'pointerup') { mode = null; lastTap = { x: p.x, y: p.y, t: performance.now() }; view.handlers.tap && view.handlers.tap(p.x, p.y, e); }
-    else if (mode === 'target' && pts.size === 0 && e.type === 'pointerup') { mode = null; lastTap = { x: p.sx, y: p.sy, t: performance.now() }; view.handlers.tap && view.handlers.tap(p.sx, p.sy, e); }
+    if (mode === 'gizmo') { const r = view.handlers.dragEnd(); mode = null; if (r === 'tap' && e.type === 'pointerup' && pts.size === 0) view.handlers.tap && view.handlers.tap(p.x, p.y, e); } // (a press on a gizmo that never dragged is a tap)
+    else if (mode === 'pending' && pts.size === 0 && e.type === 'pointerup') { mode = null; view.handlers.tap && view.handlers.tap(p.x, p.y, e); }
+    else if (mode === 'target' && pts.size === 0 && e.type === 'pointerup') { mode = null; view.handlers.tap && view.handlers.tap(p.sx, p.sy, e); }
     else if (mode === 'tdrag') { mode = null; view.handlers.targetDrag(e.type === 'pointerup' ? 'end' : 'cancel', p.x, p.y); }
     if (pts.size === 0) {
       if (multiTap && performance.now() - multiTap.t < 350) emit(multiTap.n === 3 ? 'gestureRedo' : 'gestureUndo');

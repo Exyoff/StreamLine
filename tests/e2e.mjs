@@ -1518,18 +1518,23 @@ try {
   });
   check(ap.ext === '13570.8,10429.2,1570.8,12000' && ap.bool === '9000,false' && ap.cons === '40,h' && ap.face === '12,17',
     `Extrude's Operation in any order starts afresh; Subtract cuts the first body tapped; a contradicting constraint is refused; a boss sketch follows its face (${JSON.stringify(ap)})`);
-  // double tap, hold and drag: a selection box — dragged right it takes the curves wholly inside, dragged left those it touches
+  // the precision cursor's Multi button: held while the cursor moves, a selection box — right takes the curves inside,
+  // left those it touches; tapped, Multi-select on
   await p.evaluate(() => { const L = StreamLine, F = L.F, X7 = 102000; L.runOp(F.sketchOpNew('rb', { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }, null, k => { F.addEntity(k, { t: 'line', a: [X7, 0], b: [X7 + 100, 0] }); F.addEntity(k, { t: 'line', a: [X7, 50], b: [X7 + 100, 50] }); F.addEntity(k, { t: 'line', a: [X7 + 50, 100], b: [X7 + 50, 300] }); })); const sk = L.S.ed.sketch; L.S.ed.sketch = null; L.activateSketch(sk); L.refresh(); });
   await p.waitForTimeout(1200);
-  const rbT = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y: y + top, id: 1 }] });
-  const rband = async (a, b) => { await rbT('touchStart', a.x, a.y); await rbT('touchEnd'); await p.waitForTimeout(120); await rbT('touchStart', a.x, a.y); await p.waitForTimeout(200);
-    for (let i = 1; i <= 8; i++) { await rbT('touchMove', a.x + (b.x - a.x) * i / 8, a.y + (b.y - a.y) * i / 8); await p.waitForTimeout(25); } await rbT('touchEnd'); await p.waitForTimeout(450); };
-  { const a = await projW([101955, -45, 0]), b = await projW([102120, 150, 0]);
-    await rband(a, b); const win = await p.evaluate(() => StreamLine.S.ed.drawSel.size);
-    await p.evaluate(() => { StreamLine.S.ed.drawSel = new Set(); StreamLine.refresh(); }); await p.waitForTimeout(300);
-    await rband(b, a); const cross = await p.evaluate(() => StreamLine.S.ed.drawSel.size);
-    await p.evaluate(() => { const L = StreamLine; L.S.ed.drawSel = new Set(); L.S.ed.tool = 'select'; L.finishSketchEdit(); });
-    check(win === 2 && cross === 3, `Double tap, hold and drag draws a selection box: right takes the curves inside (${win}), left those it touches (${cross})`); }
+  const rb = await p.evaluate(async () => {
+    const L = StreamLine, v = L.view, H = v.handlers, mb = document.querySelector('#curmulti'), wait = ms => new Promise(r => setTimeout(r, ms));
+    const pe = t => mb.dispatchEvent(new PointerEvent(t, { pointerId: 9, bubbles: true, pointerType: 'touch' }));
+    const box = async (c0, c1) => { H.cursorStart(c0.x, c0.y + 72); await wait(50); const shown = !mb.hidden; pe('pointerdown'); await wait(500);
+      for (let i = 1; i <= 6; i++) { H.cursorMove(c0.x + (c1.x - c0.x) * i / 6, c0.y + 72 + (c1.y - c0.y) * i / 6); await wait(20); }
+      pe('pointerup'); await wait(50); H.cursorEnd(); await wait(300); const n = L.S.ed.drawSel.size; L.S.ed.drawSel = new Set(); L.refresh(); await wait(150); return shown ? n : -1; };
+    const a = v.project([101955, -45, 0]), b = v.project([102120, 150, 0]);
+    const win = await box(a, b), cross = await box(b, a);
+    H.cursorStart(a.x, a.y + 72); await wait(50); pe('pointerdown'); await wait(80); pe('pointerup'); const multi = !!L.S.ed.multi; H.cursorEnd(); await wait(200);
+    L.S.ed.multi = false; L.S.ed.drawSel = new Set(); L.S.ed.tool = 'select'; L.finishSketchEdit();
+    return { win, cross, multi };
+  });
+  check(rb.win === 2 && rb.cross === 3 && rb.multi, `The cursor's Multi button: held, a selection box — right takes the curves inside (${rb.win}), left those it touches (${rb.cross}); tapped, Multi-select on (${rb.multi})`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
