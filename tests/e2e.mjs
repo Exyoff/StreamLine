@@ -1591,6 +1591,15 @@ try {
     return at();
   });
   check(dtv === '105050,5', `A dimension's label travels with the curves it measures (${dtv})`);
+  // a point-to-line dimension to a rectangle's side (the rectangle becomes four square lines to measure to)
+  { const X11 = 106000;
+    await p.evaluate(X11 => { const L = StreamLine, F = L.F; L.runOp(F.sketchOpNew('pr', { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }, null, k => { F.addEntity(k, { t: 'line', a: [X11 + 20, 30], b: [X11 + 40, 45] }); F.addEntity(k, { t: 'rect', x: X11 - 40, y: 20, w: 20, h: 15 }); })); const sk = L.S.ed.sketch; L.S.ed.sketch = null; L.activateSketch(sk); L.S.ed.tool = 'dim'; L.Draw.resetTool(); L.refresh(); }, X11);
+    await p.waitForTimeout(1200);
+    for (const w of [[X11 + 20, 30, 0], [X11 - 30, 35, 0], [X11 - 50, 30, 0]]) { const q = await projW(w); await tapV(q.x, q.y); }
+    const prd = await p.evaluate(() => { const L = StreamLine, k = L.SK.sketchById(L.S.ed.editingSketch); return { dims: k.ents.filter(e => e.t === 'dim').map(d => d.kind + ':' + (+(+d.value).toFixed(3))), rects: k.ents.filter(e => e.t === 'rect').length, cons: (k.cons || []).map(c => c.t).join() }; });
+    if (await p.locator('#keypad').isVisible().catch(() => false)) { await p.tap('#keypad [data-k="esc"]'); await p.waitForTimeout(300); }
+    await p.evaluate(() => { const L = StreamLine; L.S.ed.tool = 'select'; L.Draw.resetTool(); L.finishSketchEdit(); });
+    check(prd.dims.join() === 'pl:5' && prd.rects === 0 && prd.cons === 'h,v,h,v', `A point-to-line dimension to a rectangle's side (${JSON.stringify(prd)})`); }
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
