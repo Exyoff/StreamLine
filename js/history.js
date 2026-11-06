@@ -3,7 +3,7 @@
 // parameters of an earlier feature, replays everything after it so later features follow the change.
 // A rollback marker hides the features after it; new work is inserted at the marker.
 import { S, emit } from './state.js';
-import { cloneObj, worldVerts, objToJSON, objFromJSON, xfFor } from './scene.js';
+import { cloneObj, worldVerts, objToJSON, objFromJSON, xfFor, objMatrix } from './scene.js';
 import { PolyMesh } from './mesh.js';
 
 const REG = new Map();      // op name -> def
@@ -104,6 +104,7 @@ export function regenerate(from = 0) {
     const def = defOf(rec);
     if (!def) { rec.err = 'Unknown operation'; failed.push(rec); continue; }
     setEd(rec.sel);
+    const mats0 = new Map(S.doc.objects.map(o => [o.id, objMatrix(o)]));
     let r;
     try { r = def.apply(rec.params, { handle: null, replay: true }); } catch (err) { console.error(err); r = err.message || 'Failed'; }
     if (typeof r === 'string') r = friendlyError(r, h, i);
@@ -111,8 +112,8 @@ export function regenerate(from = 0) {
     // a part moved or turned among mates: settle them now, with that part held, as when it was done — solved only once
     // at the end, a linkage's loop was closed by turning the part that had been turned back (a four-bar lost its pose)
     else if (postSolve && /^(Move|Rotate)$/.test(def.label?.(rec.params) || '') && h.slice(0, i).some(q => q.op === 'F.mateOp' && !q.off)) {
-      S.ed.driven = new Set(def.touch?.(rec.params)?.ids || []);
-      try { postSolve(h.slice(0, i + 1)); } catch (e) { console.warn(e); } finally { S.ed.driven = null; }
+      S.ed.driven = new Set(def.touch?.(rec.params)?.ids || []); S.ed.drivenFrom = mats0;
+      try { postSolve(h.slice(0, i + 1)); } catch (e) { console.warn(e); } finally { S.ed.driven = null; S.ed.drivenFrom = null; }
     }
   }
   cps[end] = snapObjs();

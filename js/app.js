@@ -142,6 +142,16 @@ async function boot() {
     });
   }
 }
+let appVersion = '';
+if ('caches' in window) caches.keys().then(ks => { const k = ks.find(x => /^streamline-v/.test(x)); if (k) appVersion = k.replace('streamline-', ''); }).catch(() => {});
+// drop the offline copy and load the app again from the server (the work is saved first)
+async function forceUpdate() {
+  closePopover(); toast('Updating…');
+  try { saveLocalNow(); await PJ.saveNow(); } catch (e) {}
+  try { const reg = await navigator.serviceWorker?.getRegistration(); await reg?.update(); } catch (e) {}
+  try { for (const k of await caches.keys()) await caches.delete(k); } catch (e) {}
+  location.reload();
+}
 function defaultScene() {
   S.doc.objects = []; S.doc.sketches = []; S.doc.nextId = 1;
   S.doc.history = []; S.doc.marker = null; S.doc.gonePres = {}; S.doc.components = {}; S.doc.layers = [{ id: 1, name: 'Default', visible: true }]; S.doc.layer = 1;
@@ -2130,7 +2140,10 @@ function openMainMenu() {
     menuItem(I.persp, 'Views…', () => openViewsMenu()),
     menuItem(I.help, 'Gestures & shortcuts', () => openHelp()),
     menuItem(I.phone, 'Install on iPhone', () => openInstall()),
+    // (which version this device runs, and a way to fetch the latest at once: an iPhone can keep an old copy for a while)
+    menuItem(I.check, 'Update to the latest version', () => forceUpdate(), appVersion || ''),
   ));
+  if (!appVersion && 'caches' in window) caches.keys().then(ks => { const k = ks.find(x => /^streamline-v/.test(x)); if (k) { appVersion = k.replace('streamline-', ''); } }).catch(() => {});
 }
 // only a selection you can see counts (in Face / Edge mode a part stays selected underneath, e.g. after a Mate)
 const exportSel = () => S.ed.mode === 'object' && S.ed.pick === 'solid' && S.ed.selected.size > 0;

@@ -1451,6 +1451,43 @@ try {
     return { made, cx };
   });
   check(mo.made === '-98010,-98030,-98050' && Math.abs(mo.cx - 98045) < 1e-6, `Mirror of three picked bodies mirrors all three (${mo.made}); a dimension from the sketch origin drives a centre (${mo.cx})`);
+  // a part that hangs only off a part being turned rides along with it: a jaw sliding on a body that swivels on a base
+  // keeps its place on the body (it was slid along its ways), and a rebuild agrees
+  const sw = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, m = await import('./js/ops.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }), X4 = 99000;
+    const body = (ents, pt, d, z = 0) => { L.runOp(F.sketchOpNew('sw', XY(z), null, k => ents.forEach(e => F.addEntity(k, e)))); L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt }], distance: d, mode: 'new', target: null }); m.commit(); L.S.ed.sketch = null; return L.S.doc.objects.filter(o => o.shape).at(-1).id; };
+    const G = body([{ t: 'rect', x: X4 - 30, y: -30, w: 60, h: 60 }, { t: 'circle', c: [X4, 0], r: 3 }], [X4 - 25, -25], 5);
+    const B = body([{ t: 'rect', x: X4 - 10, y: -10, w: 100, h: 20 }, { t: 'circle', c: [X4, 0], r: 3 }], [X4 + 50, 0], 5, 5);
+    const J = body([{ t: 'rect', x: X4 + 55, y: -5, w: 10, h: 10 }], [X4 + 60, 0], 5, 10);
+    L.runOp(F.mateOp, { a: { obj: B, p: [X4 + 3, 0, 7], n: [-1, 0, 0], w: -(X4 + 3), planar: false }, b: { obj: G, p: [X4 + 3, 0, 2], n: [-1, 0, 0], w: -(X4 + 3), planar: false }, gap: 0, align: 'face' }); m.commit();
+    L.runOp(F.mateOp, { a: { obj: J, n: [0, 0, -1], p: [X4 + 60, 0, 10], planar: true }, b: { obj: B, n: [0, 0, 1], p: [X4 + 50, 0, 10], planar: true }, gap: 0 }); m.commit();
+    const ob = id => L.S.doc.objects.find(o => o.id === id);
+    // (the jaw's centre in the body's own frame: the body turns about Z only)
+    const local = () => { const bj = L.K.worldBounds(ob(J)), w = [0, 1, 2].map(k => (bj[0][k] + bj[1][k]) / 2), x = ob(B); const r = x.rot[2] * Math.PI / 180, d = [w[0] - x.loc[0], w[1] - x.loc[1]]; return [d[0] * Math.cos(r) + d[1] * Math.sin(r), -d[0] * Math.sin(r) + d[1] * Math.cos(r)].map(v => +v.toFixed(3)).join(); };
+    const before = local();
+    L.S.ed.selected = new Set([B]); L.S.ed.active = B; L.runOp(L.OPS.transform, { mode: 'rotate', axis: 'm', angle: 30 }); m.commit();
+    const after = local(), turned = +(+ob(B).rot[2]).toFixed(3);
+    L.H.resetCache(); L.H.regenerate(0); const rebuilt = local();
+    L.S.ed.selected = new Set(); L.refresh(); return { before, after, rebuilt, turned };
+  });
+  check(sw.turned === 30 && sw.after === sw.before && sw.rebuilt === sw.before, `A part mated onto a turned part rides along with it, and a rebuild agrees (${JSON.stringify(sw)})`);
+  // a tapped hole: an M6 thread in a hole drilled at 5 mm; and a fillet that fails after an earlier change opens its
+  // card from Edit parameters, where a smaller radius fixes it
+  const tf = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, K = L.K, m = await import('./js/ops.js'), B = await import('./js/browser.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }), X5 = 100000, out = {};
+    L.runOp(F.sketchOpNew('tp', XY(0), null, k => F.addEntity(k, { t: 'rect', x: X5, y: 0, w: 30, h: 30 }))); L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [X5 + 5, 5] }], distance: 12, mode: 'new', target: null }); m.commit(); L.S.ed.sketch = null;
+    const id = L.S.doc.objects.at(-1).id, ext = L.H.hist().at(-2).op === 'F.extrude' ? L.H.hist().at(-2) : L.H.hist().filter(r => r.op === 'F.extrude').at(-1), vol = () => K.volume(L.S.doc.objects.find(o => o.id === id).shape), v0 = vol();
+    L.S.ed.faces = [{ obj: id, n: [0, 0, 1], w: 12, p: [X5 + 15, 15, 12], planar: true }]; L.runOp(F.holeOp, { tap: true, size: 6 }); m.commit();
+    const hr = L.H.hist().at(-1); out.tap = { label: hr.label, dia: hr.params.dia, removed: +(v0 - vol()).toFixed(2), valid: K.isValid(L.S.doc.objects.find(o => o.id === id).shape) };
+    L.S.ed.edges = [{ obj: id, a: [X5, 30, 12], b: [X5 + 30, 30, 12] }]; L.runOp(F.edgeBlendOp, { kind: 'fillet', size: 5 }); m.commit();
+    const fil = L.H.hist().at(-1), extR = L.H.hist().filter(r => r.op === 'F.extrude').at(-1);
+    B.editStep(extR.id); m.updateOp({ distance: 3.5 }); m.commit(); out.failed = !!fil.err;
+    B.editStep(fil.id); out.opened = !!L.getLast() && !L.getLast().committed === false; m.updateOp({ size: 1 }); m.commit();
+    out.fixed = !L.H.hist().find(r => r.id === fil.id).err;
+    L.S.ed.selected = new Set(); L.S.ed.edges = []; L.refresh(); return out;
+  });
+  check(tf.tap.label === 'Tapped hole M6×1' && tf.tap.dia === 5 && tf.tap.removed > Math.PI * 6.25 * 12 && tf.tap.removed < Math.PI * 9 * 12 && tf.tap.valid && tf.failed && tf.fixed,
+    `A tapped M6 hole is drilled at Ø5 and threaded (${JSON.stringify(tf.tap)}); a fillet that failed opens for editing and a smaller radius fixes it (${tf.failed} → ${tf.fixed})`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked

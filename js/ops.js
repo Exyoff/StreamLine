@@ -1,7 +1,7 @@
 // Operator system: every edit is an operator with parameters that can be re-applied
 // ("Adjust Last Operation", like Blender's redo panel) and undone.
 import { S, emit } from './state.js';
-import { snapshot, restoreSnapshot, cloneObj, xfFor } from './scene.js';
+import { snapshot, restoreSnapshot, cloneObj, xfFor, objMatrix } from './scene.js';
 import * as H from './history.js';
 
 const MAX_UNDO = 80;
@@ -41,7 +41,8 @@ function apply(op) {
   if (typeof r !== 'string' && !op.def.sketchOnly && !op.def.presentation) { // mated parts follow
     const before = pose();
     S.ed.driven = xf?.size ? xf : null; // (the parts being moved: a loop is closed by turning the others)
-    try { H.solveConstraints(op.def.constraint ? { op: op.def.constraint, params: op.params } : null); } finally { S.ed.driven = null; } // (a new mate takes part too)
+    S.ed.drivenFrom = xf?.size ? op.mats0 : null; // (and where every part was when the step began: what hangs off them rides along)
+    try { H.solveConstraints(op.def.constraint ? { op: op.def.constraint, params: op.params } : null); } finally { S.ed.driven = null; S.ed.drivenFrom = null; } // (a new mate takes part too)
     // a move the mates took back (dragging a part along a direction a mate holds) — not one they only trued up
     // (a turn about a mate's axis from a pivot a little off it is re-seated on the axis, and that is fine)
     const after = pose(), far = (A, B) => Math.max(0, ...A.map((q, i) => (B?.[i] ? Math.hypot(q[0] - B[i][0], q[1] - B[i][1], q[2] - B[i][2]) : Infinity)));
@@ -61,6 +62,7 @@ export function runOp(def, params = {}, { interactive = false } = {}) {
   const op = { def, params: { ...(def.defaults ? def.defaults() : {}), ...params }, undoSnap: snapshot(), committed: false, sel: H.edSnap() };
   if (def.prepare) { const p = def.prepare(op.params); if (typeof p === 'string') { emit('toast', p); return false; } }
   op.base = makeBase(def, op.params);
+  op.mats0 = new Map(S.doc.objects.map(o => [o.id, objMatrix(o)])); // (placements as the step begins: a drag carries parts from here each time)
   restore(op.base); // operate on fresh copies so caches keyed by identity stay valid
   let r = apply(op);
   // a default size that does not fit (a fillet on a thin wall): try smaller ones before giving up

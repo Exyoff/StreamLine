@@ -83,7 +83,7 @@ export function editStep(id) {
   const def = H.defOf(rec);
   if (!def || !def.fields) { toast('This step has no parameters to edit'); return; }
   if (i >= H.markerIndex()) { toast('Roll forward past this step to edit it'); return; }
-  const orig = JSON.stringify(rec.params);
+  const orig = JSON.stringify(rec.params), wasErr = !!rec.err;
   runOp({
     label: p => `Edit · ${(() => { try { return def.label(p); } catch (e) { return 'step'; } })()}`, noRecord: true, touch: () => 'all', stepId: id,
     fields: p => def.fields(p),
@@ -91,6 +91,9 @@ export function editStep(id) {
       const j = idxOf(id), r = H.hist()[j]; if (!r) return 'Step no longer exists';
       r.params = p; H.invalidate(j + 1);
       const failed = H.regenerate(j);
+      // (a step that had already failed opens with its card all the same, its error shown on it: the values are what
+      // need changing — refusing them left a failed fillet with no way to edit it)
+      if (r.err && wasErr) { failNote(failed); return; }
       if (r.err) { const e = r.err; r.params = JSON.parse(orig); H.regenerate(j); return e; }
       failNote(failed);
     },

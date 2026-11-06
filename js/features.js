@@ -3,7 +3,7 @@ import { S, emit, objById, selectedObjs, isShown } from './state.js';
 import * as SK from './sketch.js';
 import * as M from './mesh.js';
 import { toPolys, boolean, polysToMesh } from './csg.js';
-import { newObject, xfFor, xfOfMatrix, worldVerts, turnObject, turnAbout } from './scene.js';
+import { newObject, xfFor, xfOfMatrix, worldVerts, turnObject, turnAbout, objMatrix, setObjMatrix } from './scene.js';
 import { defSize } from './operators.js';
 import { fmtLen } from './units.js';
 
@@ -911,6 +911,14 @@ function coaxialCylinder(shape, ax) {
   return best?.cy || null;
 }
 // Thread: a true helical thread on a cylindrical face — external (shaft) or internal (hole), detected from the face
+// an internal ISO thread in a round hole: the hole opened up to the major diameter over [ta, tb] along the axis
+// (c, d), then the helical ridge put back in (down to the minor diameter). Shared by Thread on a hole and tapped holes.
+function internalThread(s, c, d, rHole, R0, P, ta, tb, left) {
+  const tan30 = Math.tan(Math.PI / 6), H = 0.5413 * P, rmin = R0 - H, flat = P / 8, w = flat + (H + 0.25) * tan30, L = tb - ta;
+  if (R0 > rHole + 1e-9) { const u = M.norm(Math.abs(d[2]) < 0.9 ? M.cross(d, [0, 0, 1]) : M.cross(d, [1, 0, 0])); s = s.cut(K.revolveProfile(c, d, u, [[0, ta], [R0, ta], [R0, tb], [0, tb]])); }
+  const ridge = K.threadRidge(M.add(c, M.mul(d, ta + w + 0.01)), d, R0, P, L - 2 * w - 0.02, [[R0 + 0.25, -w], [rmin, -flat], [rmin, flat], [R0 + 0.25, w]], !!left);
+  return s.fuse(ridge);
+}
 const threadLen = (span, d, P) => +Math.min(span, 2 * d + 6, 16 * P).toFixed(6);
 export const threadOp = {
   shrink: 'length', shrinkTries: 3, // a thread that cannot be cut over the default length is tried shorter
@@ -966,12 +974,7 @@ export const threadOp = {
         const ridge = K.threadRidge(M.add(cy.c, M.mul(cy.d, ta + w + 0.01)), cy.d, rc, P, L - 2 * w - 0.02, [[rc - 0.25, -w], [R0, -flat], [R0, flat], [rc - 0.25, w]], !!p.left);
         return s.fuse(ridge);
       }
-      const H = 0.5413 * P, rmin = R0 - H, flat = P / 8;
-      const w = flat + (H + 0.25) * tan30;
-      let s = o.shape;
-      if (R0 > cy.R + 1e-9) { const u = M.norm(Math.abs(cy.d[2]) < 0.9 ? M.cross(cy.d, [0, 0, 1]) : M.cross(cy.d, [1, 0, 0])); s = s.cut(K.revolveProfile(cy.c, cy.d, u, [[0, ta], [R0, ta], [R0, tb], [0, tb]])); }
-      const ridge = K.threadRidge(M.add(cy.c, M.mul(cy.d, ta + w + 0.01)), cy.d, R0, P, L - 2 * w - 0.02, [[R0 + 0.25, -w], [rmin, -flat], [rmin, flat], [R0 + 0.25, w]], !!p.left);
-      return s.fuse(ridge);
+      return internalThread(o.shape, cy.c, cy.d, cy.R, R0, P, ta, tb, p.left);
     }, 'Could not cut this thread');
     if (typeof res === 'string') return res;
     if (K.isEmpty(res)) return 'Result is empty';
@@ -1160,17 +1163,28 @@ function cutTools(o, tools, msg) {
 }
 
 export const holeOp = {
-  label: p => `Hole Ø${fmtD(p.dia)}${p.kind === 'cbore' ? ' counterbore' : p.kind === 'csink' ? ' countersink' : ''}${patternLabel(p)}`,
-  defaults: () => ({ dia: 5, depth: 0, thru: 'wall', kind: 'simple', ...patternDefaults }),
+  label: p => `${p.tap ? `Tapped hole M${fmtD(p.size || 0)}×${fmtD(p.pitch ?? isoPitch(p.size || 0))}` : `Hole Ø${fmtD(p.dia)}`}${p.kind === 'cbore' ? ' counterbore' : p.kind === 'csink' ? ' countersink' : ''}${patternLabel(p)}`,
+  defaults: () => ({ dia: 5, depth: 0, thru: 'wall', kind: 'simple', tap: false, ...patternDefaults }),
   prepare(p) { return flatFacePrep(p, 'hole'); },
   touch: p => ({ ids: [p.obj], mesh: true }),
-  fields: p => [lenF('dia', 'Diameter'), lenF('depth', 'Depth (0 = through)'), ...(p.depth > 0 ? [] : [{ key: 'thru', label: 'Through', kind: 'choice', options: [['wall', 'This wall'], ['all', 'Everything']], wide: true }]), { key: 'kind', label: 'Type', kind: 'choice', options: [['simple', 'Simple'], ['cbore', 'Counterbore'], ['csink', 'Countersink']], wide: true },
+  fields: p => [{ key: 'tap', label: 'Threaded (tapped)', kind: 'bool' }, ...(p.tap ? [lenF('size', 'Thread size (M)'), lenF('pitch', 'Pitch'), lenF('tapLen', 'Thread length (0 = all of it)')] : []),
+    lenF('dia', p.tap ? 'Drill Ø' : 'Diameter'), lenF('depth', 'Depth (0 = through)'), ...(p.depth > 0 ? [] : [{ key: 'thru', label: 'Through', kind: 'choice', options: [['wall', 'This wall'], ['all', 'Everything']], wide: true }]), { key: 'kind', label: 'Type', kind: 'choice', options: [['simple', 'Simple'], ['cbore', 'Counterbore'], ['csink', 'Countersink']], wide: true },
     ...(p.kind === 'cbore' ? [lenF('cbDia', 'Counterbore Ø'), lenF('cbDepth', 'Counterbore depth')] : p.kind === 'csink' ? [lenF('csDia', 'Countersink Ø'), { key: 'csAngle', label: 'Countersink angle', kind: 'ang' }] : []),
     lenF('x', 'Centre X'), lenF('y', 'Centre Y'), lenF('z', 'Centre Z'), ...patternFields(p)],
   apply(p, ctx) {
+    p._auto ??= {};
+    // tapped: an ISO coarse thread; the drill follows it (M − pitch) until a drill Ø is typed
+    if (p.tap) {
+      if (!(p.size > 0)) { p.size = ISO_PITCH.reduce((b, x) => (Math.abs(x[0] - x[1] - p.dia) < Math.abs(b[0] - b[1] - p.dia) ? x : b))[0]; p._auto.pitch = true; }
+      if (p.pitch == null || p._auto.pitch) { p.pitch = isoPitch(p.size); p._auto.pitch = true; }
+      if (!(p.pitch > 0.05)) return 'Pitch must be at least 0.05 mm';
+      if (!p._tapOn) { p._tapOn = true; p._auto.dia = true; } // (a typed drill Ø clears this, and then stays)
+      if (p._auto.dia) p.dia = +(p.size - p.pitch).toFixed(3);
+      if (!(p.dia < p.size)) return 'The drill Ø must be smaller than the thread size';
+      if (p.size / 2 - p.dia / 2 > p.pitch) return `M${fmtD(p.size)} is too big for a Ø${fmtD(p.dia)} drill`;
+    }
     if (!(p.dia > 0)) return 'Diameter must be > 0';
     // counterbore / countersink sizes follow the hole until typed (ISO-ish: Ø×1.8 counterbore, Ø×2 countersink)
-    p._auto ??= {};
     for (const [k, f] of [['cbDia', 1.8], ['cbDepth', 1], ['csDia', 2]]) if (p[k] == null || p._auto[k]) { p[k] = +(p.dia * f).toFixed(2); p._auto[k] = true; }
     p.csAngle ??= 90;
     const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
@@ -1192,7 +1206,16 @@ export const holeOp = {
     prof.push([r, D], [0, D]);
     const offs = patternOffsets(p, fr), oe = offFaceCheck(o, f, c, offs, 'hole', ctx?.replay); if (oe) return oe;
     const tools = offs.map(({ d }) => K.revolveProfile(M.add(c, d), n, fr.a, prof));
-    return cutTools(o, tools, 'Could not drill this hole');
+    const e1 = cutTools(o, tools, 'Could not drill this hole'); if (e1) return e1;
+    if (!p.tap) return;
+    // the thread: below a counterbore or countersink, over the thread length (or all of the hole)
+    const t0 = p.kind === 'cbore' ? p.cbDepth : p.kind === 'csink' ? (p.csDia / 2 - r) / Math.tan((p.csAngle / 2) * Math.PI / 180) : 0;
+    const tb = Math.min(D, p.tapLen > 0 ? t0 + p.tapLen : D);
+    if (tb - t0 < p.pitch * 3) return 'The hole is too shallow for this thread';
+    const res = guard(() => { let s2 = o.shape; for (const { d } of offs) s2 = internalThread(s2, M.add(c, d), n, r, p.size / 2, p.pitch, t0, tb, false); return s2; }, 'Could not cut the thread in this hole');
+    if (typeof res === 'string') return res;
+    if (K.isEmpty(res)) return 'Result is empty';
+    K.setShape(o, res); S.ed.faces = [];
   },
 };
 
@@ -1486,6 +1509,24 @@ export function mateLoop(list, p) {
   return false;
 }
 // re-solve every mate in the history (after any edit), in order, twice so chains of mates settle
+// parts that hang only off parts being moved (a vise's sliding jaw on its body, the screws in the jaw) ride along
+// with them, rigidly, before the mates are solved: solved from where they were, a jaw on a body swivelled 30° was
+// slid along its ways (an opening of 100 became 83.5). S.ed.drivenFrom: every part's placement before the move.
+function carryMated(ms) {
+  const from = S.ed.drivenFrom, driven = S.ed.driven; if (!from?.size || !driven?.size) return;
+  const D = new Map();
+  for (const id of driven) { const o = objById(id), m0 = from.get(id); if (o && m0) D.set(id, objMatrix(o).multiply(m0.clone().invert())); }
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const o of S.doc.objects) {
+      if (D.has(o.id) || !from.has(o.id)) continue;
+      const own = ms.filter(r => r.params.a.obj === o.id);
+      if (!own.length || !own.every(r => D.has(r.params.b.obj))) continue;
+      const d = D.get(own[0].params.b.obj);
+      setObjMatrix(o, d.clone().multiply(from.get(o.id))); D.set(o.id, d); grew = true;
+    }
+  }
+}
 export function solveMates(recs) {
   let ms = recs.filter(r => r.op === 'F.mateOp' && !r.off && (!r.err || r.conflict));
   if (!ms.length) return;
@@ -1502,6 +1543,7 @@ export function solveMates(recs) {
   // mate that contradicts them is the one left unsatisfied (and flagged), not the hinge that was there first
   const solve = r => { try { solveMate(r.params); } catch (e) { /* keep the part where it is */ } };
   const solveAll = list => { for (let pass = 0; pass < 2; pass++) list.forEach((r, i) => { solve(r); for (let j = i - 1; j >= 0; j--) if (list[j].params.a.obj === r.params.a.obj) solve(list[j]); }); };
+  carryMated(ms);
   solveAll(ms);
   closeLoops(ms, solveAll);
   // a mate left unsatisfied fights another one: say so on its step (red in History) instead of failing silently
