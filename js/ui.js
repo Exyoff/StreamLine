@@ -149,7 +149,9 @@ export function field({ label, kind = 'len', value, onCommit, cls = '', min, max
 export function choice({ label, options, value, onChange, cls = '' }) {
   const seg = h('div', { class: 'seg' }, options.map(([v, l]) => h('button', { class: v === value ? 'on' : '', onclick: () => onChange(v) }, l)));
   // four short options stay on one row (New · Join · Cut · Intersect): a second row made the Extrude card a third taller
-  if (options.length === 4 && options.reduce((n, [, l]) => n + String(l).length, 0) <= 26 && !/\brow4\b/.test(cls)) cls += ' row4';
+  // (and any row of short ones: mm · cm · m · in · ft wrapped into two rows inside a pill)
+  const chars = options.reduce((n, [, l]) => n + String(l).length, 0);
+  if (((options.length === 4 && chars <= 26) || (options.length > 4 && chars <= options.length * 3)) && !/\brow4\b/.test(cls)) cls += ' row4';
   return h('div', { class: 'field ' + cls }, label ? h('label', {}, label) : null, seg);
 }
 export function toggle({ label, value, onChange }) {

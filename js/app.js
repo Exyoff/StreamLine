@@ -31,7 +31,11 @@ const DOC_KEY = 'streamline.doc.v1';
 // the safe-area inset). Not while typing: the on-screen keyboard is not a bar to dodge.
 // Installed on the Home Screen (standalone), iOS can lay the page out shorter than the screen (by about the status
 // bar's height) and leave a black bar below it: size the page to the whole screen there (--fullH).
-const standalone = () => !!navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+// (also when the page is drawn under the status bar — a top safe-area inset in portrait: only a full-screen web app
+// gets that, whatever navigator.standalone and display-mode say; in Safari the page starts below its own bar)
+const satProbe = (() => { const d = document.createElement('div'); d.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:env(safe-area-inset-top,0px);visibility:hidden;pointer-events:none'; (document.body || document.documentElement).appendChild(d); return d; })();
+const underStatusBar = () => innerHeight > innerWidth && satProbe.getBoundingClientRect().height > 20;
+const standalone = () => !!navigator.standalone || matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches || underStatusBar();
 // The page is then always sized from the window itself (innerHeight), never from CSS's 100dvh: on an iPhone that unit
 // has come out short by about the status bar's height even with innerHeight right, leaving an empty band of
 // background under the bottom bar. (While typing the keyboard is not the page getting shorter: keep the height.)
