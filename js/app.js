@@ -250,11 +250,17 @@ function facePickTap(x, y) {
 // ---------- Create Sketch (Fusion): pick an origin plane, a construction plane or a flat face; the sketch opens ----------
 // (a sketch tool chosen outside a sketch — Line, Rectangle… — asks for the plane first, then starts that tool)
 function startCreateSketch(tool = null) {
+  // a flat face already picked (or a construction plane just made): the sketch goes straight onto it, as in Fusion —
+  // no second tap on the same face
+  const f0 = !sketching() && S.ed.faces.length === 1 && S.ed.faces[0].planar !== false ? S.ed.faces[0] : null;
+  const fo = f0 && objById(f0.obj), freg = fo && findRegionObj(fo, f0), cp = !f0 && S.ed.cplaneSel && S.ed.cplane ? { ...S.ed.cplane } : null;
   if (sketching()) finishSketchEdit();
   if (S.ed.mode === 'edit') setMode('object');
-  clearPicks(); S.ed.consTool = null; S.ed.mateFrom = null; S.ed.pickFace = false;
+  clearPicks(); S.ed.consTool = null; S.ed.mateFrom = null; S.ed.pickFace = false; S.ed.cplaneSel = false;
   S.ed.tool = 'select'; Draw.resetTool(); clearLast();
   S.ed.planePick = { tool };
+  if (freg?.faces?.length) return sketchOnFace(fo, freg.faces[0]);
+  if (cp) return createSketchOn({ planeDef: cp });
   refresh();
 }
 const ORIGIN = { XY: SK.PLANES.XY, XZ: SK.PLANES.XZ, YZ: SK.PLANES.YZ };
@@ -789,6 +795,7 @@ function bodyTap(x, y) {
 const pickSig = () => JSON.stringify([S.ed.pick, S.ed.faces.map(f => [f.obj, f.p]), S.ed.edges.map(e => [e.obj, e.p || e.a]), [...S.ed.selected], [...S.ed.drawSel], S.ed.profiles]);
 let lastTap = null;
 function smartTap(x, y) {
+  S.ed.cplaneSel = false; // (a tap elsewhere: the plane just made is no longer what Sketch goes onto)
   smartTapInner(x, y);
   // (and the point of the model under the finger: after a turn or a frame the same pixel is somewhere else)
   const hit = view.pickObject(x, y);
@@ -1576,6 +1583,7 @@ function renderActions() {
     if (S.ed.mateFrom) { row.replaceChildren(act(I.close, 'Cancel mate', () => { S.ed.mateFrom = null; refresh(); }, 'primary')); return; }
     if (faces === 1 && S.doc.objects.filter(o => o.shape).length > 1) /* (also while isolated, or with the other parts hidden to reach a covered face: show them again once Mate is armed) */ c.push(act(I.join, 'Mate', () => startMate()));
     const faceLinked = faces && S.ed.faces.some(f => objById(f.obj)?.link);
+    if (faces === 1 && flat) c.push(act(I.sketch, 'Sketch', () => startCreateSketch())); // (a sketch straight onto this face)
     if (faces === 1) c.push(act(I.plane, 'Plane here', () => planeHere()));
     if (faces && faceLinked) { if (!c.length) c.push(act(I.measure, 'Inquiry', e => openInquiryMenu(e.currentTarget))); }
     else if (faces) c.push(...(!cyl ? [] : [act(I.thread, 'Thread', () => runOp(F.threadOp), 'primary')]), ...(flat ? [act(I.extrude, 'Push/Pull', () => modifier('pushpull'), prof ? '' : 'primary'), act(I.hole, 'Hole', () => runOp(F.holeOp)), act(I.recess, 'Recess', () => runOp(F.recessOp))] : []), act(I.inset, 'Shell', () => modifier('shell'), flat || prof ? '' : 'primary'), ...(flat || cyl ? [act(I.cone, 'Draft', () => runOp(F.draftOp))] : []), act(I.flip, 'Mirror', () => modifier('mirror')), act(I.subdiv, 'Slice', () => runOp(F.sliceOp)));
@@ -2419,7 +2427,7 @@ function planeAt(o, n, label) {
   const cl = x => { const q = Math.round(x * 1e9) / 1e9; return Math.abs(q - x) < 1e-9 ? (q === 0 ? 0 : q) : x; };
   return { o: o.map(cl), u: u.map(cl), v: v.map(cl), n: n.map(cl), label };
 }
-function setDrawPlane(pl, msg) { S.ed.cplane = pl; Draw.resetTool(); Draw.clearTarget(); toast(msg); renderActionsForce(); }
+function setDrawPlane(pl, msg) { S.ed.cplane = pl; S.ed.cplaneSel = true; Draw.resetTool(); Draw.clearTarget(); toast(msg); renderActionsForce(); } // (just made: Sketch goes onto it)
 // "Plane here": the plane touching the picked face at the tapped point (tangent to a curved wall), to sketch a
 // spout or a handle right where it goes
 function planeHere() {
