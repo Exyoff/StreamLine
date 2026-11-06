@@ -1748,7 +1748,7 @@ function commands() {
     ...Object.entries(view.THEMES).map(([k, t]) => C(`Theme: ${t.name}`, '', () => setLook('theme', k), 'appearance colours colors dark light')),
     ...Object.entries(view.FINISH).map(([k, f]) => C(`Surface: ${f.name}`, '', () => setLook('finish', k), 'material finish shiny')),
     C('Edges: scale with zoom', '', () => setLook('edgeScale', 'zoom'), 'line width thickness'), C('Edges: same width at any zoom', '', () => setLook('edgeScale', 'screen'), 'line width thickness pixel'),
-    C('Undo', '⌘Z', () => undo()), C('Redo', '⇧⌘Z', () => redo()), C('Save project', '⌘S', () => saveProject()), C('Open / import', '', () => $('#file-input').click(), 'step stl obj'), C('Thread', '', () => (S.ed.faces.length ? runOp(F.threadOp) : (setPick('face'), toast('Tap a shaft or hole face, then Thread'))), 'screw bolt nut helix tap'), C('Hole', '', () => (S.ed.faces.length ? runOp(F.holeOp) : (setPick('face'), toast('Tap a flat face where the hole goes, then Hole'))), 'drill counterbore countersink pattern bolt circle'), C('Recess', '', () => (S.ed.faces.length ? runOp(F.recessOp) : (setPick('face'), toast('Tap a flat face (a screw head), then Recess'))), 'drive socket hex allen phillips cross slot screwdriver'), C('Export STEP (exact)', '', () => exportAs('step'), 'step stp cad'), C('Export STL', '', () => exportAs('stl')), C('Export OBJ', '', () => exportAs('obj')), C('Export DXF', '', () => exportDXF()), C('New scene', '', () => { if (confirm('Start a new scene?')) newScene(); }),
+    C('Undo', '⌘Z', () => undo()), C('Redo', '⇧⌘Z', () => redo()), C('Save project', '⌘S', () => saveProject()), C('Open / import', '', () => $('#file-input').click(), 'step stl obj'), C('Thread', '', () => (S.ed.faces.length ? runOp(F.threadOp) : (setPick('face'), toast('Tap a shaft or hole face, then Thread'))), 'screw bolt nut helix tap'), C('Hole', '', () => (S.ed.faces.length ? runOp(F.holeOp) : (setPick('face'), toast('Tap a flat face where the hole goes, then Hole'))), 'drill counterbore countersink pattern bolt circle'), C('Recess', '', () => (S.ed.faces.length ? runOp(F.recessOp) : (setPick('face'), toast('Tap a flat face (a screw head), then Recess'))), 'drive socket hex allen phillips cross slot screwdriver'), C('Export STEP (exact)', '', () => exportAs('step'), 'step stp cad'), C('Export STL', '', () => exportAs('stl')), C('Export OBJ', '', () => exportAs('obj')), C('Export DXF', '', () => exportDXF()), C('New project', '', () => PJ.newProject(), 'new scene start fresh blank'), // (the old project stays in the library: a "New scene" here used to empty it in place)
   ];
 }
 function deleteSelection() {
@@ -1846,8 +1846,10 @@ function renderLastOp() {
     const look = !!document.querySelector('#popover:not([hidden]) .lookpop') && $('#popover').getBoundingClientRect(), vtop = $('#viewport').getBoundingClientRect().top;
     // (phone landscape: a card beside the rail moves the picture right by half its width)
     const dcSide = !dc.hidden && S.ed.tool !== 'select' && matchMedia('(orientation: landscape) and (max-height: 500px)').matches;
-    const off = look ? -Math.max(0, (look.bottom - vtop - ins.t) / 2) : docked ? Math.max(0, (ins.b - ins.t) / 2) : dcOff, offX = side ? -(el.offsetWidth + 40) / 2 : dcSide ? -(dc.offsetWidth + 40) / 2 : 0;
-    if (Math.abs((view.offsetY || 0) - off) > 1 || Math.abs((view.offsetX || 0) - offX) > 1) { view.offsetY = off; view.offsetX = offX; view.render(); }
+    const off = look ? -Math.max(0, (look.bottom - vtop - ins.t) / 2) : docked ? Math.max(0, (ins.b - ins.t) / 2) : dcOff, offX = side ? -(el.offsetWidth + 40) / 2 : dcSide ? -Math.max(0, ((dc.getBoundingClientRect().right + 8 + innerWidth - 8) / 2) - innerWidth / 2) : 0; // (a card beside the rail: the picture centred in the room right of it — the zoom bar and cube step aside meanwhile)
+    // (never during a gizmo drag: the card hides while the finger is down, and moving the picture under the finger then
+    // mapped a 20 px drag to 30-75 mm — the offset waits for the drag to end)
+    if (!gizmoActive() && (Math.abs((view.offsetY || 0) - off) > 1 || Math.abs((view.offsetX || 0) - offX) > 1)) { view.offsetY = off; view.offsetX = offX; view.render(); }
     placeViewTools();
   });
   if (!show) return;
@@ -1886,6 +1888,10 @@ function placeViewTools() {
   const cards = ['#lastop', '#draw-card'].map(q => $(q)).filter(c => c && !c.hidden).map(c => c.getBoundingClientRect()).filter(r => r.width > 0 && r.height > 0);
   if (!cards.length) return;
   const phone = matchMedia('(max-width: 500px)').matches, over = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  // (phone landscape with a sketch tool's card: the room right of it is all there is to draw in — the zoom bar, cube and
+  // view tools step aside; two fingers still zoom)
+  const landDraw = matchMedia('(orientation: landscape) and (max-height: 500px)').matches && !$('#draw-card').hidden && S.ed.tool !== 'select';
+  if (landDraw) { for (const el of [zb, nav, vt]) if (el) el.style.visibility = 'hidden'; return; }
   for (const el of [nav, vt]) if (el && ((phone && !$('#draw-card').hidden) || cards.some(c => over(el.getBoundingClientRect(), c)))) el.style.visibility = 'hidden';
   if (h2 && vt?.style.visibility === 'hidden') h2.hidden = false;
   const vp = $('#viewport').getBoundingClientRect(), cs = getComputedStyle(zb), zr = zb.getBoundingClientRect();

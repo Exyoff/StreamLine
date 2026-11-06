@@ -186,13 +186,14 @@ function followFace(skId, moved) {
     if (['o', 'u', 'v', 'n'].some(k => wp[k].some((t, i) => Math.abs(t - sk.plane[k][i]) > 1e-9))) { sk.plane = wp; moved.set(sk.id, sk.plane); }
   }
   const pl = sk.plane, n = pl.n, dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-  const pts = [];
-  for (const e of sk.ents) {
-    if (e.t === 'line') pts.push(e.a, e.b); else if (e.t === 'circle' || e.t === 'arc' || e.t === 'ellipse') pts.push(e.c);
-    else if (e.t === 'rect') pts.push([e.x + e.w / 2, e.y + e.h / 2]); else if (e.pts) pts.push(...e.pts);
-  }
-  if (!pts.length) return;
-  const c2 = [pts.reduce((s, q) => s + q[0], 0) / pts.length, pts.reduce((s, q) => s + q[1], 0) / pts.length];
+  // where the sketch's own curves are (the face's projected outline left out): each curve's middle is a probe, and a
+  // face that holds any of them is the one it sits on. (One centroid of everything landed in a hole of the face, and the
+  // sketch then stayed put while the face moved — a boss buried in its block.)
+  const mids = list => list.flatMap(e => e.t === 'line' ? [[(e.a[0] + e.b[0]) / 2, (e.a[1] + e.b[1]) / 2]] : e.t === 'circle' || e.t === 'arc' || e.t === 'ellipse' ? [e.c] : e.t === 'rect' ? [[e.x + e.w / 2, e.y + e.h / 2]] : e.pts ? e.pts : []);
+  const own = sk.ents.filter(e => e.t !== 'dim' && !e.proj && !e.construction);
+  const probes = mids(own.length ? own : sk.ents.filter(e => e.t !== 'dim'));
+  if (!probes.length) return;
+  const all = probes.length > 1 ? [[probes.reduce((s, q) => s + q[0], 0) / probes.length, probes.reduce((s, q) => s + q[1], 0) / probes.length], ...probes] : probes;
   const w0 = dot(n, pl.o);
   const W = worldVerts(o);
   let best = null;
@@ -208,11 +209,8 @@ function followFace(skId, moved) {
     if (best && dw >= best.dw) continue;
     // centroid of the curves inside this face (2D in the sketch's u/v)
     const Q = P.map(q => [dot(pl.u, q) - dot(pl.u, pl.o), dot(pl.v, q) - dot(pl.v, pl.o)]);
-    let inside = false;
-    for (let i = 0, j = Q.length - 1; i < Q.length; j = i++) {
-      if ((Q[i][1] > c2[1]) !== (Q[j][1] > c2[1]) && c2[0] < (Q[j][0] - Q[i][0]) * (c2[1] - Q[i][1]) / (Q[j][1] - Q[i][1]) + Q[i][0]) inside = !inside;
-    }
-    if (inside) best = { w, dw };
+    const inPoly = c2 => { let inside = false; for (let i = 0, j = Q.length - 1; i < Q.length; j = i++) if ((Q[i][1] > c2[1]) !== (Q[j][1] > c2[1]) && c2[0] < (Q[j][0] - Q[i][0]) * (c2[1] - Q[i][1]) / (Q[j][1] - Q[i][1]) + Q[i][0]) inside = !inside; return inside; };
+    if (all.some(inPoly)) best = { w, dw };
   }
   if (!best || best.dw < 1e-9) return;
   const d = best.w - w0;

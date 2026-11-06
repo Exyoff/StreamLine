@@ -410,15 +410,15 @@ export const bodyBoolean = {
     if (S.ed.selected.size < 2) return 'Select 2+ bodies (turn on multi-select). The first one tapped is the target.';
     if (!p.ids) {
       const sel = [...S.ed.selected].map(objById).filter(Boolean);
-      // subtract: the target is the biggest body (cutters are smaller) — so a pattern of cutters selected
-      // first, then the blank, still cuts the blank
-      // (union / intersect too: the result keeps the main body's name, colour and placement, not a tool's)
-      // equal volumes (a pattern's copies and their original): the original wins, then the first tapped — a copy as
-      // the target would vanish when the pattern's count drops
+      // the target is the first body tapped, as the menu says — unless it is one of a set of equal copies (a pattern
+      // of cutters picked before the blank): then the first tapped body that is not one of them, else the biggest.
+      // The card's Target row changes it.
       if (sel.every(o => o.shape)) {
-        const vol = new Map(sel.map(o => [o, Math.abs(K.volume(K.worldShape(o)))])), order = new Map(sel.map((o, i) => [o, i]));
-        sel.sort((a, b) => { const va = vol.get(a), vb = vol.get(b); if (Math.abs(va - vb) > 1e-6 * Math.max(va, vb, 1)) return vb - va;
-          return ((a.patternOf != null) - (b.patternOf != null)) || order.get(a) - order.get(b); });
+        const vol = new Map(sel.map(o => [o, Math.abs(K.volume(K.worldShape(o)))]));
+        const same = (a, b) => Math.abs(vol.get(a) - vol.get(b)) <= 1e-6 * Math.max(vol.get(a), vol.get(b), 1);
+        const lone = o => o.patternOf == null && !sel.some(q => q !== o && same(q, o));
+        const t = sel.find(lone) || [...sel].sort((a, b) => (same(a, b) ? 0 : vol.get(b) - vol.get(a)) || (a.patternOf != null) - (b.patternOf != null))[0]; // (equal copies: the original)
+        sel.splice(sel.indexOf(t), 1); sel.unshift(t);
       }
       p.ids = sel.map(o => o.id);
     }
@@ -426,8 +426,13 @@ export const bodyBoolean = {
     p._pat ??= [...new Set(p.ids.slice(1).map(id => objById(id)?.patternOf).filter(x => x != null))];
   },
   touch: p => ({ ids: p.ids, mesh: true }),
-  fields: () => [{ key: 'kind', label: 'Operation', kind: 'choice', options: [['union', 'Union'], ['subtract', 'Subtract'], ['intersect', 'Intersect']], wide: true }, { key: 'keep', label: 'Keep tools', kind: 'bool' }],
+  fields: p => [{ key: 'kind', label: 'Operation', kind: 'choice', options: [['union', 'Union'], ['subtract', 'Subtract'], ['intersect', 'Intersect']], wide: true },
+    ...((p.ids || []).length <= 6 ? [{ key: 'target', label: p.kind === 'subtract' ? 'Subtract from' : 'Target (keeps its name)', kind: 'choice', options: p.ids.map(id => [id, objById(id)?.name || 'Body']), wide: true }] : []),
+    { key: 'keep', label: 'Keep tools', kind: 'bool' }],
   apply(p) {
+    // (the card's target row: that body first, the rest as tools)
+    if (p.target != null && p.ids.includes(p.target) && p.ids[0] !== p.target) { p.ids = [p.target, ...p.ids.filter(id => id !== p.target)]; p._pat = [...new Set(p.ids.slice(1).map(id => objById(id)?.patternOf).filter(x => x != null))]; }
+    p.target = p.ids[0];
     const [tid, ...listed] = p.ids;
     const t = objById(tid); if (!t) return 'Target missing';
     const pat = new Set(p._pat || []);
