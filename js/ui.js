@@ -152,6 +152,8 @@ export function choice({ label, options, value, onChange, cls = '' }) {
   // (and any row of short ones: mm · cm · m · in · ft wrapped into two rows inside a pill)
   const chars = options.reduce((n, [, l]) => n + String(l).length, 0);
   if (((options.length === 4 && chars <= 26) || (options.length > 4 && chars <= options.length * 3)) && !/\brow4\b/.test(cls)) cls += ' row4';
+  // (a row that wraps onto a second line is a grid: square-ish corners, not a pill round two rows of buttons)
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => { const b = seg.firstElementChild; if (b && b.offsetHeight) seg.classList.toggle('wrapped', seg.offsetHeight > b.offsetHeight * 1.6); }).observe(seg);
   return h('div', { class: 'field ' + cls }, label ? h('label', {}, label) : null, seg);
 }
 export function toggle({ label, value, onChange }) {
