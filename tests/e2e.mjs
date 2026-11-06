@@ -1546,6 +1546,18 @@ try {
     for (let i = 1; i <= 8; i++) { await dT('touchMove', x0 + i * 10, y0 + i * 5); await p.waitForTimeout(25); } await dT('touchEnd'); await p.waitForTimeout(400);
     const c1 = await camS(), moved = Math.hypot(...c1.t.map((v, i) => v - c0.t[i]));
     check(c1.a === c0.a && moved > 1e-3, `Double tap, hold and drag moves the camera without turning or zooming it (moved ${moved.toFixed(3)}; ${c0.a} → ${c1.a})`); }
+  // the sketch Move command with curves picked: a gizmo at their middle — its X arrow moves them along X only
+  { await p.evaluate(() => { const L = StreamLine, F = L.F, X8 = 103000; L.runOp(F.sketchOpNew('mv', { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }, null, k => { F.addEntity(k, { t: 'line', a: [X8, 0], b: [X8 + 40, 0] }); F.addEntity(k, { t: 'line', a: [X8 + 40, 0], b: [X8 + 40, 30] }); })); const sk = L.S.ed.sketch; L.S.ed.sketch = null; L.activateSketch(sk); L.refresh(); });
+    await p.waitForTimeout(1200);
+    await p.evaluate(() => { const L = StreamLine, k = L.SK.sketchById(L.S.ed.editingSketch); L.S.ed.drawSel = new Set(k.ents.filter(e => e.t === 'line').map(e => e.id)); L.S.ed.tool = 'move'; L.Draw.startCommand(); L.refresh(); });
+    await p.waitForTimeout(600);
+    const lines = () => p.evaluate(() => { const L = StreamLine, k = L.SK.sketchById(L.S.ed.editingSketch); return k.ents.filter(e => e.t === 'line').map(e => [...e.a, ...e.b].map(v => +v.toFixed(3))); });
+    const l0 = await lines(), gx = await p.evaluate(() => { const v = StreamLine.view, c = [103020, 15, 0], s = v.worldPerPixel(c) * 84; return v.project([c[0] + s * 0.8, c[1], 0]); });
+    const mT = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y: y + top, id: 1 }] });
+    await mT('touchStart', gx.x, gx.y); for (let i = 1; i <= 10; i++) { await mT('touchMove', gx.x + i * 6, gx.y); await p.waitForTimeout(25); } await mT('touchEnd'); await p.waitForTimeout(500);
+    const l1 = await lines(), dx = l1[0][0] - l0[0][0], same = l1.every((l, i) => Math.abs(l[0] - l0[i][0] - dx) < 1e-6 && Math.abs(l[2] - l0[i][2] - dx) < 1e-6 && l[1] === l0[i][1] && l[3] === l0[i][3]);
+    await p.evaluate(() => { const L = StreamLine; L.Draw.resetTool(); L.S.ed.drawSel = new Set(); L.S.ed.tool = 'select'; L.finishSketchEdit(); });
+    check(dx > 1 && same, `The sketch Move gizmo's X arrow moves the picked curves along X only (ΔX ${dx.toFixed(3)}, Y kept: ${same})`); }
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
