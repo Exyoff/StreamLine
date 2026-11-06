@@ -640,22 +640,40 @@ function projRegion(k, r) {
   if (!k.face || !k.ents.some(e => e.proj)) return false;
   if (projRegionMemo.has(r)) return projRegionMemo.get(r);
   const P = k.ents.filter(e => e.proj).map(e => SK.entPolyline(e)), tol = 1e-6 * Math.max(1, ...r.outer.map(p => Math.abs(p[0]) + Math.abs(p[1])));
-  const onP = p => P.some(pl => { const n = pl.pts.length; for (let i = 0; i < (pl.closed ? n : n - 1); i++) if (SK.segDist(p, pl.pts[i], pl.pts[(i + 1) % n]) <= tol) return true; return false; });
-  const v = r.outer.every(onP); projRegionMemo.set(r, v); return v;
+  const onP = (p, t = tol) => P.some(pl => { const n = pl.pts.length; for (let i = 0; i < (pl.closed ? n : n - 1); i++) if (SK.segDist(p, pl.pts[i], pl.pts[(i + 1) % n]) <= t) return true; return false; });
+  // (the middle of each side too: a slot drawn right across a face has every corner on the face's outline, but its
+  // long sides are drawn lines — it is a profile, not the face)
+  const O = r.outer, v = O.every(q => onP(q)) && O.every((q, i) => { const n = O[(i + 1) % O.length]; return onP([(q[0] + n[0]) / 2, (q[1] + n[1]) / 2], Math.max(tol, SK.d2(q, n) * 0.03)); }); // (a chord of a round outline sags a little)
+  projRegionMemo.set(r, v); return v;
 }
-// the closed sketch region a tap lands on ({ k, p2, r, t, used }), or null — with the same rules as a region pick
-function probeRegion(x, y) {
-  const ray = view.ray(x, y).ray;
-  let best = null;
+// sketch regions under a screen point, nearest first along the ray. A region a feature already used yields to an
+// unused one further along that the body does not hide: an old profile floating over a recess (a seat's circle at the
+// top of the cut) no longer takes taps meant for the new sketch on the recess floor under it
+const usedRegion = c => H.hist().some(r => (r.params?.pts || []).some(it => it.sk === c.k.id && SK.regionAt(c.k, it.pt) === c.r)) || projRegion(c.k, c.r);
+function regionUnder(x, y, hit) {
+  const ray = view.ray(x, y).ray, cands = [];
   for (const k of tapSketches()) {
     const pl = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(...k.plane.n), new THREE.Vector3(...k.plane.o));
     const w = ray.intersectPlane(pl, new THREE.Vector3()); if (!w) continue;
     const p2 = SK.toP(k.plane, w.toArray()), r = SK.regionAt(k, p2);
-    if (r && (!best || w.distanceTo(ray.origin) < best.t)) best = { k, p2, r, t: w.distanceTo(ray.origin) };
+    if (r) cands.push({ k, p2, r, t: w.distanceTo(ray.origin) });
   }
-  if (!best) return null;
+  if (!cands.length) return null;
+  cands.sort((a, b) => a.t - b.t);
+  const best = cands[0]; best.used = usedRegion(best);
+  if (best.used) {
+    const lim = hit && !S.settings.xray ? hit.distance + view.worldPerPixel(hit.point) * 8 : Infinity;
+    const fresh = cands.find(c => c !== best && c.t <= lim && !usedRegion(c));
+    if (fresh) { fresh.used = false; return fresh; }
+  }
+  return best;
+}
+// the closed sketch region a tap lands on ({ k, p2, r, t, used }), or null — with the same rules as a region pick
+function probeRegion(x, y) {
   const hit = S.ed.editingSketch != null ? null : view.pickObject(x, y);
-  const used = H.hist().some(r => (r.params?.pts || []).some(it => it.sk === best.k.id && SK.regionAt(best.k, it.pt) === best.r)) || projRegion(best.k, best.r);
+  const best = regionUnder(x, y, hit);
+  if (!best) return null;
+  const used = best.used;
   if (used && !S.settings.xray && S.ed.editingSketch == null && edgeTap(x, y, true) <= 16) return null;
   if (hit && S.ed.editingSketch == null && !S.settings.xray) {
     const again = !S.ed.multi && S.ed.profiles.length === 1 && S.ed.profiles[0].sk === best.k.id && SK.regionAt(best.k, S.ed.profiles[0].pt) === best.r;
@@ -665,19 +683,12 @@ function probeRegion(x, y) {
 }
 // regions and faces: sketch regions first (nearest along the ray), else body faces
 function regionOrFaceTap(x, y) {
-  const ray = view.ray(x, y).ray;
-  let best = null;
-  for (const k of tapSketches()) {
-    const pl = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(...k.plane.n), new THREE.Vector3(...k.plane.o));
-    const w = ray.intersectPlane(pl, new THREE.Vector3()); if (!w) continue;
-    const p2 = SK.toP(k.plane, w.toArray()), r = SK.regionAt(k, p2);
-    if (r && (!best || w.distanceTo(ray.origin) < best.t)) best = { k, p2, r, t: w.distanceTo(ray.origin) };
-  }
   const hit = S.ed.editingSketch != null ? null : view.pickObject(x, y); // bodies are ghosted while a sketch is edited
+  let best = regionUnder(x, y, hit);
   // a region a feature already built from yields to a body edge under the finger, and (lying on the body's face) to
   // that face; a region not used yet stays pickable however narrow (a 5 mm ring); tapping the picked region again
   // (without Multi) goes through to the face under it. X-ray: sketch regions always win.
-  const used = best && (H.hist().some(r => (r.params?.pts || []).some(it => it.sk === best.k.id && SK.regionAt(best.k, it.pt) === best.r)) || projRegion(best.k, best.r));
+  const used = best?.used;
   if (best && used && !S.settings.xray && S.ed.editingSketch == null && edgeTap(x, y, true) <= 16) best = null;
   if (best && hit && S.ed.editingSketch == null && !S.settings.xray) {
     const again = !S.ed.multi && S.ed.profiles.length === 1 && S.ed.profiles[0].sk === best.k.id && SK.regionAt(best.k, S.ed.profiles[0].pt) === best.r;
@@ -705,7 +716,8 @@ function onTap(x, y) {
   if (S.ed.workspace === 'draw') return Draw.tap(x, y);
   if (S.ed.workspace === 'cad') return cadTap(x, y);
   if (S.ed.tool === 'project' && sketching()) return projectTap(x, y);
-  if (S.ed.mode === 'object' && (Draw.EDIT_TOOLS.has(S.ed.tool) || ['trim', 'dim', 'corner', 'extend'].includes(S.ed.tool))) return Draw.tap(x, y);
+  // (Move / Rotate / Scale outside a sketch, with no curves picked, are the 3D gizmo tools: a tap picks a part for them)
+  if (S.ed.mode === 'object' && ((Draw.EDIT_TOOLS.has(S.ed.tool) && (!GIZMO_TOOLS.has(S.ed.tool) || sketching() || Draw.curveCmd())) || ['trim', 'dim', 'corner', 'extend'].includes(S.ed.tool))) return Draw.tap(x, y);
   if (S.ed.mode === 'object' && S.ed.mateFrom) return mateTap(x, y);
   if (S.ed.mode === 'object' && S.ed.consTool) return consTap(x, y);
   // a gizmo's value bubble (tap to type the value), dimension labels and constraint glyphs first — small targets
@@ -2057,7 +2069,10 @@ function openLook() {
   const body = h('div', { class: 'lookpop' });
   const fill = () => body.replaceChildren(h('div', { class: 'mtitle' }, 'Look'), ...lookGroups(fill));
   fill();
-  popover($('#btn-look'), body, { align: 'right', onClose: () => refresh() });
+  popover($('#btn-look'), body, { align: 'right', onClose: () => { pop.classList.remove('more'); pop.onscroll = null; refresh(); } });
+  // (more below the fold — Surface, Edges — fades out at the bottom, so it reads as a list to scroll, not the end)
+  const pop = $('#popover'), more = () => pop.classList.toggle('more', pop.scrollHeight - pop.scrollTop - pop.clientHeight > 4);
+  pop.onscroll = more; requestAnimationFrame(more);
   refresh();
 }
 function settingsTab() {

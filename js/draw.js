@@ -560,7 +560,8 @@ function dimRedundant(s, d) {
 function dimPend(P, hint) { st.dimPend = P; if (hint) toast(hint, 1600); view.render(); emit('drawcard'); }
 function dimTap(s, raw, wpp) {
   const r = SK.snapPoint(s, raw, { pxTol: 14, wpp, refPts: [] });
-  const pt = r.ref && r.kind !== 'Mid' && SK.refPoint(s, r.ref) ? r.ref : null;
+  // (the origin can be measured from: a sketch can be fully dimensioned without Fix)
+  const pt = r.ref && r.kind !== 'Mid' && SK.refPoint(s, r.ref) ? r.ref : r.kind === 'Origin' ? { e: 0, k: 'o' } : null;
   const e = SK.pickEntity(s, raw, 12 * wpp), P = st.dimPend;
   // (a circle or arc when the tap is nearer its rim than its centre: on a small one the centre's snap would win)
   const round = e && (e.t === 'circle' || e.t === 'arc') && Math.abs(SK.d2(raw, e.c) - e.r) < SK.d2(raw, e.c) ? e : null;
@@ -613,10 +614,12 @@ function placeDim(s, P, at) {
   st.dimPend = null;
   if (d.value == null || !isFinite(d.value) || (d.kind !== 'ang' && Math.abs(d.value) < 1e-9)) { toast('Nothing to measure there'); view.render(); emit('drawcard'); return; }
   d.at = at.slice();
-  const driven = dimRedundant(s, d); if (driven) d.value = null;
+  // (on projected geometry only: it follows the body, so the size is shown, never driven — a Ø150 rim went to Ø130)
+  const proj = SK.dimEnts(d).every(id => SK.entById(s, id)?.proj);
+  const driven = proj || dimRedundant(s, d); if (driven) d.value = null;
   const made = add('Dimension', d);
   if (!made) return;
-  if (driven) { toast(`Driven dimension ${dimText(SK.sketchById(s.id) || s, made) || ''} — the sketch already fixes this size`, 2600); return; }
+  if (driven) { toast(`Driven dimension ${dimText(SK.sketchById(s.id) || s, made) || ''} — ${proj ? 'projected geometry follows the body' : 'the sketch already fixes this size'}`, 2600); return; }
   editDim(made);
 }
 function editDim(d) {
@@ -645,6 +648,7 @@ export function toggleDrivenSel() {
   if (d.value != null) { runOp(F.sketchOp('Driven dimension', ds.sk, k => { const dd = SK.entById(k, ds.id); if (dd) dd.value = null; })); toast('Driven: it shows the size, and no longer sets it'); return; }
   const E = d.kind === 'hor' || d.kind === 'ver' ? dimEnds(s, d) : null;
   const val = d.kind === 'ang' ? SK.lineAngle(s, d) : E ? (d.kind === 'hor' ? E[1][0] - E[0][0] : E[1][1] - E[0][1]) : SK.dimValue(s, d);
+  if (SK.dimEnts(d).every(id => SK.entById(s, id)?.proj)) { toast('Projected geometry follows the body — this dimension can only show its size'); return; }
   if (dimRedundant(s, { ...d, value: val })) { toast('The sketch already fixes this size — as a driving dimension it would over-constrain it'); return; }
   runOp(F.sketchOp('Driving dimension', ds.sk, k => { const dd = SK.entById(k, ds.id); if (dd) dd.value = val; }));
   toast(`Driving: it sets the size · ${dofText()}`);
@@ -1012,7 +1016,7 @@ function renderSketches() {
         if (stu && S.ed.editingSketch === s.id) {
           const pf = [], pc = [];
           for (const e of s.ents) {
-            if (e.t === 'dim' || e.t === 'text' || e.t === 'hatch' || e.construction || e.glyph) continue;
+            if (e.t === 'dim' || e.t === 'text' || e.t === 'hatch' || e.construction || e.glyph || e.proj) continue; // (projected corners cannot be dragged: no squares)
             const fixed = fixedSet.has(e.id), c3 = fixed ? C.fixed : C.line;
             for (const kp of SK.keyPoints(e)) if (kp.m || kp.center) { pf.push(...SK.toW(s.plane, kp.p)); pc.push(c3.r, c3.g, c3.b); }
           }

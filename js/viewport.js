@@ -23,7 +23,7 @@ const COL = {
 export const LIGHTING = {
   studio: { name: 'Studio', note: 'Key, fill and sky', key: [1.9, [0.4, 0.6, 1.8], '#fffaf2'], fill: [0.35, [-0.9, -0.1, 0.4], '#cfe0ff'], rim: [0.45, [-0.2, 0.9, -0.8], '#ffffff'], hemi: [0.75, '#dfe6f0', '#3a3d44'], amb: 0, env: 0 },
   soft: { name: 'Soft', note: 'Even, low contrast', key: [0.7, [0.2, 0.5, 1], '#ffffff'], fill: [0.55, [-0.7, 0.1, 0.6], '#ffffff'], rim: [0, [0, 0, -1], '#ffffff'], hemi: [0.6, '#ffffff', '#8a909c'], amb: 0.45, env: 0.2 },
-  daylight: { name: 'Daylight', note: 'Sun from above, sky fill', sun: [1.25, [0.45, -0.35, 1], '#fff1d6'], key: [0.45, [0.3, 0.4, 1], '#ffffff'], fill: [0, [0, 0, 1], '#ffffff'], rim: [0, [0, 0, -1], '#ffffff'], hemi: [0.6, '#b8d4ff', '#6e5d48'], amb: 0, env: 0.08 },
+  daylight: { name: 'Sunlight', note: 'Sun from above, sky fill', sun: [1.25, [0.45, -0.35, 1], '#fff1d6'], key: [0.45, [0.3, 0.4, 1], '#ffffff'], fill: [0, [0, 0, 1], '#ffffff'], rim: [0, [0, 0, -1], '#ffffff'], hemi: [0.6, '#b8d4ff', '#6e5d48'], amb: 0, env: 0.08 },
   dramatic: { name: 'Dramatic', note: 'Hard side light, cool rim', key: [2.4, [1, 0.25, 0.15], '#fff3e0'], fill: [0.08, [-1, -0.2, 0.3], '#8fb0ff'], rim: [1.8, [-0.6, 0.7, -1], '#bcd3ff'], hemi: [0.12, '#ffffff', '#000000'], amb: 0, env: 0 },
   flat: { name: 'Flat', note: 'Technical, true colours', key: [0.45, [0, 0, 1], '#ffffff'], fill: [0, [0, 0, 1], '#ffffff'], rim: [0, [0, 0, -1], '#ffffff'], hemi: [0, '#ffffff', '#ffffff'], amb: 2.6, env: 0 },
   showroom: { name: 'Showroom', note: 'Soft boxes and reflections', key: [0.9, [0.3, 0.6, 1], '#ffffff'], fill: [0.2, [-0.8, 0, 0.5], '#ffffff'], rim: [0.9, [-0.3, 0.8, -1], '#ffffff'], hemi: [0.2, '#ffffff', '#30343c'], amb: 0, env: 0.5 },
@@ -59,15 +59,16 @@ let needsRender = true, tween = null;
 const visuals = new Map(); // id -> { group, mesh, edges, points, meshRef }
 let selDirty = true;
 let matMesh, matMeshX, matEdgeObj, matEdgeSoft, matEdgeSel, matEdgeAct, matEdgeEdit, matPoints;
-const camLights = []; let hemi, amb, sun, envTex = null, bgTex = null, lookKey = '';
+const camLights = []; let hemi, amb, sun, envTex = {}, bgTex = null, lookKey = '';
 
 // a soft-box studio, blurred into an environment map: reflections for Gloss / Metal and the Soft / Showroom light
-function studioEnv() {
-  if (envTex) return envTex;
+// (light: a pale room for the light theme — in the dark one, metal parts on the pale backdrop read nearly black)
+function studioEnv(light = false) {
+  if (envTex[light]) return envTex[light];
   const env = new THREE.Scene();
-  const room = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0x3a3f4a, side: THREE.BackSide }));
+  const room = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: light ? 0x9ba3b0 : 0x3a3f4a, side: THREE.BackSide }));
   room.scale.set(30, 30, 20); env.add(room);
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.MeshBasicMaterial({ color: 0x454a54 })); floor.position.z = -9.9; env.add(floor);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.MeshBasicMaterial({ color: light ? 0xa9afb9 : 0x454a54 })); floor.position.z = -9.9; env.add(floor);
   const panel = (w, h, pos, look, k) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: new THREE.Color(k, k, k), side: THREE.DoubleSide })); m.position.set(...pos); m.lookAt(...look); env.add(m); };
   panel(14, 8, [0, 0, 9.8], [0, 0, 0], 1.6);       // overhead soft box
   panel(4, 14, [-14.8, 2, 2], [0, 0, 0], 2);     // left strip
@@ -75,9 +76,9 @@ function studioEnv() {
   panel(10, 5, [6, 14.8, 4], [0, 0, 0], 1.2);    // back panel
   panel(8, 4, [-5, -14.8, 3], [0, 0, 0], 0.9);   // front fill
   const pm = new THREE.PMREMGenerator(renderer);
-  envTex = pm.fromScene(env, 0.035).texture; pm.dispose();
+  envTex[light] = pm.fromScene(env, 0.035).texture; pm.dispose();
   env.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); });
-  return envTex;
+  return envTex[light];
 }
 // the viewport backdrop: a vertical gradient with a soft glow behind the model
 function backdrop(t) {
@@ -108,7 +109,7 @@ view.setLook = () => {
   amb.intensity = L.amb || 0;
   if (L.sun) { sun.intensity = L.sun[0]; sun.color.set(L.sun[2]); sun.position.set(...L.sun[1]).multiplyScalar(1000); } else sun.intensity = 0;
   const envI = Math.max(L.env || 0, F.env ? F.env * (L.env > 0 ? 1 : 0.6) : 0);
-  scene.environment = envI > 0 ? studioEnv() : null;
+  scene.environment = envI > 0 ? studioEnv(t.name === 'Daylight') : null;
   matMesh.envMapIntensity = envI; matMesh.roughness = F.r; matMesh.metalness = F.m; matMesh.needsUpdate = true;
   view.render();
 };
@@ -552,6 +553,7 @@ function occluded(world, rc) {
 // little inside the true surface) and a tenth of a pixel — not two pixels, which zoomed out on a phone was millimetres
 // and let a rim 1.5 mm under a lid be picked through it
 view.depthTol = (P, objId) => {
+  if (P?.isVector3) P = P.toArray(); // (occluded() hands a Vector3: P[0] on it was undefined, the tolerance NaN, and every hidden edge pickable)
   const o = objId != null && S.doc.objects.find(q => q.id === objId), tt = (o?.brep?.tol || 0) * Math.max(1, ...(o?.scl || [1]).map(Math.abs));
   return Math.max(view.cam.dist * 1e-5, tt * 4, view.worldPerPixel(P) * 0.1, Math.hypot(P[0], P[1], P[2]) * 4e-7); // (the last: float32 meshes far from the origin)
 };

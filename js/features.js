@@ -353,7 +353,20 @@ export const revolve = {
       return best ? 'l:' + best.l.id : null;
     };
     const touchesY = () => { const P = profileGroups(p.pts).flatMap(g => g.regs.flatMap(r => r.outer)); return P.length && Math.min(...P.map(q => Math.abs(q[0]))) < 1e-6; };
-    p.axis ??= lines.find(l => l.construction) ? 'l:' + lines.find(l => l.construction).id : touchesY() ? 'y' : edgeAxis() || 'y';
+    // an axis the profile lies wholly to one side of (one that crosses it cannot be revolved about): the list offers
+    // only those, and the first pick is one of them — not an error with no card to pick another axis on
+    const PP = profileGroups(p.pts).filter(g => g.sk === sk).flatMap(g => g.regs.flatMap(r => r.outer));
+    const fits = ax => {
+      const l = /^l:/.test(ax) ? SK.entById(sk, +ax.slice(2)) : null, a = l ? l.a : [0, 0], d = l ? [l.b[0] - l.a[0], l.b[1] - l.a[1]] : ax === 'x' ? [1, 0] : [0, 1], L = Math.hypot(d[0], d[1]);
+      if (!PP.length || L < 1e-12) return !!PP.length;
+      const vals = PP.map(q => ((q[0] - a[0]) * -d[1] + (q[1] - a[1]) * d[0]) / L);
+      return !(Math.min(...vals) < -1e-6 && Math.max(...vals) > 1e-6);
+    };
+    p._lines = p._lines.filter(x => fits(x.v));
+    if (p.axis == null) {
+      const cands = [...lines.filter(l => l.construction).map(l => 'l:' + l.id), ...(touchesY() ? ['y'] : []), edgeAxis(), 'y', 'x', ...p._lines.map(x => x.v)].filter(Boolean);
+      p.axis = cands.find(fits) || cands[0];
+    }
     if (/^l:/.test(p.axis) && !p._lines.some(x => x.v === p.axis)) { const l = SK.entById(sk, +p.axis.slice(2)); if (l) { const dx = l.b[0] - l.a[0], dy = l.b[1] - l.a[1]; p._lines.push({ v: p.axis, label: `${Math.abs(dy) < 1e-9 ? '↔' : Math.abs(dx) < 1e-9 ? '↕' : '⟋'} ${fmtLen(Math.hypot(dx, dy))}` }); } }
   },
   touch: touchFeature,
@@ -425,7 +438,7 @@ export const bodyBoolean = {
       const res = guard(() => {
         const locals = objs.map(o => K.toLocal(K.worldShape(o), t).clone());
         // many cutters (gear teeth, vents): one cut with all of them is much faster than one cut each
-        if (p.kind === 'subtract' && locals.length > 1) { try { const tc = K.compound(locals), r = t.shape.cut(tc); if (!K.isEmpty(r)) { K.checkBoolean('cut', t.shape, tc, r); return r; } } catch (e) { /* one by one */ } }
+        if (p.kind === 'subtract' && locals.length > 1) { try { const r = K.cutMany(t.shape, locals); if (!K.isEmpty(r)) return r; } catch (e) { /* one by one */ } }
         let s = t.shape; for (const l of locals) s = K.boolean(p.kind, s, l); return s;
       }, 'Boolean failed');
       if (typeof res === 'string') return res;
@@ -587,21 +600,26 @@ export const mirrorOp = {
   prepare(p) {
     p.obj ??= S.ed.faces[0]?.obj ?? selectedObjs()[0]?.id;
     if (p.obj == null) return 'Select a body';
+    // every picked body is mirrored (29 groove bars picked: all 29, not the first one only)
+    p.ids ??= S.ed.faces.length ? [p.obj] : [p.obj, ...selectedObjs().map(o => o.id).filter(id => id !== p.obj)];
     if (S.ed.faces.length && !p.face) { p.face = JSON.parse(JSON.stringify(S.ed.faces[0])); p.plane = 'face'; }
     p._id ??= S.doc.nextId;
   },
-  touch: p => ({ ids: [p.obj], mesh: true }),
+  reserve: 500, // ids kept free for the copies
+  touch: p => ({ ids: p.ids || [p.obj], mesh: true }),
   fields: p => [{ key: 'plane', label: 'Mirror plane', kind: 'choice', options: [['x', 'YZ'], ['y', 'XZ'], ['z', 'XY'], ...(p.face ? [['face', 'Face']] : [])], wide: true }, { key: 'fuse', label: 'Union with original', kind: 'bool' }],
   apply(p) {
-    const o = objById(p.obj), e0 = solidOnly(o); if (e0) return e0;
+    const ids = p.ids || [p.obj], made = [];
     const [n, c] = p.plane === 'face' && p.face ? [p.face.n, p.face.p] : [AX[p.plane], [0, 0, 0]];
-    const res = guard(() => { const w = K.worldShape(o), m = w.clone().mirror(n, c); return p.fuse ? K.toLocal(w.fuse(m), o) : m; }, 'Mirror failed');
-    if (typeof res === 'string') return res;
-    if (p.fuse) K.setShape(o, res);
-    else {
-      const q = newObject(o.name, null, [0, 0, 0], p._id); q.color = o.color; K.setShape(q, res);
-      S.doc.objects.push(q); S.ed.selected = new Set([q.id]); S.ed.active = q.id;
+    if (!p.fuse && S.doc.nextId < p._id + 500) S.doc.nextId = p._id + 500;
+    for (let i = 0; i < ids.length; i++) {
+      const o = objById(ids[i]), e0 = solidOnly(o); if (e0) return ids.length > 1 ? `${o?.name || 'A body'}: ${e0}` : e0;
+      const res = guard(() => { const w = K.worldShape(o), m = w.clone().mirror(n, c); return p.fuse ? K.toLocal(w.fuse(m), o) : m; }, 'Mirror failed');
+      if (typeof res === 'string') return ids.length > 1 ? `${o.name}: ${res}` : res;
+      if (p.fuse) { K.setShape(o, res); made.push(o.id); }
+      else { const q = newObject(o.name, null, [0, 0, 0], p._id + i); q.color = o.color; K.setShape(q, res); S.doc.objects.push(q); made.push(q.id); }
     }
+    S.ed.selected = new Set(made); S.ed.active = made[0] ?? null;
     S.ed.faces = [];
   },
 };
@@ -859,6 +877,16 @@ export const draftOp = {
     const res = guard(() => { try { return K.draft(o.shape, faces, p.angle, M.mul(d, p.neutral), d); } catch (e) { return o.shape.draft(p.angle, () => ({ find: () => faces, delete() {} }), new R.Plane(M.mul(d, p.neutral), x, d)); } },
       round ? `Draft failed on a round wall — its axis must run along the pull direction (+${p.pull.toUpperCase()})` : 'Draft failed');
     if (typeof res === 'string') return res;
+    // a draft only tilts its walls: a face lost, a change bigger than the walls can make, or (walls leaning in from the
+    // base) material added is the kernel failing quietly — as on a wall that runs under an overhang
+    try {
+      const va = Math.abs(K.volume(o.shape)), v = Math.abs(K.volume(res)), k = 'xyz'.indexOf(p.pull), b = K.worldBounds(o);
+      const lo = b ? b[0][k] : null, ext = b ? b[1][k] - b[0][k] : 0, tn = Math.abs(Math.tan(p.angle * Math.PI / 180));
+      const most = faces.reduce((a, f) => a + K.area(f), 0) * tn * Math.max(ext, Math.abs(p.neutral - (lo ?? p.neutral))) * 1.2 + 1e-6 * va;
+      const fromBase = lo != null && p.neutral <= lo + 1e-6 && p.angle > 0;
+      if (res.faces.length < o.shape.faces.length || Math.abs(v - va) > most || (fromBase && v > va + 1e-6 * va))
+        return 'Draft failed — the walls picked run under another part of the body: draft them before adding what overhangs them';
+    } catch (e) {}
     K.setShape(o, res); S.ed.faces = [];
   },
 };
@@ -947,6 +975,13 @@ export const threadOp = {
     }, 'Could not cut this thread');
     if (typeof res === 'string') return res;
     if (K.isEmpty(res)) return 'Result is empty';
+    // a thread only changes the ring it runs in: a result far outside that is the kernel failing quietly (an M16 thread
+    // 140 long left 2,706 mm³ of a 59,820 mm³ spindle) — refused, so a shorter length is tried
+    try {
+      const va = Math.abs(K.volume(o.shape)), v = Math.abs(K.volume(res)), H = internal ? 0.5413 * P : 0.6134 * P;
+      const zone = Math.PI * (R0 * R0 - (R0 - H) ** 2) * L, open = internal ? Math.PI * Math.max(0, R0 * R0 - cy.R * cy.R) * L : 0;
+      if (v < va - zone * 1.1 - open * 1.1 - 1e-3 * va || v > va + zone * 1.1 + 1e-3 * va) return 'Could not cut this thread';
+    } catch (e) {}
     K.setShape(o, res); S.ed.faces = [];
   },
 };
@@ -965,11 +1000,13 @@ function faceFrame(o, f0) {
 }
 // the exact centre a tap means: a round face's circle centre (a boss, a standoff, a screw head), or the
 // middle of a polygon face when the tap is close to it; null when the tap is just a point on the face
-function faceCentre(o, f, tapW, strict) {
+// (how: re-centring the way it was first centred — a half-moon flange centred on its middle is not moved to its
+// arc's centre, which lies on its straight edge, and the hole then off the face)
+function faceCentre(o, f, tapW, strict, how) {
   try {
     const xf = xfFor(o), hit = K.faceAt(o.shape, xf.toL(tapW)); if (!hit) return null;
     const ca = K.circleAxisOf(hit.f);
-    if (ca) {
+    if (ca && how !== 'centroid') {
       const cw = xf.toW(ca.c);
       // a small round face (a boss, a screw head) is centred wherever it is tapped; on a big one (a Ø200 base) only a
       // tap near its middle is — a hole 50 mm off-centre stays where it was tapped
@@ -984,7 +1021,7 @@ function faceCentre(o, f, tapW, strict) {
 // the face moved (an earlier step changed the part): a centred feature re-centres on it, others move with it
 function followCentre(p, before) {
   const o = objById(p.obj);
-  if (p._centred && o) { const fc = faceCentre(o, p.faces[0], p.faces[0].p, true); if (fc) { [p.x, p.y, p.z] = fc.c.map(v => +v.toFixed(9)); return; } }
+  if (p._centred && o) { const fc = faceCentre(o, p.faces[0], p.faces[0].p, true, p._centred); if (fc) { [p.x, p.y, p.z] = fc.c.map(v => +v.toFixed(9)); return; } }
   const d = M.sub(p.faces[0].p, before);
   if (M.len(d) > 1e-9) [p.x, p.y, p.z] = M.add([p.x, p.y, p.z], d).map(v => +v.toFixed(9));
 }
@@ -1116,7 +1153,7 @@ function firstExit(shape, c, n, r, len) {
 }
 // cut every tool at once; a tool that misses the body is fine, an empty result is not
 function cutTools(o, tools, msg) {
-  const res = guard(() => o.shape.cut(K.compound(tools)), msg);
+  const res = guard(() => { try { return K.cutMany(o.shape, tools); } catch (e) { return o.shape.cut(K.compound(tools)); } }, msg); // (overlapping tools: a counterbore's two cylinders)
   if (typeof res === 'string') return res;
   if (K.isEmpty(res)) return 'Result is empty';
   K.setShape(o, res); S.ed.faces = [];

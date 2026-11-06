@@ -108,6 +108,12 @@ export function regenerate(from = 0) {
     try { r = def.apply(rec.params, { handle: null, replay: true }); } catch (err) { console.error(err); r = err.message || 'Failed'; }
     if (typeof r === 'string') r = friendlyError(r, h, i);
     if (typeof r === 'string') { rec.err = r; failed.push(rec); S.doc.objects = cps[i].objects.map(o => cloneObj(o)); S.doc.nextId = cps[i].nextId; }
+    // a part moved or turned among mates: settle them now, with that part held, as when it was done — solved only once
+    // at the end, a linkage's loop was closed by turning the part that had been turned back (a four-bar lost its pose)
+    else if (postSolve && /^(Move|Rotate)$/.test(def.label?.(rec.params) || '') && h.slice(0, i).some(q => q.op === 'F.mateOp' && !q.off)) {
+      S.ed.driven = new Set(def.touch?.(rec.params)?.ids || []);
+      try { postSolve(h.slice(0, i + 1)); } catch (e) { console.warn(e); } finally { S.ed.driven = null; }
+    }
   }
   cps[end] = snapObjs();
   cps.length = end + 1;

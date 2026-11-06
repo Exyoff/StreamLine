@@ -18,7 +18,7 @@ function slots(sk) {
   }
   return out;
 }
-const pt = (sk, ref) => { const e = sk.ents.find(x => x.id === ref.e); if (!e) return null; const kp = keyPoints(e).find(q => q.k === ref.k); return kp ? kp.p : null; };
+const pt = (sk, ref) => { if (ref.e === 0) return [0, 0]; const e = sk.ents.find(x => x.id === ref.e); if (!e) return null; const kp = keyPoints(e).find(q => q.k === ref.k); return kp ? kp.p : null; };
 const ent = (sk, id) => sk.ents.find(x => x.id === id);
 const lineDir = l => [l.b[0] - l.a[0], l.b[1] - l.a[1]];
 const lineDist = (l, p) => { const d = lineDir(l), L = Math.hypot(d[0], d[1]) || 1e-300; return ((p[0] - l.a[0]) * d[1] - (p[1] - l.a[1]) * d[0]) / L; };
