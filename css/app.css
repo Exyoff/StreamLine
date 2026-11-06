@@ -782,6 +782,14 @@ body.sketching #toolsets .tset.on { background: var(--accent-soft); }
 #popover .conrow .cn { flex: 1; }
 #popover .conrow .cdel { width: 34px; height: 34px; background: rgba(255,69,58,.14); color: #ff6b61; }
 
-/* rubber band (double tap and hold, then drag): solid blue to the right (window), dashed green to the left (crossing) */
+/* selection box (cursor + held Multi button): solid blue to the right (window), dashed green to the left (crossing) */
 #band { position: absolute; z-index: 4; pointer-events: none; border: 1.5px solid #3d8bfd; background: rgba(61,139,253,.12); border-radius: 2px; }
 #band.crossing { border: 1.5px dashed #34c759; background: rgba(52,199,89,.10); }
+/* the precision cursor's Multi button: tap toggles Multi-select, hold draws a selection box */
+#curmulti { position: absolute; z-index: 12; bottom: calc(var(--bot) + 72px); width: 76px; height: 76px; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; color: var(--text); touch-action: none; -webkit-user-select: none; user-select: none; }
+#curmulti .ic svg { width: 22px; height: 22px; }
+#curmulti .lb { font: 700 12px var(--font); }
+#curmulti small { font: 600 9.5px var(--font); color: var(--muted); }
+#curmulti.on { background: var(--accent); color: #fff; } #curmulti.on small { color: rgba(255,255,255,.8); }
+#curmulti.held { transform: scale(1.08); box-shadow: 0 0 0 3px var(--accent); }
+#curmulti[hidden] { display: none; }
