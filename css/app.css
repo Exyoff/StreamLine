@@ -406,7 +406,7 @@ body:has(#popover:not([hidden])) #toast { opacity: 0; }
 @media (max-width: 500px) {
   #topbar { gap: 6px; padding-left: calc(var(--sal) + 10px); padding-right: calc(var(--sar) + 10px); }
   /* the op dialog docks at the bottom, above the timeline; the view shifts up to keep the model visible */
-  body.ws-model #lastop { top: auto; bottom: calc(var(--bot) + var(--cmdh) + var(--tlh) + 6px); left: calc(var(--sal) + 86px); right: calc(var(--sar) + 10px); width: auto; max-width: none; max-height: 48%; }
+  body.ws-model #lastop { top: auto; bottom: calc(var(--bot) + var(--cmdh) + var(--tlh) + 6px); left: calc(var(--sal) + 86px); right: calc(var(--sar) + 10px); width: auto; max-width: none; max-height: 36%; } /* (taller, an opened Hole card left the model a sliver under the timeline: it scrolls instead) */
   body.has-lastop #toast { top: calc(var(--topH) + 52px); }
   /* (the sketch tools' card leaves the zoom column on the right free: in a sketch it is nearly always open) */
   #draw-card { left: calc(var(--sal) + 86px); right: calc(var(--sar) + 62px); width: auto; max-width: none; }
@@ -593,6 +593,7 @@ body.has-handle #toast.show { transform: translate(-50%, 0) scale(1); }
 .lookpop { width: min(360px, calc(100vw - 28px)); padding: 0 8px 4px; }
 /* (Look stays short so the model shows under it while you try themes and lighting) */
 .popover:has(.lookpop) { max-height: min(52%, 460px); }
+.popover.more:has(.lookpop) { -webkit-mask-image: linear-gradient(#000 calc(100% - 34px), transparent); mask-image: linear-gradient(#000 calc(100% - 34px), transparent); }
 .lookpop .group { margin-bottom: 10px; }
 /* compact: the four themes in one row, the lights in another (the model stays in view below) */
 .lookpop .swatches { grid-template-columns: repeat(4, 1fr); gap: 6px; }

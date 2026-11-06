@@ -40,7 +40,9 @@ export function keyPoints(e) {
     default: return [];
   }
 }
+// (ref { e: 0, k: 'o' } is the sketch origin: a fixed point dimensions can measure from)
 export function refPoint(sk, ref) {
+  if (ref.e === 0) return [0, 0];
   const e = entById(sk, ref.e); if (!e) return null;
   const kp = keyPoints(e).find(q => q.k === ref.k);
   return kp ? kp.p.slice() : null;
@@ -457,6 +459,7 @@ export function dimValue(sk, d) {
   return d.kind === 'dia' ? 2 * e.r : e.r;
 }
 export function setDimValue(sk, d, v) {
+  if (dimEnts(d).every(id => entById(sk, id)?.proj)) return 'Projected geometry follows the body — change the body instead';
   if (sk.cons && sk.cons.length || sk.ents.some(x => x.t === 'dim' && x.value != null)) {
     const err = editAndSolve(sk, () => {
       d.value = d.kind === 'ang' || d.kind === 'hor' || d.kind === 'ver' ? Math.sign(d.value || 1) * v : v;
@@ -483,9 +486,10 @@ export function setDimValue(sk, d, v) {
     return;
   }
   if (d.kind === 'lin') {
-    const A = refPoint(sk, d.A), B = refPoint(sk, d.B);
+    const [fa, fb] = d.B.e === 0 ? [d.B, d.A] : [d.A, d.B]; // (the origin stays put)
+    const A = refPoint(sk, fa), B = refPoint(sk, fb);
     const L = d2(A, B); if (L < 1e-12) return 'Points coincide';
-    movePoint(sk, d.B, [A[0] + (B[0] - A[0]) * v / L, A[1] + (B[1] - A[1]) * v / L]);
+    movePoint(sk, fb, [A[0] + (B[0] - A[0]) * v / L, A[1] + (B[1] - A[1]) * v / L]);
   } else {
     const e = entById(sk, d.e); if (!e) return 'Missing entity';
     e.r = d.kind === 'dia' ? v / 2 : v;
@@ -513,7 +517,7 @@ export function toDXF(sk) {
 
 // remove constraints / dims that reference deleted entities
 export function pruneCons(sk) {
-  const ids = new Set(sk.ents.map(e => e.id));
+  const ids = new Set(sk.ents.map(e => e.id)); ids.add(0); // (0: the origin)
   sk.cons = (sk.cons || []).filter(c => ids.has(c.a) && (c.b == null || ids.has(c.b)) && (!c.p || ids.has(c.p.e)));
   sk.ents = sk.ents.filter(d => d.t !== 'dim' || (dimEnts(d).every(id => ids.has(id)) && (d.kind === 'lin' || d.kind === 'hor' || d.kind === 'ver' ? refPoint(sk, d.A) && refPoint(sk, d.B) : d.kind === 'pl' ? refPoint(sk, d.P) && entById(sk, d.l)?.t === 'line' : true)));
 }

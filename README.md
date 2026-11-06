@@ -54,7 +54,7 @@ Solids are exact boundary representations computed by **OpenCascade** (the kerne
 
 ## Drawing planes
 - The **Plane** button picks Top / Front / Right, **Offset this plane…** by a typed distance (a sketch 70 mm up for a loft; units and expressions work — an offset plane is named by where it sits: "XZ · Y 40" is the plane y = 40), or **Tilt this plane…** by a typed angle about its X direction (a 15° phone slot).
-- Select a face and tap **Plane here**: the drawing plane goes through the tapped point, touching the face — on a curved wall it is the tangent plane, so a spout or handle can be sketched where it attaches. Typed coordinates on it are the model's own (its origin sits where the plane passes nearest the world origin) — except that a face you look at from below or behind has one axis running against the model's; the toast says which (on a bottom face, the sketch's Y is the model's −Y). Hole patterns always run their rows toward the model's +Y (+Z on a wall), on any face.
+- Select a face and tap **Plane here**: the drawing plane goes through the tapped point, touching the face — on a curved wall it is the tangent plane, so a spout or handle can be sketched where it attaches. Typed coordinates on it are the model's own (its origin sits where the plane passes nearest the world origin) — except that a face you look at from below or behind has one axis running against the model's; the toast says which (on a bottom face, the sketch's Y is the model's −Y). A hole row at Direction 0° runs along the model's +X where the face allows (else +Y), and a grid's rows stack square to it, on any face.
 
 ## Projects and assemblies
 - Every project saves on this device automatically (IndexedDB) and stays there offline. Open **Menu → Projects & assemblies** to open, rename, duplicate or delete projects, or to start a new one.
@@ -198,7 +198,7 @@ Each sketch and feature is a step on the **timeline** along the top, stamped wit
 - **Roll back** to just before or just after a step. The orange marker shows where you are, and steps after it are greyed out and ignored. New work is inserted at the marker; **To end** rolls forward again.
 - **Suppress** or **delete** a step. A step that can no longer be rebuilt turns red and explains why.
 
-Sketches are hidden automatically once features have used all their closed shapes. The **Browser** (sliders button → Browser) lists layers, sketches and bodies, each with an eye toggle.
+Sketches are hidden automatically once features have used all their closed shapes. The **Browser** (the button at the bottom left) lists layers, sketches and bodies, each with an eye toggle.
 Tap a layer to make it active (new sketches and bodies go there), rename it or delete it. Use a row's layer tag to move a sketch or body to another layer.
 The pill in the top-right corner of the view shows the active layer (and how many are hidden); tap it to open the Layers panel.
 **Extrude** and **Push/Pull** start at 0: drag the arrow (snapping gets finer as you zoom in) or type the distance.
@@ -281,7 +281,7 @@ npm run test:e2e     # drives the real UI in an emulated iPhone: Draw → CAD �
 | drag a gizmo | push / pull, extrude, fillet, move or rotate what is selected; tap its value bubble to type |
 | 2-finger tap / 3-finger tap | undo / redo |
 
-One finger never moves the view: only the cube, the zoom bar and two fingers do.
+Outside a sketch one finger never moves the view: only the cube, the zoom bar and two fingers do. In a sketch, a finger dragged on empty space pans.
 
 Keyboard (iPad or desktop): `Tab` `1 2 3` `G R S` `E I F X A` `⌘Z` `⇧⌘Z` `N` `.` and numpad views.
 

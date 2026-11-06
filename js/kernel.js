@@ -314,6 +314,23 @@ export function boolean(kind, a, b) {
   checkBoolean(op, a, b, r);
   return r;
 }
+// one cut with many tools (gear teeth, vents, crossing grooves): the tools go in as a list, not as one compound —
+// a compound of overlapping solids is cut like an exclusive-or, leaving the crossings standing. The tools are kept.
+export function cutMany(shape, tools) {
+  const r = R.GCWithScope();
+  const A = r(new oc.NCollection_List_TopoDS_Shape()), T = r(new oc.NCollection_List_TopoDS_Shape());
+  A.Append(shape.wrapped); for (const t of tools) T.Append(t.wrapped);
+  const b = r(new oc.BRepAlgoAPI_Cut());
+  b.SetArguments(A); b.SetTools(T); b.Build();
+  if (b.HasErrors() || !b.IsDone()) throw new Error('Subtract failed');
+  b.SimplifyResult(true, true, 1e-3);
+  const out = R.cast(b.Shape());
+  let va, vt = 0, v;
+  try { va = Math.abs(volume(shape)); for (const t of tools) vt += Math.abs(volume(t)); v = volume(out); } catch (e) { return out; }
+  const tol = 1e-6 * Math.max(1, va + vt);
+  if (!(v <= va + tol && v >= Math.max(0, va - vt) - tol)) throw new Error(`Subtract failed — the kernel gave a broken result (${v.toFixed(3)} mm³)`);
+  return out;
+}
 export function checkBoolean(op, a, b, r) {
   let va, vb, v;
   try { va = Math.abs(volume(a)); vb = Math.abs(volume(b)); v = volume(r); } catch (e) { return; }

@@ -1381,7 +1381,7 @@ try {
   const brw = await p.evaluate(async () => {
     document.documentElement.style.setProperty('--vvb', '34px');
     const b = document.querySelector('#browser'); let last = null; // (the inset's change slides it a little further: let it settle)
-    for (let i = 0; i < 40; i++) { await new Promise(r => setTimeout(r, 100)); const t = Math.round(b.getBoundingClientRect().top); if (t === last) break; last = t; }
+    for (let i = 0; i < 50; i++) { await new Promise(r => setTimeout(r, 100)); const t = Math.round(b.getBoundingClientRect().top); if (t === last && t >= innerHeight && getComputedStyle(b).visibility === 'hidden') break; last = t; }
     const out = { top: Math.round(b.getBoundingClientRect().top), h: innerHeight, vis: getComputedStyle(b).visibility };
     document.documentElement.style.removeProperty('--vvb'); return out; });
   check(brw.top >= brw.h && brw.vis === 'hidden', `The closed Browser stays out of sight under a home-indicator inset (top ${brw.top} of ${brw.h}, ${brw.vis})`);
@@ -1401,11 +1401,56 @@ try {
     const turn = (id, ang) => { L.S.ed.selected = new Set([id]); L.S.ed.active = id; L.runOp(L.OPS.transform, { mode: 'rotate', axis: 'm', angle: ang }); m.commit(); };
     turn(A, 30); const r1 = { B: ctr(B), C: ctr(C), errs: mine().filter(r => r.err).length };
     turn(B, -50); const r2 = { A: ctr(A), C: ctr(C), errs: mine().filter(r => r.err).length };
+    L.H.resetCache(); L.H.regenerate(0); const r3 = { A: ctr(A), C: ctr(C) }; // (rebuilt from scratch: the poses come back as they were)
     L.S.ed.selected = new Set(); L.refresh();
-    return { r1, r2 };
+    return { r1, r2, r3 };
   });
-  check(fb.r1.B === '90043.3,55' && fb.r1.C === '90086.6,65' && !fb.r1.errs && fb.r2.A === '90046.98,-17.1' && fb.r2.C === '90093.97,-19.2' && !fb.r2.errs,
-    `A four-bar moves as one: turning either link turns the other, the bracket stays on both pins, no conflicts (${JSON.stringify(fb)})`);
+  check(fb.r1.B === '90043.3,55' && fb.r1.C === '90086.6,65' && !fb.r1.errs && fb.r2.A === '90046.98,-17.1' && fb.r2.C === '90093.97,-19.2' && !fb.r2.errs && fb.r3.A === fb.r2.A && fb.r3.C === fb.r2.C,
+    `A four-bar moves as one: turning either link turns the other, the bracket stays on both pins, no conflicts, and a rebuild keeps the pose (${JSON.stringify(fb)})`);
+  // crossing cutters subtracted in one go: the crossings are cut as well (not left standing), and a rebuild agrees
+  const xc = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, m = await import('./js/ops.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }), X1 = 95000;
+    const body = (ents, pt, d, z = 0) => { L.runOp(F.sketchOpNew('xc', XY(z), null, k => ents.forEach(e => F.addEntity(k, e)))); L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt }], distance: d, mode: 'new', target: null }); m.commit(); L.S.ed.sketch = null; return L.S.doc.objects.filter(o => o.shape).at(-1).id; };
+    const T = body([{ t: 'rect', x: X1, y: 0, w: 100, h: 100 }], [X1 + 50, 50], 10), ids = [T];
+    for (let i = 0; i < 5; i++) ids.push(body([{ t: 'rect', x: X1 - 5, y: 10 + i * 18, w: 110, h: 4 }], [X1 + 50, 12 + i * 18], 3, 7));
+    for (let i = 0; i < 5; i++) ids.push(body([{ t: 'rect', x: X1 + 10 + i * 18, y: -5, w: 4, h: 110 }], [X1 + 12 + i * 18, 50], 3, 7));
+    const vol = () => +Math.abs(L.K.volume(L.S.doc.objects.find(o => o.id === T).shape)).toFixed(2);
+    L.S.ed.selected = new Set(ids); L.S.ed.active = T; L.runOp(F.bodyBoolean, { kind: 'subtract' }); m.commit();
+    const v1 = vol(); L.H.resetCache(); L.H.regenerate(0); const v2 = vol();
+    const rec = L.H.hist().find(r => r.op === 'F.bodyBoolean' && r.params.ids?.[0] === T);
+    L.S.ed.selected = new Set(); L.refresh(); return { v1, v2, err: rec?.err || '', others: L.H.hist().filter(r => r.err).map(r => r.label + ': ' + r.err) };
+  });
+  check(xc.v1 === 89200 && xc.v2 === 89200 && !xc.err, `Crossing cutters subtracted at once cut their crossings too, and the step rebuilds (${JSON.stringify(xc)} of 89200)`);
+  // a used profile floating over a recess (the seat's circle at its top) lets a tap through to the new sketch on the
+  // recess floor under it
+  const rcs = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, m = await import('./js/ops.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }), X2 = 97000;
+    L.runOp(F.sketchOpNew('rcB', XY(0), null, k => F.addEntity(k, { t: 'rect', x: X2, y: 0, w: 60, h: 60 }))); L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [X2 + 5, 5] }], distance: 25, mode: 'new', target: null }); m.commit(); L.S.ed.sketch = null;
+    const b = L.S.doc.objects.at(-1).id;
+    L.runOp(F.sketchOpNew('rcSeat', XY(25), { obj: b }, k => F.addEntity(k, { t: 'circle', c: [X2 + 30, 30], r: 22 }))); L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [X2 + 30, 30] }], distance: -3, mode: 'cut', target: b }); m.commit(); L.S.ed.sketch = null;
+    L.runOp(F.sketchOpNew('rcSlot', XY(22), { obj: b }, k => F.addEntity(k, { t: 'rect', x: X2 + 20, y: 26, w: 20, h: 8 }))); m.commit();
+    const slot = L.S.ed.sketch; L.S.ed.sketch = null; L.S.ed.profiles = []; L.S.ed.selected = new Set(); L.refresh(); return { slot };
+  });
+  await p.evaluate(() => StreamLine.view.lookDir([0.3, -0.4, 0.87])); await p.waitForTimeout(700); await frame([97000, 0, 0], [97060, 60, 25]);
+  { const q = await projW([97030, 30, 22]); await tapV(q.x, q.y); }
+  const rcPick = await p.evaluate(() => StreamLine.S.ed.profiles.map(q => q.sk));
+  check(rcPick.length === 1 && rcPick[0] === rcs.slot, `A used profile over a recess lets a tap through to the new sketch on the recess floor (${JSON.stringify(rcPick)} vs ${rcs.slot})`);
+  await p.evaluate(() => { StreamLine.S.ed.profiles = []; StreamLine.refresh(); });
+  // Mirror with several bodies picked mirrors each of them (and rebuilds them); a dimension from the sketch origin
+  // drives a circle's centre
+  const mo = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, m = await import('./js/ops.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }), ids = [], X3 = 98000;
+    for (let i = 0; i < 3; i++) { L.runOp(F.sketchOpNew('mb', XY(0), null, k => F.addEntity(k, { t: 'rect', x: X3 + i * 20, y: 0, w: 10, h: 10 }))); L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [X3 + 5 + i * 20, 5] }], distance: 5, mode: 'new', target: null }); m.commit(); L.S.ed.sketch = null; ids.push(L.S.doc.objects.at(-1).id); }
+    const n0 = L.S.doc.objects.length; L.S.ed.faces = []; L.S.ed.selected = new Set(ids); L.S.ed.active = ids[0];
+    L.runOp(F.mirrorOp, { plane: 'x', fuse: false }); m.commit();
+    const made = L.S.doc.objects.slice(n0).map(o => Math.round(L.K.worldBounds(o)[0][0])).join();
+    let cid; L.runOp(F.sketchOpNew('od', XY(0), null, k => { cid = F.addEntity(k, { t: 'circle', c: [X3 + 30, 20], r: 5 }).id; k.ents.push({ id: ++k.nextEnt, t: 'dim', kind: 'hor', A: { e: 0, k: 'o' }, B: { e: cid, k: 'c' }, value: X3 + 30, at: [X3, 30] }); }));
+    const sk = L.S.ed.sketch, k = L.SK.sketchById(sk), d = k.ents.find(e => e.t === 'dim');
+    L.runOp(F.sketchOp('Set dimension', sk, (k2, q) => L.SK.setDimValue(k2, L.SK.entById(k2, d.id), q.value), [{ key: 'value', label: 'Value', kind: 'len' }]), { value: X3 + 45 }); m.commit();
+    const cx = L.SK.entById(L.SK.sketchById(sk), cid).c[0]; L.S.ed.sketch = null; L.S.ed.selected = new Set(); L.refresh();
+    return { made, cx };
+  });
+  check(mo.made === '-98010,-98030,-98050' && Math.abs(mo.cx - 98045) < 1e-6, `Mirror of three picked bodies mirrors all three (${mo.made}); a dimension from the sketch origin drives a centre (${mo.cx})`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
