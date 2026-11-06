@@ -548,6 +548,10 @@ export function explodeRect(sk, e) {
   const c = rectCorners(e);
   const lines = [0, 1, 2, 3].map(i => ({ id: (sk.nextEnt = (sk.nextEnt || 1000) + 1), t: 'line', a: c[i].slice(), b: c[(i + 1) % 4].slice() }));
   sk.ents.splice(idx, 1, ...lines);
+  // (dimensions on its corners now measure the lines' ends: corner i is line i's start)
+  const remap = r => { if (r && r.e === e.id && /^p\d$/.test(r.k)) { r.e = lines[+r.k[1]].id; r.k = 'a'; } };
+  for (const d of sk.ents) if (d.t === 'dim') { remap(d.A); remap(d.B); remap(d.P); }
+  for (const c0 of sk.cons || []) remap(c0.p);
   return lines;
 }
 export function findCorner(sk, p, tol) {

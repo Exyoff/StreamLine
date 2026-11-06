@@ -574,7 +574,7 @@ function dimTap(s, raw, wpp) {
       const cs = SK.rectCorners(e), segD = (a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy, t = Math.max(0, Math.min(1, ((raw[0] - a[0]) * dx + (raw[1] - a[1]) * dy) / L2)); return Math.hypot(a[0] + dx * t - raw[0], a[1] + dy * t - raw[1]); };
       let best = 0; for (let i = 1; i < 4; i++) if (segD(cs[i], cs[(i + 1) % 4]) < segD(cs[best], cs[(best + 1) % 4])) best = i;
       const [ka, kb] = [['p0', 'p1'], ['p1', 'p2'], ['p3', 'p2'], ['p0', 'p3']][best];
-      return dimPend({ kind: best % 2 === 0 ? 'hor' : 'ver', A: { e: e.id, k: ka }, B: { e: e.id, k: kb } });
+      return dimPend({ kind: best % 2 === 0 ? 'hor' : 'ver', A: { e: e.id, k: ka }, B: { e: e.id, k: kb }, rect: e.id, at: raw.slice() }, 'Tap where it goes · a point → its distance to this side');
     }
     if (pt && !(e && e.t === 'line' && !['a', 'b'].includes(pt.k) && pt.e === e.id)) return dimPend({ kind: 'pt', A: pt }, 'Now a second point, or a line');
     if (e && e.t === 'line') return dimPend({ kind: 'lin', A: { e: e.id, k: 'a' }, B: { e: e.id, k: 'b' }, line: e.id });
@@ -584,7 +584,19 @@ function dimTap(s, raw, wpp) {
   if (P.kind === 'pt') {
     if (pt && !(pt.e === P.A.e && pt.k === P.A.k)) return dimPend({ kind: 'pp', A: P.A, B: pt });
     if (e && e.t === 'line' && e.id !== P.A.e) { const Pp = SK.refPoint(s, P.A); if (Pp && Math.abs(SK.lineSide(e, Pp)) > 1e-9) return dimPend({ kind: 'pl', P: P.A, l: e.id }); }
+    // a rectangle's side: the rectangle becomes four square lines (a rectangle is one shape, with no line to measure to)
+    if (e && e.t === 'rect') {
+      const A0 = { ...P.A }, rid = e.id, got = rectToLinesAt(rid, raw);
+      if (got) { const k2 = sk(), A1 = A0.e === rid && /^p\d$/.test(A0.k) ? { e: got.ids[+A0.k[1]], k: 'a' } : A0, Pp = SK.refPoint(k2, A1), l = SK.entById(k2, got.side);
+        if (Pp && l && Math.abs(SK.lineSide(l, Pp)) > 1e-9) return dimPend({ kind: 'pl', P: A1, l: got.side }); }
+    }
     toast('Tap a second point, or a line'); return;
+  }
+  // a rectangle's side, then a point (not one of its own corners): the point's distance to that side — the
+  // rectangle becomes four square lines to measure to
+  if (P.rect != null && pt && pt.e !== P.rect) {
+    const got = rectToLinesAt(P.rect, P.at);
+    if (got) { const k2 = sk(), Pp = SK.refPoint(k2, pt), l = SK.entById(k2, got.side); if (Pp && l && Math.abs(SK.lineSide(l, Pp)) > 1e-9) return dimPend({ kind: 'pl', P: pt, l: got.side }); }
   }
   if (P.line != null && !round) {
     if (e && e.t === 'line' && e.id !== P.line && !pt) {
@@ -729,9 +741,11 @@ export function coincidentTap(x, y) {
 // a rectangle's side for a line constraint (Parallel, Perpendicular, Equal…): the rectangle becomes four lines that
 // stay square (Horizontal / Vertical), and the side under the finger is the one picked — the whole rectangle
 // could not be made parallel to anything
-export function rectSideAt(rid, x, y) {
+export function rectSideAt(rid, x, y) { return rectToLinesAt(rid, planePt(x, y))?.side ?? null; }
+// (the same from a point in the sketch: the side nearest it)
+function rectToLinesAt(rid, raw) {
   const s = sk(), e = s && SK.entById(s, rid); if (!e || e.t !== 'rect') return null;
-  const raw = planePt(x, y), cs = SK.rectCorners(e);
+  const cs = SK.rectCorners(e);
   const segD = (a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1e-300, t = Math.max(0, Math.min(1, ((raw[0] - a[0]) * dx + (raw[1] - a[1]) * dy) / L2)); return Math.hypot(a[0] + dx * t - raw[0], a[1] + dy * t - raw[1]); };
   let side = 0; for (let i = 1; i < 4; i++) if (segD(cs[i], cs[(i + 1) % 4]) < segD(cs[side], cs[(side + 1) % 4])) side = i;
   let got = null;
@@ -739,7 +753,7 @@ export function rectSideAt(rid, x, y) {
     const r = SK.entById(k, rid); if (!r) return 'Rectangle missing';
     const lines = SK.explodeRect(k, r); k.cons = k.cons || [];
     lines.forEach((l, i) => k.cons.push({ id: ++k.nextEnt, t: i % 2 === 0 ? 'h' : 'v', a: l.id }));
-    got = lines[side].id;
+    got = { side: lines[side].id, ids: lines.map(l => l.id) };
   }));
   return got;
 }
