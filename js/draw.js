@@ -561,8 +561,11 @@ function dimPend(P, hint) { st.dimPend = P; if (hint) toast(hint, 1600); view.re
 function dimTap(s, raw, wpp) {
   const r = SK.snapPoint(s, raw, { pxTol: 14, wpp, refPts: [] });
   // (the origin can be measured from: a sketch can be fully dimensioned without Fix)
-  const pt = r.ref && r.kind !== 'Mid' && SK.refPoint(s, r.ref) ? r.ref : r.kind === 'Origin' ? { e: 0, k: 'o' } : null;
+  let pt = r.ref && r.kind !== 'Mid' && SK.refPoint(s, r.ref) ? r.ref : r.kind === 'Origin' ? { e: 0, k: 'o' } : null;
   const e = SK.pickEntity(s, raw, 12 * wpp), P = st.dimPend;
+  // (a short line zoomed out: its ends' snap zones met in the middle and the line itself could not be picked — the
+  // middle third of a line picks the line)
+  if (pt && e && e.t === 'line' && pt.e === e.id && (pt.k === 'a' || pt.k === 'b') && SK.d2(raw, SK.refPoint(s, pt)) > SK.d2(e.a, e.b) / 3) pt = null;
   // (a circle or arc when the tap is nearer its rim than its centre: on a small one the centre's snap would win)
   const round = e && (e.t === 'circle' || e.t === 'arc') && Math.abs(SK.d2(raw, e.c) - e.r) < SK.d2(raw, e.c) ? e : null;
   if (!P) {

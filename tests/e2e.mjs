@@ -1451,6 +1451,26 @@ try {
     return { made, cx };
   });
   check(mo.made === '-98010,-98030,-98050' && Math.abs(mo.cx - 98045) < 1e-6, `Mirror of three picked bodies mirrors all three (${mo.made}); a dimension from the sketch origin drives a centre (${mo.cx})`);
+  // a part that hangs only off a part being turned rides along with it: a jaw sliding on a body that swivels on a base
+  // keeps its place on the body (it was slid along its ways), and a rebuild agrees
+  const sw = await p.evaluate(async () => {
+    const L = StreamLine, F = L.F, m = await import('./js/ops.js'), XY = z => ({ o: [0, 0, z], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }), X4 = 99000;
+    const body = (ents, pt, d, z = 0) => { L.runOp(F.sketchOpNew('sw', XY(z), null, k => ents.forEach(e => F.addEntity(k, e)))); L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt }], distance: d, mode: 'new', target: null }); m.commit(); L.S.ed.sketch = null; return L.S.doc.objects.filter(o => o.shape).at(-1).id; };
+    const G = body([{ t: 'rect', x: X4 - 30, y: -30, w: 60, h: 60 }, { t: 'circle', c: [X4, 0], r: 3 }], [X4 - 25, -25], 5);
+    const B = body([{ t: 'rect', x: X4 - 10, y: -10, w: 100, h: 20 }, { t: 'circle', c: [X4, 0], r: 3 }], [X4 + 50, 0], 5, 5);
+    const J = body([{ t: 'rect', x: X4 + 55, y: -5, w: 10, h: 10 }], [X4 + 60, 0], 5, 10);
+    L.runOp(F.mateOp, { a: { obj: B, p: [X4 + 3, 0, 7], n: [-1, 0, 0], w: -(X4 + 3), planar: false }, b: { obj: G, p: [X4 + 3, 0, 2], n: [-1, 0, 0], w: -(X4 + 3), planar: false }, gap: 0, align: 'face' }); m.commit();
+    L.runOp(F.mateOp, { a: { obj: J, n: [0, 0, -1], p: [X4 + 60, 0, 10], planar: true }, b: { obj: B, n: [0, 0, 1], p: [X4 + 50, 0, 10], planar: true }, gap: 0 }); m.commit();
+    const ob = id => L.S.doc.objects.find(o => o.id === id);
+    // (the jaw's centre in the body's own frame: the body turns about Z only)
+    const local = () => { const bj = L.K.worldBounds(ob(J)), w = [0, 1, 2].map(k => (bj[0][k] + bj[1][k]) / 2), x = ob(B); const r = x.rot[2] * Math.PI / 180, d = [w[0] - x.loc[0], w[1] - x.loc[1]]; return [d[0] * Math.cos(r) + d[1] * Math.sin(r), -d[0] * Math.sin(r) + d[1] * Math.cos(r)].map(v => +v.toFixed(3)).join(); };
+    const before = local();
+    L.S.ed.selected = new Set([B]); L.S.ed.active = B; L.runOp(L.OPS.transform, { mode: 'rotate', axis: 'm', angle: 30 }); m.commit();
+    const after = local(), turned = +(+ob(B).rot[2]).toFixed(3);
+    L.H.resetCache(); L.H.regenerate(0); const rebuilt = local();
+    L.S.ed.selected = new Set(); L.refresh(); return { before, after, rebuilt, turned };
+  });
+  check(sw.turned === 30 && sw.after === sw.before && sw.rebuilt === sw.before, `A part mated onto a turned part rides along with it, and a rebuild agrees (${JSON.stringify(sw)})`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked

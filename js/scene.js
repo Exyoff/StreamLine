@@ -15,6 +15,11 @@ export function objMatrix(o) {
   const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(o.rot[0] * D2R, o.rot[1] * D2R, o.rot[2] * D2R, EULER_ORDER));
   return new THREE.Matrix4().compose(new THREE.Vector3(...o.loc), q, new THREE.Vector3(...o.scl));
 }
+// a part placed by a matrix (its scale kept)
+export function setObjMatrix(o, m) {
+  const pos = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3(); m.decompose(pos, q, sc);
+  o.loc = pos.toArray(); o.rot = eulerFromMatrix(new THREE.Matrix4().makeRotationFromQuaternion(q));
+}
 export function eulerFromMatrix(m) {
   const e = new THREE.Euler().setFromRotationMatrix(m, EULER_ORDER);
   // float noise from matrix round trips (−59.99999999999999°) back to the clean angle

@@ -3,7 +3,7 @@ import { S, emit, objById, selectedObjs, isShown } from './state.js';
 import * as SK from './sketch.js';
 import * as M from './mesh.js';
 import { toPolys, boolean, polysToMesh } from './csg.js';
-import { newObject, xfFor, xfOfMatrix, worldVerts, turnObject, turnAbout } from './scene.js';
+import { newObject, xfFor, xfOfMatrix, worldVerts, turnObject, turnAbout, objMatrix, setObjMatrix } from './scene.js';
 import { defSize } from './operators.js';
 import { fmtLen } from './units.js';
 
@@ -1486,6 +1486,24 @@ export function mateLoop(list, p) {
   return false;
 }
 // re-solve every mate in the history (after any edit), in order, twice so chains of mates settle
+// parts that hang only off parts being moved (a vise's sliding jaw on its body, the screws in the jaw) ride along
+// with them, rigidly, before the mates are solved: solved from where they were, a jaw on a body swivelled 30° was
+// slid along its ways (an opening of 100 became 83.5). S.ed.drivenFrom: every part's placement before the move.
+function carryMated(ms) {
+  const from = S.ed.drivenFrom, driven = S.ed.driven; if (!from?.size || !driven?.size) return;
+  const D = new Map();
+  for (const id of driven) { const o = objById(id), m0 = from.get(id); if (o && m0) D.set(id, objMatrix(o).multiply(m0.clone().invert())); }
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const o of S.doc.objects) {
+      if (D.has(o.id) || !from.has(o.id)) continue;
+      const own = ms.filter(r => r.params.a.obj === o.id);
+      if (!own.length || !own.every(r => D.has(r.params.b.obj))) continue;
+      const d = D.get(own[0].params.b.obj);
+      setObjMatrix(o, d.clone().multiply(from.get(o.id))); D.set(o.id, d); grew = true;
+    }
+  }
+}
 export function solveMates(recs) {
   let ms = recs.filter(r => r.op === 'F.mateOp' && !r.off && (!r.err || r.conflict));
   if (!ms.length) return;
@@ -1502,6 +1520,7 @@ export function solveMates(recs) {
   // mate that contradicts them is the one left unsatisfied (and flagged), not the hinge that was there first
   const solve = r => { try { solveMate(r.params); } catch (e) { /* keep the part where it is */ } };
   const solveAll = list => { for (let pass = 0; pass < 2; pass++) list.forEach((r, i) => { solve(r); for (let j = i - 1; j >= 0; j--) if (list[j].params.a.obj === r.params.a.obj) solve(list[j]); }); };
+  carryMated(ms);
   solveAll(ms);
   closeLoops(ms, solveAll);
   // a mate left unsatisfied fights another one: say so on its step (red in History) instead of failing silently
