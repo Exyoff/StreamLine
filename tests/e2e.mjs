@@ -1535,6 +1535,17 @@ try {
     return { win, cross, multi };
   });
   check(rb.win === 2 && rb.cross === 3 && rb.multi, `The cursor's Multi button: held, a selection box — right takes the curves inside (${rb.win}), left those it touches (${rb.cross}); tapped, Multi-select on (${rb.multi})`);
+  // double tap, hold and drag: the camera moves (pans) — its angle and zoom stay
+  { await p.evaluate(() => { StreamLine.S.ed.selected = new Set(); StreamLine.refresh(); }); await p.waitForTimeout(300);
+    const camS = () => p.evaluate(() => { const c = StreamLine.view.cam; return { a: [c.yaw, c.pitch, c.dist].map(v => +v.toFixed(5)).join(), t: c.target.toArray() }; });
+    const dT = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1 }] });
+    // (an empty spot: nothing under it, no handle or label)
+    const spot = await p.evaluate(() => { const L = StreamLine; for (let y = 200; y < 480; y += 20) for (let x = 120; x < 320; x += 20) if (!L.view.pickObject(x, y) && !L.view.pickObject(x + 120, y + 60)) return { x, y }; return { x: 200, y: 330 }; });
+    const c0 = await camS(), x0 = spot.x, y0 = top + spot.y;
+    await dT('touchStart', x0, y0); await dT('touchEnd'); await p.waitForTimeout(120); await dT('touchStart', x0, y0); await p.waitForTimeout(120);
+    for (let i = 1; i <= 8; i++) { await dT('touchMove', x0 + i * 10, y0 + i * 5); await p.waitForTimeout(25); } await dT('touchEnd'); await p.waitForTimeout(400);
+    const c1 = await camS(), moved = Math.hypot(...c1.t.map((v, i) => v - c0.t[i]));
+    check(c1.a === c0.a && moved > 1e-3, `Double tap, hold and drag moves the camera without turning or zooming it (moved ${moved.toFixed(3)}; ${c0.a} → ${c1.a})`); }
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked

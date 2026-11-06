@@ -705,7 +705,7 @@ function renderFrame() {
 // ---------- pointer / gestures ----------
 function bindPointer() {
   const pts = new Map();
-  let mode = null, startT = 0, moved = false, pinch = null, multiTap = null;
+  let mode = null, startT = 0, moved = false, pinch = null, multiTap = null, lastTap = null; // (lastTap: double tap, hold and drag pans the view)
   // the selection rectangle (rubber band), drawn by the app while the precision cursor's Multi button is held: dragged
   // right it takes what lies wholly inside (window), dragged left whatever it touches (crossing), as in AutoCAD and Fusion
   const bandEl = document.createElement('div'); bandEl.id = 'band'; bandEl.hidden = true; container.appendChild(bandEl);
@@ -732,11 +732,14 @@ function bindPointer() {
     pts.set(e.pointerId, { ...p, sx: p.x, sy: p.y, t: e.timeStamp || performance.now() });
     if (pts.size === 1) {
       moved = false; startT = performance.now(); multiTap = null;
+      // the second tap of a double tap, held: dragged, it moves the camera (pans), it never turns it
+      const again = lastTap && performance.now() - lastTap.t < 380 && Math.hypot(p.x - lastTap.x, p.y - lastTap.y) < 40; lastTap = null;
       if (e.pointerType === 'mouse' && (e.button === 1 || e.button === 2 || e.shiftKey)) mode = 'pan';
       // a small control drawn over the view (a value bubble, a dimension, a constraint glyph) comes first — it sits on
       // top of the curves' drag points — and held or slid a little it is still a tap on it
       else if (view.handlers.pressTarget?.(p.x, p.y)) mode = 'target';
       else if (view.handlers.dragStart && view.handlers.dragStart(p.x, p.y, e)) mode = 'gizmo';
+      else if (again && e.pointerType !== 'mouse') mode = 'pan?';
       else { mode = 'pending'; if (e.pointerType !== 'mouse') holdT = setTimeout(() => startCursor(p.x, p.y), 320); }
     } else if (pts.size === 2) {
       clearTimeout(holdT);
@@ -758,6 +761,7 @@ function bindPointer() {
     const thr = e.pointerType === 'mouse' ? 3 : 8;
     if (Math.hypot(q.x - p.sx, q.y - p.sy) > thr) { moved = true; if (multiTap && pts.size >= 2) multiTap = null; }
     p.x = q.x; p.y = q.y;
+    if (mode === 'pan?' && moved) mode = 'pan';
     if (mode === 'pending' && moved) { clearTimeout(holdT); if (cursorOn() && !view.cam.lock2D) { mode = 'cursor'; view.handlers.cursorStart(p.sx, p.sy); } else mode = view.cam.lock2D ? 'pan' : 'none'; }
     // (a press on a dimension's value that slides moves the value: the dimension line follows)
     if (mode === 'target' && moved && view.handlers.targetDrag?.('start', p.sx, p.sy)) mode = 'tdrag';
@@ -780,8 +784,9 @@ function bindPointer() {
     // a quick tap whose hold timer fired late (the phone was busy) is still a tap: the events' own times decide
     if (mode === 'cursor' && !moved && e.type === 'pointerup' && pts.size === 0 && (e.timeStamp || performance.now()) - p.t < 320) { view.handlers.cursorCancel && view.handlers.cursorCancel(); mode = 'pending'; }
     if (mode === 'cursor') { mode = null; if (e.type === 'pointerup') view.handlers.cursorEnd(); else view.handlers.cursorCancel(); }
+    if (mode === 'pan?') mode = pts.size === 0 && e.type === 'pointerup' ? 'pending' : null; // (no drag: an ordinary second tap)
     if (mode === 'gizmo') { const r = view.handlers.dragEnd(); mode = null; if (r === 'tap' && e.type === 'pointerup' && pts.size === 0) view.handlers.tap && view.handlers.tap(p.x, p.y, e); } // (a press on a gizmo that never dragged is a tap)
-    else if (mode === 'pending' && pts.size === 0 && e.type === 'pointerup') { mode = null; view.handlers.tap && view.handlers.tap(p.x, p.y, e); }
+    else if (mode === 'pending' && pts.size === 0 && e.type === 'pointerup') { mode = null; lastTap = { x: p.x, y: p.y, t: performance.now() }; view.handlers.tap && view.handlers.tap(p.x, p.y, e); }
     else if (mode === 'target' && pts.size === 0 && e.type === 'pointerup') { mode = null; view.handlers.tap && view.handlers.tap(p.sx, p.sy, e); }
     else if (mode === 'tdrag') { mode = null; view.handlers.targetDrag(e.type === 'pointerup' ? 'end' : 'cancel', p.x, p.y); }
     if (pts.size === 0) {
