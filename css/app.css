@@ -77,6 +77,16 @@
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; height: 100%; height: var(--fullH, 100dvh); background: var(--bg); transition: background .3s; color: var(--text); font: 15px/1.35 var(--font); overflow: hidden; overscroll-behavior: none; -webkit-font-smoothing: antialiased; }
 body { position: fixed; inset: 0; bottom: auto; height: 100%; height: var(--fullH, 100dvh); -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-text-size-adjust: 100%; }
+/* Home Screen app on iOS 27: 100dvh comes out short by exactly the status bar's height (812 of 874 on an iPhone 17),
+   leaving a dark band under the bottom bar. The large-viewport unit is the whole screen there. Taken in standalone
+   mode (the media query, or the app's own check: html.fsapp) and never below what the app measured itself. */
+@supports (height: 100lvh) {
+  @media (display-mode: standalone) { html, body { height: max(var(--fullH, 0px), 100lvh); } }
+  html.fsapp, html.fsapp body { height: max(var(--fullH, 0px), 100lvh); }
+}
+/* (and the page is what panels docked to the bottom — keypad, Browser, sheet — measure from: there the layout viewport
+   itself can be the short one) */
+html.fsapp body { contain: layout; }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; touch-action: manipulation; }
 svg { width: 22px; height: 22px; display: block; }
 input, select { font: inherit; }
