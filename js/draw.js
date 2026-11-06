@@ -878,7 +878,7 @@ export function cardContent() {
     // Area by points: Total ends it with the result (Done threw the points away), as does tapping the first point again
     const total = t === 'area' && c?.stage === 'collect' && c.pts.length >= 3 ? btn('Total', () => { reportArea(c.pts, c.ptsW); endInquiry(); }, 'primary') : null;
     const discards = INQUIRY.has(t) && c && (c.pts?.length || c.base);
-    return h('div', {}, title(name, (t === 'offset' ? (c?.stage === 'side' ? 'tap the side to offset to' : 'tap a curve to offset') : t === 'area' && c?.stage === 'collect' ? (c.pts.length >= 3 ? 'tap more corners, or Total' : 'tap the corners') : pr.text.replace(/:$/, '').replace(/ or$/, ''))),
+    return h('div', {}, title(name, (t === 'move' && S.ed.drawSel.size && c?.stage === 'base' ? 'drag an arrow (X or Y) from their middle, or tap a base point' : t === 'offset' ? (c?.stage === 'side' ? 'tap the side to offset to' : 'tap a curve to offset') : t === 'area' && c?.stage === 'collect' ? (c.pts.length >= 3 ? 'tap more corners, or Total' : 'tap the corners') : pr.text.replace(/:$/, '').replace(/ or$/, ''))),
       offF,
       pr.options && pr.options.length ? h('div', { class: 'btnrow', style: 'justify-content:flex-start;flex-wrap:wrap' }, ...pr.options.map(([l, k]) => btn(l, () => typed(k)))) : null,
       h('div', { class: 'btnrow' }, total, btn(discards ? 'Cancel' : 'Done', quit, total ? '' : 'primary')));

@@ -44,6 +44,9 @@ export function initGizmo() {
 function kind() {
   const last = getLast();
   if (last && last.handle) return 'handle';
+  // the sketch Move command with curves picked: arrows along the sketch's X and Y from their middle (no base point
+  // to tap — on a zoomed-out sketch a point was hard to hit)
+  if (S.ed.tool === 'move' && Draw.curveCmd?.() && skSel()) return 'skmove';
   if (S.ed.workspace !== 'model' || S.ed.mode !== 'object' && !['move', 'rotate', 'scale'].includes(S.ed.tool)) return null;
   if (['move', 'rotate', 'scale'].includes(S.ed.tool)) {
     if (S.ed.mode === 'object' && S.ed.pick && S.ed.pick !== 'solid' && !OPS.subSelection()) return null;
@@ -58,6 +61,15 @@ function kind() {
   return null;
 }
 const objLinked = id => !!S.doc.objects.find(o => o.id === id)?.link;
+// the open sketch and the middle of its picked curves (world), for the sketch Move gizmo
+function skSel() {
+  const k = SK.sketchById(S.ed.editingSketch) || SK.activeSketch(); if (!k) return null;
+  const P = [...S.ed.drawSel].map(id => SK.entById(k, id)).filter(Boolean).flatMap(e => SK.entPolyline(e).pts); if (!P.length) return null;
+  const xs = P.map(q => q[0]), ys = P.map(q => q[1]);
+  return { k, c: SK.toW(k.plane, [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2]) };
+}
+// a sketch direction's colour: the world axis it runs along (red X, green Y, blue Z)
+const axisCol = v => AX.reduce((b, a) => (Math.abs(M.dot(a.v, v)) > Math.abs(M.dot(b.v, v)) ? a : b)).col;
 // where a selection gizmo sits and points
 function preHandle(k) {
   if (k === 'pp') { const f = S.ed.faces[0]; return { p: f.p, dir: M.norm(f.n) }; }
@@ -98,6 +110,24 @@ function rebuild(k) {
     const base = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 8), m);
     g.add(shaft, head, base); root.add(g);
     parts.push({ id: 'handle', obj: g, mats: [m], col: new THREE.Color('#ffb23f') });
+    return;
+  }
+  if (k === 'skmove') {
+    const pl = skSel().k.plane;
+    for (const [kk, v] of [['u', pl.u], ['v', pl.v]]) {
+      const a = { k: kk, v, col: axisCol(v) }, m = mat(a.col), g = new THREE.Group();
+      g.quaternion.setFromUnitVectors(UPY, new THREE.Vector3(...v));
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.8, 8), m); shaft.position.y = 0.5;
+      const head = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.24, 16), m); head.position.y = 1.0;
+      g.add(shaft, head); root.add(g);
+      parts.push({ id: 'axis-' + kk, axis: a, obj: g, mats: [m], col: new THREE.Color(a.col) });
+    }
+    const ms = mat(axisCol(pl.n), 0.55), sq = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.2), ms);
+    sq.position.copy(new THREE.Vector3(...pl.u).add(new THREE.Vector3(...pl.v)).multiplyScalar(0.33));
+    sq.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(...pl.n)); root.add(sq);
+    parts.push({ id: 'plane-sk', normal: pl.n, u: pl.u, w: pl.v, at: 0.33, obj: sq, mats: [ms], col: new THREE.Color(axisCol(pl.n)) });
+    const mc = mat('#ffffff', 0.85), c = new THREE.Mesh(new THREE.RingGeometry(0.11, 0.15, 32), mc);
+    root.add(c); parts.push({ id: 'center', obj: c, mats: [mc], col: new THREE.Color('#ffffff'), billboard: true });
     return;
   }
   for (const a of AX) {
@@ -154,6 +184,7 @@ function pivotAndScale() {
     return { p, s: view.worldPerPixel(p) * PX * 0.9 };
   }
   if (k === 'pp' || k === 'ext' || k === 'fil') { const h = preHandle(k); return h ? { p: h.p, s: view.worldPerPixel(h.p) * PX * (k === 'fil' ? 0.55 : 0.8), dir: h.dir } : null; }
+  if (k === 'skmove') { const q = skSel(); return q ? { p: q.c, s: view.worldPerPixel(q.c) * PX } : null; }
   const p = OPS.computePivot();
   return p ? { p, s: view.worldPerPixel(p) * PX } : null;
 }
@@ -161,7 +192,7 @@ function pivotAndScale() {
 function update() {
   if (!drag) valueBubble = null; // (kept while a press on it is still deciding between a tap and a drag)
   const k = kind();
-  const kk = k + '|' + (k === 'handle' ? getLast().def.label(getLast().params) : '');
+  const kk = k + '|' + (k === 'handle' ? getLast().def.label(getLast().params) : k === 'skmove' ? skSel()?.k.id + ':' + skSel()?.k.plane.n.join() : '');
   if (kk !== key) { key = kk; rebuild(k); }
   readout && view.label(readout.world, readout.text, 'readout');
   if (!k) { root.visible = false; return; }
@@ -307,7 +338,20 @@ function dragStart(x, y) {
     return handleDrag(x, y, part, true);
   }
   if (k === 'handle') return handleDrag(x, y, part, false);
+  if (k === 'skmove') return skMoveDrag(x, y, part);
   return transformDrag(x, y, part, k);
+}
+// the picked curves move live along an arrow (or freely in the sketch's plane); the card keeps the amounts to type
+function skMoveDrag(x, y, part) {
+  const q = skSel(); if (!q) return false;
+  const k = q.k, ids = [...S.ed.drawSel], pl = k.plane;
+  const def = F.sketchOp('Move', k.id, (kk, p) => { const r = SK.transformEntities(kk, ids, { kind: 'move', d: [p.dx || 0, p.dy || 0] }); if (typeof r === 'string') return r; },
+    [{ key: 'dx', label: 'Move X', kind: 'len' }, { key: 'dy', label: 'Move Y', kind: 'len' }]);
+  if (!runOp(def, { dx: 0, dy: 0 }, { interactive: true })) return false;
+  drag = { part, k: 'skmove', pivot: q.c, pl, x0: x, y0: y };
+  if (part.axis) drag.t0 = axisParam(x, y, q.c, part.axis.v);
+  else drag.p0 = planePoint(x, y, q.c, pl.n);
+  view.render(); return true;
 }
 function handleDrag(x, y, part, created) {
   {
@@ -355,6 +399,15 @@ function dragMove(x, y) {
     if (h.min != null) v = Math.max(h.min, v);
     updateOp({ [h.key]: v });
     readout = { world: M.add(h.origin, M.mul(h.dir, v)), text: `${getLast().def.label(getLast().params)} ${fmtLen(v)}` };
+    view.render(); return;
+  }
+  if (drag.k === 'skmove') {
+    const pl = drag.pl, sn = v => (snapOn() ? stepSnap(v, S.settings.snapStep) : v);
+    let d2;
+    if (drag.part.axis) { const t = axisParam(x, y, pv, drag.part.axis.v); if (t == null || drag.t0 == null) return; const a = sn(t - drag.t0); d2 = drag.part.axis.k === 'u' ? [a, 0] : [0, a]; }
+    else { const p = planePoint(x, y, pv, pl.n); if (!p || !drag.p0) return; const dw = M.sub(p, drag.p0); d2 = [sn(M.dot(dw, pl.u)), sn(M.dot(dw, pl.v))]; }
+    updateOp({ dx: d2[0], dy: d2[1] });
+    readout = { world: M.add(pv, M.add(M.mul(pl.u, d2[0]), M.mul(pl.v, d2[1]))), text: drag.part.axis ? `${drag.part.axis.k === 'u' ? 'X' : 'Y'} ${fmtLen(drag.part.axis.k === 'u' ? d2[0] : d2[1])}` : `Δ X ${fmtLen(d2[0], false)}  Y ${fmtLen(d2[1], false)}` };
     view.render(); return;
   }
   let params = {};
