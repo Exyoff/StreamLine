@@ -41,6 +41,7 @@ const standalone = () => !!navigator.standalone || matchMedia('(display-mode: st
 // background under the bottom bar. (While typing the keyboard is not the page getting shorter: keep the height.)
 function fitStandalone() {
   const de = document.documentElement;
+  de.classList.toggle('fsapp', standalone());
   if (!standalone()) { de.style.removeProperty('--fullH'); return; }
   if (/^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || '') && de.style.getPropertyValue('--fullH')) return;
   const portrait = innerHeight >= innerWidth, sh = portrait ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
