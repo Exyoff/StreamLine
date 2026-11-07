@@ -579,9 +579,26 @@ export function polyPrism(P, v) {
   return R.basicFaceExtrusion(R.makeFace(R.assembleWire(es)), vec(v));
 }
 export const compound = shapes => shapes.length === 1 ? shapes[0] : R.makeCompound(shapes);
+// a helix about axis (c, d) as one wire of edges of at most `per` turns, all on one cylinder. OCCT approximates each
+// edge's 3D curve with a bounded number of spans: replicad's single-edge helix drifts past ~30 turns (a 40-turn
+// sweep lost 13% of its volume, 50 turns came out invalid, 80 crashed) — an M3 thread 20 mm long is 40 turns.
+export function helixWire(pitch, length, radius, c, d, lefthand = false, per = 8) {
+  const [r, gc] = R.localGC();
+  try {
+    const surf = new oc.Geom_CylindricalSurface(r(new oc.gp_Ax3(r(new oc.gp_Pnt(c[0], c[1], c[2])), r(new oc.gp_Dir(d[0], d[1], d[2])))), radius);
+    const turns = length / pitch, n = Math.max(1, Math.ceil(turns / per)), mw = r(new oc.BRepBuilderAPI_MakeWire()), sgn = lefthand ? -1 : 1;
+    for (let i = 0; i < n; i++) {
+      const a = turns * i / n, b = turns * (i + 1) / n;
+      const seg = r(new oc.GC_MakeSegment2d(r(new oc.gp_Pnt2d(sgn * 2 * Math.PI * a, pitch * a)), r(new oc.gp_Pnt2d(sgn * 2 * Math.PI * b, pitch * b))));
+      mw.Add(r(new oc.BRepBuilderAPI_MakeEdge(r(seg.Value()), surf)).Edge());
+    }
+    const w = mw.Wire(); oc.BRepLib.BuildCurves3d(w);
+    return new R.Wire(w);
+  } finally { gc(); }
+}
 // a helical thread ridge: the triangular profile swept along a helix (binormal fixed to the axis)
 export function threadRidge(c, d, radius, pitch, length, prof, lefthand = false) {
-  const helix = R.makeHelix(pitch, length, radius, c, d, lefthand);
+  const helix = helixWire(pitch, length, radius, c, d, lefthand);
   const sp = helix.startPoint || (helix.edges && helix.edges[0].startPoint);
   const S0 = [sp.x, sp.y, sp.z];
   const radial = [S0[0] - c[0], S0[1] - c[1], S0[2] - c[2]], k = radial[0] * d[0] + radial[1] * d[1] + radial[2] * d[2];
