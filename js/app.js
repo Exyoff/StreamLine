@@ -4,6 +4,7 @@ import { S, on, emit, activeObj, selectedObjs, objById, loadSettings, saveSettin
 import * as H from './history.js';
 import * as K from './kernel.js';
 import * as PJ from './projects.js';
+import { initGcs, gcsReady } from './gcs.js';
 import * as LIB from './library.js';
 import * as BR from './browser.js';
 import { view, camera } from './viewport.js';
@@ -69,6 +70,7 @@ const AXC = ['ax-x', 'ax-y', 'ax-z'];
 async function boot() {
   loadSettings(); applyTheme();
   // the exact-geometry kernel (OpenCascade, WebAssembly) loads first; it is cached for offline use
+  initGcs(); // (FreeCAD's sketch solver: loads beside the kernel; until it has, the built-in solver works alone)
   try { await K.initKernel(); K.setMatrixFn(objMatrix); }
   catch (err) { console.error(err); $('#boot').querySelector('p').textContent = 'Could not load the CAD kernel — check your connection and reload.'; return; }
   $('#boot').classList.add('done'); setTimeout(() => $('#boot').remove(), 400);
@@ -2435,7 +2437,7 @@ OPS.setPivotHook(o => {
   const k = [0, 1, 2].reduce((a, i) => (Math.abs(r.d[i]) > Math.abs(r.d[a]) ? i : a), 0);
   return { c: r.c, d: r.d[k] < 0 ? M.mul(r.d, -1) : r.d };
 });
-window.StreamLine = { gizmoPartAt, startConstraint, K, S, view, OPS, F, SK, Draw, Cmd, runOp, undo, redo, getLast, M, serialize, setWorkspace, H, BR, isShown, addSketchedPrim, refresh: () => selectionChanged(),
+window.StreamLine = { gizmoPartAt, startConstraint, gcsReady, K, S, view, OPS, F, SK, Draw, Cmd, runOp, undo, redo, getLast, M, serialize, setWorkspace, H, BR, isShown, addSketchedPrim, refresh: () => selectionChanged(),
   checkInterference: async objs => { await checkInterference(objs); return lastInterference; }, valueHit,
   sketching, startCreateSketch, finishSketchEdit, activateSketch, sketchOn: params => { S.ed.planePick = null; createSketchOn(params); return S.ed.editingSketch; } };
 
