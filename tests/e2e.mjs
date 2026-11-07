@@ -1609,6 +1609,22 @@ try {
     return { ready: L.gcsReady(), by: r.by || 'built-in', ok: r.ok, L: sk.ents.slice(0, 2).map(e => [...e.a, ...e.b].map(v => +v.toFixed(6)).join()).join(' | ') };
   });
   check(pg.ready && pg.by === 'planegcs' && pg.ok && pg.L === '0,0,40,0 | 40,0,40,30', `Sketches are solved by FreeCAD's PlaneGCS (${JSON.stringify(pg)})`);
+  // a long thread keeps its shape: an M3×0.5 thread 20 mm long is 40 turns (one-edge helices drifted past ~30 turns)
+  const longThr = await st(() => {
+    const L = StreamLine, F = L.F, XY = { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }, cut = {};
+    for (const [x, len] of [[3000, 5], [3010, 10], [3020, 20]]) {
+      L.runOp(F.sketchOpNew('m3', XY, null, k => { F.addEntity(k, { t: 'circle', c: [x, 0], r: 1.5 }); }));
+      L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [x, 0] }], distance: 25, mode: 'new', target: null });
+      const o = L.S.doc.objects.at(-1), v0 = L.K.volume(o.shape);
+      L.S.ed.faces = [{ obj: o.id, n: [1, 0, 0], w: x + 1.5, p: [x + 1.5, 0, 12], planar: false }];
+      const ok = L.runOp(F.threadOp, { length: len, pitch: 0.5 });
+      const o1 = L.S.doc.objects.find(q => q.id === o.id);
+      cut[len] = { ok: !!ok, err: L.H.hist().at(-1).err || '', v: v0 - L.K.volume(o1.shape), valid: L.K.isValid(o1.shape) };
+    }
+    // the cut grows linearly with the length (fixed run-outs at the ends): the last 10 mm cut twice what the 5 before did
+    return { cut, ratio: (cut[20].v - cut[10].v) / (cut[10].v - cut[5].v), expect: 2 };
+  });
+  check(longThr.cut[20].ok && longThr.cut[20].valid && Math.abs(longThr.ratio / longThr.expect - 1) < 0.02, `a 40-turn M3×0.5 thread cuts in proportion to its length (10 → 20 mm cuts ×${longThr.ratio.toFixed(3)} what 5 → 10 mm did, expected ×2${longThr.cut[20].err ? ' · ' + longThr.cut[20].err : ''})`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
