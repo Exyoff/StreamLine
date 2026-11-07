@@ -5,6 +5,7 @@
 //   h / v (line) · par / perp / eq (2 lines | eq: 2 circles/arcs) · tan (line+arc/circle | 2 circles)
 //   conc (2 circles/arcs) · fix (entity) · coin (implicit: touching points) · dims from 'dim' entities
 import { keyPoints, rectCorners, sweep, d2 } from './sketch.js';
+import { gcsReady, gcsSolve } from './gcs.js';
 
 // ---------- parameter vector ----------
 const PARAMS = { line: ['a.0', 'a.1', 'b.0', 'b.1'], circle: ['c.0', 'c.1', 'r'], arc: ['c.0', 'c.1', 'r', 'a0', 'a1'], rect: ['x', 'y', 'w', 'h'], ellipse: ['c.0', 'c.1', 'rx', 'ry', 'rot'] };
@@ -135,7 +136,26 @@ export function rank(J, tol = 1e-8) {
 
 // ---------- solve ----------
 // opts: { pins: [{ref, p}] (drag targets), heavy: Set(param keys that should prefer not to move), coin }
+// FreeCAD's PlaneGCS solves first (when loaded and the sketch is one it can take); its answer is checked against
+// these equations, and on any doubt the sketch goes back as it was and the built-in solver below does the work
+let lastConflict = [];
+export const conflictIds = () => lastConflict;
 export function solve(sk, opts = {}) {
+  if (!opts._locked && gcsReady()) {
+    const snap = JSON.stringify(sk.ents), coin = opts.coin || coincidences(sk);
+    const g = gcsSolve(sk, { coin, pins: opts.pins || [], heavy: opts.heavy });
+    if (g) {
+      lastConflict = g.conflict || [];
+      if (g.ok) {
+        const r = residuals(sk, { coin, pins: [] }), nr = Math.sqrt(r.reduce((a, x) => a + x * x, 0));
+        if (nr < 1e-7) {
+          for (const e of sk.ents) { if (e.t === 'rect') { if (e.w < 0) { e.x += e.w; e.w = -e.w; } if (e.h < 0) { e.y += e.h; e.h = -e.h; } } if (e.r != null && e.r < 0) e.r = -e.r; }
+          return { ok: true, residual: nr, by: 'planegcs' };
+        }
+      }
+      const fresh = JSON.parse(snap); sk.ents.forEach((e, i) => Object.assign(e, fresh[i]));
+    }
+  }
   if (opts.heavy && opts.heavy.size && !opts._locked) {
     // first try with the edited parameters locked exactly; fall back to heavy weighting if infeasible
     const snap = JSON.stringify(sk.ents);
@@ -237,7 +257,12 @@ export function editAndSolve(sk, mutate, { pins = [], heavyRefs = [] } = {}) {
   S1.forEach(s => { const i = S0.findIndex(q => q.key === s.key); if (i >= 0 && Math.abs(before[i] - s.get()) > 1e-12) heavy.add(s.key); });
   for (const ref of heavyRefs) for (const s of S1) if (s.e.id === ref.e && keyParamOf(s, ref.k)) heavy.add(s.key);
   const res = solve(sk, { coin, pins, heavy });
-  if (!res.ok) return `Conflicting constraints (residual ${res.residual.toExponential(1)})`;
+  if (!res.ok) {
+    // (PlaneGCS names the constraints that fight: say which)
+    const NAME = { h: 'Horizontal', v: 'Vertical', par: 'Parallel', perp: 'Perpendicular', eq: 'Equal', tan: 'Tangent', conc: 'Concentric', fix: 'Fix', mid: 'Midpoint', on: 'On curve' };
+    const names = lastConflict.map(id => { const c = (sk.cons || []).find(q => q.id === id); if (c) return NAME[c.t] || 'a constraint'; const d = sk.ents.find(q => q.id === id && q.t === 'dim'); return d ? 'a dimension' : null; }).filter(Boolean);
+    return names.length ? `Conflicting constraints: ${[...new Set(names)].join(', ')} cannot all hold — delete one in Constrain` : `Conflicting constraints (residual ${res.residual.toExponential(1)})`;
+  }
 }
 function keyParamOf(s, k) {
   const key = s.key.split(':')[1];

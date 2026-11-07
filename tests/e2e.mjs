@@ -1600,6 +1600,15 @@ try {
     if (await p.locator('#keypad').isVisible().catch(() => false)) { await p.tap('#keypad [data-k="esc"]'); await p.waitForTimeout(300); }
     await p.evaluate(() => { const L = StreamLine; L.S.ed.tool = 'select'; L.Draw.resetTool(); L.finishSketchEdit(); });
     check(prd.dims.join() === 'pl:5' && prd.rects === 0 && prd.cons === 'h,v,h,v', `A point-to-line dimension to a rectangle's side (${JSON.stringify(prd)})`); }
+  // FreeCAD's PlaneGCS solves the sketches: loaded, and the solver's answer comes from it (checked exactly)
+  const pg = await p.evaluate(async () => {
+    const L = StreamLine, C = await import('./js/constraints.js');
+    const sk = { id: -1, cons: [{ id: 50, t: 'h', a: 1 }, { id: 51, t: 'v', a: 2 }], nextEnt: 100, ents: [{ id: 1, t: 'line', a: [0, 0], b: [38, 2] }, { id: 2, t: 'line', a: [38, 2], b: [41, 29] },
+      { id: 60, t: 'dim', kind: 'lin', A: { e: 1, k: 'a' }, B: { e: 1, k: 'b' }, value: 40 }, { id: 61, t: 'dim', kind: 'ver', A: { e: 2, k: 'a' }, B: { e: 2, k: 'b' }, value: 30 }] };
+    const r = C.solve(sk);
+    return { ready: L.gcsReady(), by: r.by || 'built-in', ok: r.ok, L: sk.ents.slice(0, 2).map(e => [...e.a, ...e.b].map(v => +v.toFixed(6)).join()).join(' | ') };
+  });
+  check(pg.ready && pg.by === 'planegcs' && pg.ok && pg.L === '0,0,40,0 | 40,0,40,30', `Sketches are solved by FreeCAD's PlaneGCS (${JSON.stringify(pg)})`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
