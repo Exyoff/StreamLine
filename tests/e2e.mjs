@@ -1702,6 +1702,33 @@ try {
   await p.evaluate(() => document.querySelector('#lastop .ib[aria-label=Done]')?.click()); await p.waitForTimeout(200);
   await p.locator('#toolsets .tset', { hasText: 'Solid' }).first().tap(); await p.waitForTimeout(200);
   check(armLock === 'edge' && arm1 === 1 && arm2.n === 2 && /Fillet · 2 edges/.test(arm2.label), `Fillet before any edge waits armed (${armLock}); the first edge opens it (${arm1}) and the next joins it (${arm2.label})`);
+  // Scale: two fields, Origin and Scale; the factor may be negative (a half turn through the origin as well)
+  const sc3 = await st(async () => {
+    const L = StreamLine, F = L.F, m = await import('./js/ops.js'), XY = { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] };
+    L.runOp(F.sketchOpNew('sc', XY, null, k => F.addEntity(k, { t: 'rect', x: 7010, y: 0, w: 20, h: 10 }))); L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [7011, 1] }], distance: 5, mode: 'new', target: null }); m.commit(); L.S.ed.sketch = null;
+    const o = L.S.doc.objects.at(-1); L.S.ed.selected = new Set([o.id]); L.S.ed.active = o.id; L.S.ed.pick = 'solid';
+    const bb = () => L.K.worldBounds(L.S.doc.objects.find(q => q.id === o.id)).map(v => v.map(x => +(+x).toFixed(3)));
+    L.runOp(L.OPS.transform, { mode: 'scale' }, { interactive: true });
+    const fields = L.OPS.transform.fields(L.getLast().params).map(f => f.label).join(',');
+    m.updateOp({ s: -2 }); const neg = bb(), vol = Math.abs(L.K.volume(L.K.worldShape(L.S.doc.objects.find(q => q.id === o.id))));
+    m.updateOp({ s: 0 }); const kept = L.getLast().params.s; m.commit();
+    return { fields, neg, vol, kept, label: L.H.hist().at(-1).label };
+  });
+  check(sc3.fields === 'Origin,Scale' && JSON.stringify(sc3.neg) === '[[7000,-5,-2.5],[7040,15,7.5]]' && Math.abs(sc3.vol - 8000) < 1e-6 && sc3.kept === -2 && sc3.label === 'Scale ×-2', `Body Scale has Origin and Scale; ×−2 about the middle flips and doubles it (${JSON.stringify(sc3.neg)}, ${sc3.vol.toFixed(1)} mm³), 0 is refused (${sc3.label})`);
+  await st(() => { const L = StreamLine; L.S.ed.selected = new Set(); L.startCreateSketch(); }); await p.waitForTimeout(400);
+  await p.locator('#actions .act', { hasText: 'XY · Top' }).tap(); await p.waitForTimeout(500);
+  const sc2 = await st(async () => {
+    const L = StreamLine, D = L.Draw, m = await import('./js/ops.js');
+    L.S.ed.tool = 'circle'; D.resetTool(); D.commitPoint([7100, 0]); D.commitPoint([7104, 0]); m.commit(); m.clearLast();
+    const k = L.SK.sketchById(L.S.ed.editingSketch);
+    L.S.ed.tool = 'scale'; D.resetTool(); L.S.ed.drawSel = new Set(k.ents.filter(e => e.t === 'circle').map(e => e.id)); D.startCommand();
+    const card = document.querySelector('#draw-card')?.innerText || '';
+    m.updateOp({ f: -1.5, origin: 'zero' });
+    const c = L.SK.sketchById(L.S.ed.editingSketch).ents.find(e => e.t === 'circle');
+    const out = { origin: /Origin/.test(card) && /Scale/.test(card), c: c.c.map(v => +v.toFixed(6)), r: +c.r.toFixed(6) };
+    m.commit(); L.S.ed.tool = 'select'; D.resetTool(); L.finishSketchEdit(); return out;
+  });
+  check(sc2.origin && sc2.c[0] === -10650 && sc2.c[1] === 0 && sc2.r === 6, `Sketch Scale has Origin and Scale fields; ×−1.5 about the sketch origin puts a circle at x ${sc2.c[0]} with R ${sc2.r}`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked

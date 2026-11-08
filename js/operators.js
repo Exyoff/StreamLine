@@ -115,7 +115,7 @@ export const addPrim = {
 
 // ---------- Transform (move / rotate / scale) ----------
 export const transform = {
-  label: p => ({ move: 'Move', rotate: 'Rotate', scale: 'Scale' })[p.mode],
+  label: p => (p.mode === 'scale' ? (p.s != null ? `Scale ×${+(+p.s).toFixed(4)}` : 'Scale') : ({ move: 'Move', rotate: 'Rotate' })[p.mode]),
   defaults: () => ({ mode: 'move', x: 0, y: 0, z: 0, axis: 'z', angle: 0, sx: 1, sy: 1, sz: 1 }),
   prepare(p) {
     if (!hasSelection()) return 'Nothing selected';
@@ -123,6 +123,9 @@ export const transform = {
     // (the pivot can be typed on the card: turn a clip about the fan's axis, not about its own middle)
     if (p.pivot && p.mode !== 'move') [p.px, p.py, p.pz] = p.pivot.map((v, i) => [p.px, p.py, p.pz][i] ?? +v);
     p._edit = S.ed.mode === 'edit';
+    // Scale: two fields — Origin (the middle of what is picked, or the world origin) and one Scale factor, negative or
+    // positive (negative turns the part through its origin as well); per-axis X / Y / Z only after an axis handle drag
+    if (p.mode === 'scale') { p.origin ??= 'centre'; p._c ??= p.pivot ? p.pivot.slice() : [0, 0, 0]; if (p.s === undefined) p.s = p.sx === p.sy && p.sy === p.sz ? p.sx : null; }
     // a part on a round mate can turn about that axis exactly (a hinge, a fan on its tilted shaft)
     if (p.mode === 'rotate' && p._mateAx === undefined) { const objs = selectedObjs(); p._mateAx = (objs.length === 1 && axisHook?.(objs[0])) || null; }
     if (p.mode === 'scale') { const l = [...S.ed.selected].map(id => S.doc.objects.find(o => o.id === id)).find(o => o && o.link); if (l) return `“${l.name}” is a linked component — it keeps its size (change it in its own project, then Sync)`; }
@@ -133,10 +136,16 @@ export const transform = {
     if (p.mode === 'move') return xyz();
     const pivot = p.px != null && !(p.mode === 'rotate' && p.axis === 'm') ? [{ key: 'px', label: 'Pivot X', kind: 'len' }, { key: 'py', label: 'Pivot Y', kind: 'len' }, { key: 'pz', label: 'Pivot Z', kind: 'len' }] : [];
     if (p.mode === 'rotate') return [{ key: 'axis', label: 'Axis', kind: 'choice', options: [['x', 'X'], ['y', 'Y'], ['z', 'Z'], ...(p._mateAx ? [['m', 'Mate axis']] : [])] }, { key: 'angle', label: 'Angle', kind: 'ang' }, ...pivot];
-    return [{ key: 'sx', label: 'X', kind: 'num' }, { key: 'sy', label: 'Y', kind: 'num' }, { key: 'sz', label: 'Z', kind: 'num' }, ...pivot];
+    return [{ key: 'origin', label: 'Origin', kind: 'choice', options: [['centre', 'Middle'], ['world', 'World origin']] }, { key: 's', label: 'Scale', kind: 'num' },
+      ...(p.s == null ? [{ key: 'sx', label: 'X', kind: 'num' }, { key: 'sy', label: 'Y', kind: 'num' }, { key: 'sz', label: 'Z', kind: 'num' }] : [])];
   },
   apply(p) {
-    if (p.px != null && p.mode !== 'move') p.pivot = [p.px, p.py, p.pz];
+    if (p.px != null && p.mode === 'rotate') p.pivot = [p.px, p.py, p.pz];
+    if (p.mode === 'scale') {
+      if (p.s != null) { if (!(Math.abs(p.s) > 1e-12) || !isFinite(p.s)) return 'The scale cannot be 0'; p.sx = p.sy = p.sz = p.s; }
+      else if ([p.sx, p.sy, p.sz].some(v => !(Math.abs(v) > 1e-12))) return 'The scale cannot be 0';
+      p.pivot = p.origin === 'world' ? [0, 0, 0] : (p._c || p.pivot);
+    }
     const pv = p.axis === 'm' && p._mateAx ? p._mateAx.c : p.pivot;
     let fn;
     let R = null;
