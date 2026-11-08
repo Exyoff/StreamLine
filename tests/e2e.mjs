@@ -1625,6 +1625,18 @@ try {
     return { cut, ratio: (cut[20].v - cut[10].v) / (cut[10].v - cut[5].v), expect: 2 };
   });
   check(longThr.cut[20].ok && longThr.cut[20].valid && Math.abs(longThr.ratio / longThr.expect - 1) < 0.02, `a 40-turn M3×0.5 thread cuts in proportion to its length (10 → 20 mm cuts ×${longThr.ratio.toFixed(3)} what 5 → 10 mm did, expected ×2${longThr.cut[20].err ? ' · ' + longThr.cut[20].err : ''})`);
+  // a big sketch stays quick: 600 constrained lines in 150 squares — a drag step's solve and the constraint colouring
+  // (the old dense Jacobian of every equation by every parameter took seconds here, and crashed the page)
+  const bigSk = await st(async () => {
+    const L = StreamLine, F = L.F, XY = { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }, CS = await import('./js/constraints.js');
+    L.runOp(F.sketchOpNew('big', XY, null, k => { for (let i = 0; i < 150; i++) { const x = 4000 + (i % 10) * 15, y = Math.floor(i / 10) * 15, P = [[x, y], [x + 10, y], [x + 10, y + 10], [x, y + 10]], ls = []; for (let j = 0; j < 4; j++) ls.push(F.addEntity(k, { t: 'line', a: P[j].slice(), b: P[(j + 1) % 4].slice() })); k.cons ??= []; k.cons.push({ id: ++k.nextEnt, t: 'h', a: ls[0].id }, { id: ++k.nextEnt, t: 'v', a: ls[1].id }, { id: ++k.nextEnt, t: 'h', a: ls[2].id }, { id: ++k.nextEnt, t: 'v', a: ls[3].id }); } }));
+    const k = L.SK.sketchById(L.S.ed.sketch), l0 = k.ents.find(e => e.t === 'line'), T = f => { const t = performance.now(); f(); return performance.now() - t; };
+    const solveMs = Math.min(...[0, 1, 2].map(() => T(() => CS.editAndSolve(k, () => { l0.b[0] += 0.5; }, {})))), fixedMs = T(() => CS.constrainedEntities(k)), dofV = CS.dof(k);
+    const l1 = L.SK.entById(k, l0.id), flat = Math.abs(l1.a[1] - l1.b[1]) < 1e-9, len = l1.b[0] - l1.a[0];
+    L.S.ed.sketch = null; L.undo(); L.refresh(); // (the later checks run without it)
+    return { solveMs, fixedMs, dof: dofV, flat, len, gone: !L.S.doc.sketches.some(q => q.id === k.id) };
+  });
+  check(bigSk.solveMs < 150 && bigSk.fixedMs < 400 && bigSk.flat && bigSk.dof === 150 * 4 && bigSk.gone, `a 600-line sketch stays quick: a drag step solves in ${bigSk.solveMs.toFixed(0)} ms, the constraint colouring in ${bigSk.fixedMs.toFixed(0)} ms (${bigSk.dof} DOF free; the moved line stayed horizontal)`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
@@ -1755,6 +1767,8 @@ try {
   check(ws[0] === ws[1] && ws[2] > ws[3] * 3, `Edges stay the same width on screen, or scale with zoom when asked (${ws.map(v => v?.toFixed(2)).join(', ')})`);
   await p.evaluate(() => document.querySelector('#scrim')?.click());
   await p.evaluate(() => { const L = StreamLine; Object.assign(L.S.settings, { theme: 'midnight', lighting: 'studio', finish: 'satin', edgeScale: 'screen' }); delete document.documentElement.dataset.theme; L.view.setLook(); L.refresh(); });
+  // (the look change recompiles every shader: under the software renderer a few frames take seconds — let them land)
+  await p.evaluate(async () => { const t0 = performance.now(); let t = t0; while (performance.now() - t0 < 20000) { await new Promise(r => requestAnimationFrame(r)); const n = performance.now(); if (n - t < 100) break; t = n; } });
   await shot('5-timeline');
 } catch (e) {
   await p.screenshot({ path: OUT + 'crash.png' }).catch(() => {});

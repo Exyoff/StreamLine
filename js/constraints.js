@@ -19,85 +19,126 @@ function slots(sk) {
   }
   return out;
 }
-const pt = (sk, ref) => { if (ref.e === 0) return [0, 0]; const e = sk.ents.find(x => x.id === ref.e); if (!e) return null; const kp = keyPoints(e).find(q => q.k === ref.k); return kp ? kp.p : null; };
-const ent = (sk, id) => sk.ents.find(x => x.id === id);
 const lineDir = l => [l.b[0] - l.a[0], l.b[1] - l.a[1]];
 const lineDist = (l, p) => { const d = lineDir(l), L = Math.hypot(d[0], d[1]) || 1e-300; return ((p[0] - l.a[0]) * d[1] - (p[1] - l.a[1]) * d[0]) / L; };
 
 // ---------- implicit coincidences (points that currently touch) ----------
+// (points are bucketed on a 1 µm grid and only neighbouring cells compared: a sketch of a few hundred lines has
+// ~1000 points, and comparing every pair on each drag step was a large part of the lag)
 export function coincidences(sk) {
-  const pts = [];
+  const pts = [], grid = new Map(), C = 1e-3, cell = (x, y) => Math.floor(x / C) + ',' + Math.floor(y / C);
   for (const e of sk.ents) { if (e.t === 'dim') continue; for (const kp of keyPoints(e)) if (kp.m) pts.push({ ref: { e: e.id, k: kp.k }, p: kp.p.slice() }); }
+  pts.forEach((q, i) => { const k = cell(q.p[0], q.p[1]); if (!grid.has(k)) grid.set(k, []); grid.get(k).push(i); });
   const out = [];
-  for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++)
-    if (pts[i].ref.e !== pts[j].ref.e && d2(pts[i].p, pts[j].p) < 1e-7) out.push([pts[i].ref, pts[j].ref]);
+  pts.forEach((q, i) => {
+    const cx = Math.floor(q.p[0] / C), cy = Math.floor(q.p[1] / C);
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const j of grid.get((cx + dx) + ',' + (cy + dy)) || [])
+      if (j > i && q.ref.e !== pts[j].ref.e && d2(q.p, pts[j].p) < 1e-7) out.push([q.ref, pts[j].ref]);
+  });
   // origin is a fixed point
   const origin = pts.filter(q => Math.hypot(q.p[0], q.p[1]) < 1e-7).map(q => q.ref);
   return { pairs: out, origin };
 }
 
 // ---------- residuals ----------
-function residuals(sk, ctx) {
-  const r = [];
-  for (const [A, B] of ctx.coin.pairs) { const p = pt(sk, A), q = pt(sk, B); if (p && q) r.push(p[0] - q[0], p[1] - q[1]); }
-  for (const A of ctx.coin.origin) { const p = pt(sk, A); if (p) r.push(p[0], p[1]); }
+// The equations come in groups, each knowing the entities it reads: the Jacobian is built one entity at a time from
+// only the groups that touch it, and the sketch splits into independent pieces (entities linked by any equation),
+// each solved and ranked on its own. A dense Jacobian of every equation by every parameter, rebuilt on each redraw to
+// colour constrained curves, made sketches of a few hundred lines lag on every tap and drag.
+function groups(sk, ctx) {
+  const E = new Map(); for (const e of sk.ents) E.set(e.id, e);
+  const ent = id => E.get(id);
+  const pt = ref => { if (!ref) return null; if (ref.e === 0) return [0, 0]; const e = E.get(ref.e); if (!e) return null; const kp = keyPoints(e).find(q => q.k === ref.k); return kp ? kp.p : null; };
+  const G = [], add = (ids, f) => G.push({ ids: [...new Set(ids)].filter(x => x != null && x !== 0 && E.has(x)), f });
+  for (const [A, B] of ctx.coin.pairs) add([A.e, B.e], () => { const p = pt(A), q = pt(B); return p && q ? [p[0] - q[0], p[1] - q[1]] : []; });
+  for (const A of ctx.coin.origin) add([A.e], () => { const p = pt(A); return p ? [p[0], p[1]] : []; });
   for (const c of sk.cons || []) {
-    const a = ent(sk, c.a), b = c.b != null ? ent(sk, c.b) : null;
+    const a = ent(c.a), b = c.b != null ? ent(c.b) : null;
     if (!a) continue;
+    const ids = [c.a, c.b, c.p && c.p.e];
     switch (c.t) {
-      case 'h': r.push(a.a[1] - a.b[1]); break;
-      case 'v': r.push(a.a[0] - a.b[0]); break;
+      case 'h': add(ids, () => [a.a[1] - a.b[1]]); break;
+      case 'v': add(ids, () => [a.a[0] - a.b[0]]); break;
       case 'par': case 'perp': {
         if (!b) break;
-        const d1 = lineDir(a), d2_ = lineDir(b), l1 = Math.hypot(...d1) || 1e-300, l2 = Math.hypot(...d2_) || 1e-300;
-        r.push(c.t === 'par' ? (d1[0] * d2_[1] - d1[1] * d2_[0]) / (l1 * l2) * Math.min(l1, l2) : (d1[0] * d2_[0] + d1[1] * d2_[1]) / (l1 * l2) * Math.min(l1, l2));
+        add(ids, () => {
+          const d1 = lineDir(a), d2_ = lineDir(b), l1 = Math.hypot(...d1) || 1e-300, l2 = Math.hypot(...d2_) || 1e-300;
+          return [c.t === 'par' ? (d1[0] * d2_[1] - d1[1] * d2_[0]) / (l1 * l2) * Math.min(l1, l2) : (d1[0] * d2_[0] + d1[1] * d2_[1]) / (l1 * l2) * Math.min(l1, l2)];
+        });
         break;
       }
       case 'eq': {
         if (!b) break;
-        if (a.t === 'line' && b.t === 'line') r.push(Math.hypot(...lineDir(a)) - Math.hypot(...lineDir(b)));
-        else if (a.r != null && b.r != null) r.push(a.r - b.r);
+        if (a.t === 'line' && b.t === 'line') add(ids, () => [Math.hypot(...lineDir(a)) - Math.hypot(...lineDir(b))]);
+        else if (a.r != null && b.r != null) add(ids, () => [a.r - b.r]);
         break;
       }
       case 'tan': {
         if (!b) break;
         const L = a.t === 'line' ? a : b.t === 'line' ? b : null, C = L === a ? b : a;
-        if (L && C && C.r != null) r.push(Math.abs(lineDist(L, C.c)) - C.r);
-        else if (a.r != null && b.r != null) { const d = d2(a.c, b.c); r.push(Math.min(Math.abs(d - (a.r + b.r)), Math.abs(d - Math.abs(a.r - b.r))) * (d < Math.max(a.r, b.r) ? 1 : 1)); }
+        if (L && C && C.r != null) add(ids, () => [Math.abs(lineDist(L, C.c)) - C.r]);
+        else if (a.r != null && b.r != null) add(ids, () => { const d = d2(a.c, b.c); return [Math.min(Math.abs(d - (a.r + b.r)), Math.abs(d - Math.abs(a.r - b.r)))]; });
         break;
       }
-      case 'conc': if (b && a.c && b.c) r.push(a.c[0] - b.c[0], a.c[1] - b.c[1]); break;
-      case 'fix': for (const k of PARAMS[a.t] || []) { const [f, i] = k.split('.'); const v = i == null ? a[f] : a[f][+i]; r.push(v - c.v[k]); } break;
-      case 'on': { // point c.p lies on curve a (Fusion's coincident to a curve): on a line, or on a circle / arc's rim
-        const p = pt(sk, c.p); if (!p) break;
-        if (a.t === 'line') r.push(lineDist(a, p)); else if (a.r != null && a.c) r.push(d2(p, a.c) - a.r);
+      case 'conc': if (b && a.c && b.c) add(ids, () => [a.c[0] - b.c[0], a.c[1] - b.c[1]]); break;
+      case 'fix': add(ids, () => (PARAMS[a.t] || []).map(k => { const [f, i] = k.split('.'); const v = i == null ? a[f] : a[f][+i]; return v - c.v[k]; })); break;
+      case 'on': // point c.p lies on curve a (Fusion's coincident to a curve): on a line, or on a circle / arc's rim
+        add(ids, () => { const p = pt(c.p); if (!p) return []; if (a.t === 'line') return [lineDist(a, p)]; if (a.r != null && a.c) return [d2(p, a.c) - a.r]; return []; });
         break;
-      }
-      case 'mid': { // point c.p is the midpoint of line a
-        const p = pt(sk, c.p); if (p) r.push(p[0] - (a.a[0] + a.b[0]) / 2, p[1] - (a.a[1] + a.b[1]) / 2); break;
-      }
+      case 'mid': // point c.p is the midpoint of line a
+        add(ids, () => { const p = pt(c.p); return p ? [p[0] - (a.a[0] + a.b[0]) / 2, p[1] - (a.a[1] + a.b[1]) / 2] : []; });
+        break;
     }
   }
   for (const d of sk.ents) {
     if (d.t !== 'dim' || d.value == null) continue;
-    if (d.kind === 'lin') { const p = pt(sk, d.A), q = pt(sk, d.B); if (p && q) r.push(d2(p, q) - d.value); }
-    else if (d.kind === 'hor' || d.kind === 'ver') { const p = pt(sk, d.A), q = pt(sk, d.B); if (p && q) r.push((d.kind === 'hor' ? q[0] - p[0] : q[1] - p[1]) - d.value); }
-    else if (d.kind === 'pl') { const p = pt(sk, d.P), l = ent(sk, d.l); if (p && l && l.t === 'line') r.push((d.side || 1) * -lineDist(l, p) - d.value); } // (lineDist is signed the other way round from the side it was made on)
+    if (d.kind === 'lin') add([d.A?.e, d.B?.e], () => { const p = pt(d.A), q = pt(d.B); return p && q ? [d2(p, q) - d.value] : []; });
+    else if (d.kind === 'hor' || d.kind === 'ver') add([d.A?.e, d.B?.e], () => { const p = pt(d.A), q = pt(d.B); return p && q ? [(d.kind === 'hor' ? q[0] - p[0] : q[1] - p[1]) - d.value] : []; });
+    else if (d.kind === 'pl') add([d.P?.e, d.l], () => { const p = pt(d.P), l = ent(d.l); return p && l && l.t === 'line' ? [(d.side || 1) * -lineDist(l, p) - d.value] : []; }); // (lineDist is signed the other way round from the side it was made on)
     else if (d.kind === 'ang') {
-      const a = ent(sk, d.la), b = ent(sk, d.lb); if (!a || !b) continue;
-      const da = lineDir(a), db = lineDir(b);
-      let x = Math.atan2(db[1], db[0]) - Math.atan2(da[1], da[0]) - d.value * Math.PI / 180;
-      x = Math.atan2(Math.sin(x), Math.cos(x));
-      r.push(x * Math.max(1, Math.min(Math.hypot(...da), Math.hypot(...db))));
+      const a = ent(d.la), b = ent(d.lb); if (!a || !b) continue;
+      add([d.la, d.lb], () => {
+        const da = lineDir(a), db = lineDir(b);
+        let x = Math.atan2(db[1], db[0]) - Math.atan2(da[1], da[0]) - d.value * Math.PI / 180;
+        x = Math.atan2(Math.sin(x), Math.cos(x));
+        return [x * Math.max(1, Math.min(Math.hypot(...da), Math.hypot(...db)))];
+      });
     }
-    else { const e = ent(sk, d.e); if (e) r.push((d.kind === 'dia' ? 2 * e.r : e.r) - d.value); }
+    else add([d.e], () => { const e = ent(d.e); return e ? [(d.kind === 'dia' ? 2 * e.r : e.r) - d.value] : []; });
   }
   for (const pin of ctx.pins) {
-    if (pin.ref) { const p = pt(sk, pin.ref); if (p) r.push((p[0] - pin.p[0]) * 10, (p[1] - pin.p[1]) * 10); }
-    else r.push((pin.slot.get() - pin.v) * 10);
+    if (pin.ref) add([pin.ref.e], () => { const p = pt(pin.ref); return p ? [(p[0] - pin.p[0]) * 10, (p[1] - pin.p[1]) * 10] : []; });
+    else add([pin.slot.e.id], () => [(pin.slot.get() - pin.v) * 10]);
   }
-  return r;
+  return G;
 }
+function residuals(sk, ctx) { const r = []; for (const g of groups(sk, ctx)) r.push(...g.f()); return r; }
+// the independent pieces of a sketch: slots (by index into S) and equation groups linked through their entities.
+// Groups that read no free entity (e.g. a dim between projected points) still count towards the residual.
+function pieces(S, G) {
+  const par = new Map(), find = x => { while (par.get(x) !== x) { par.set(x, par.get(par.get(x))); x = par.get(x); } return x; };
+  const mk = x => { if (!par.has(x)) par.set(x, x); };
+  for (const s of S) mk(s.e.id);
+  for (const g of G) { g.ids.forEach(mk); for (let i = 1; i < g.ids.length; i++) { const a = find(g.ids[0]), b = find(g.ids[i]); if (a !== b) par.set(a, b); } }
+  const P = new Map(), of = k => { if (!P.has(k)) P.set(k, { slots: [], groups: [] }); return P.get(k); };
+  S.forEach((s, j) => of(find(s.e.id)).slots.push(j));
+  for (const g of G) if (g.ids.length) of(find(g.ids[0])).groups.push(g);
+  return [...P.values()];
+}
+// dense Jacobian of one piece (its rows by its slots), from each slot's own groups only
+function pieceJacobian(pc, S) {
+  let m = 0; for (const g of pc.groups) { g.off = m; m += g.f().length; }
+  const byEnt = new Map(); for (const g of pc.groups) for (const id of g.ids) { if (!byEnt.has(id)) byEnt.set(id, []); byEnt.get(id).push(g); }
+  const J = Array.from({ length: m }, () => new Array(pc.slots.length).fill(0));
+  pc.slots.forEach((j, c) => {
+    const s = S[j], gs = byEnt.get(s.e.id) || []; if (!gs.length) return;
+    const v = s.get(), h = 1e-7 * Math.max(1, Math.abs(v));
+    s.set(v + h); const r1 = gs.map(g => g.f()); s.set(v - h); const r2 = gs.map(g => g.f()); s.set(v);
+    gs.forEach((g, gi) => { for (let i = 0; i < r1[gi].length; i++) J[g.off + i][c] = (r1[gi][i] - r2[gi][i]) / (2 * h); });
+  });
+  return J;
+}
+const pieceRes = pc => { const r = []; for (const g of pc.groups) r.push(...g.f()); return r; };
 
 // ---------- dense linear algebra ----------
 function solveSPD(A, b) { // Gaussian elimination with partial pivoting
@@ -111,15 +152,6 @@ function solveSPD(A, b) { // Gaussian elimination with partial pivoting
   const x = new Array(n).fill(0);
   for (let r = n - 1; r >= 0; r--) { let s = M[r][n]; for (let k = r + 1; k < n; k++) s -= M[r][k] * x[k]; x[r] = Math.abs(M[r][r]) > 1e-300 ? s / M[r][r] : 0; }
   return x;
-}
-function jacobian(sk, ctx, S, r0) {
-  const J = r0.map(() => new Array(S.length).fill(0));
-  S.forEach((s, j) => {
-    const v = s.get(), h = 1e-7 * Math.max(1, Math.abs(v));
-    s.set(v + h); const r1 = residuals(sk, ctx); s.set(v - h); const r2 = residuals(sk, ctx); s.set(v);
-    for (let i = 0; i < r0.length; i++) J[i][j] = (r1[i] - r2[i]) / (2 * h);
-  });
-  return J;
 }
 export function rank(J, tol = 1e-8) {
   const A = J.map(r => r.slice()); let rk = 0;
@@ -141,6 +173,25 @@ export function rank(J, tol = 1e-8) {
 let lastConflict = [];
 export const conflictIds = () => lastConflict;
 export function solve(sk, opts = {}) {
+  // only the independent pieces an edit or drag disturbed are solved, each on its own: a big sketch is mostly pieces
+  // already satisfied, and handing all of it to the solver on every drag step made it lag
+  if (!opts._sub && !opts._locked) {
+    const coin = opts.coin || coincidences(sk), pins = opts.pins || [], S = slots(sk), G = groups(sk, { coin, pins }), P = pieces(S, G);
+    if (P.length > 1) {
+      const nrm = v => Math.sqrt(v.reduce((a, x) => a + x * x, 0));
+      const need = P.filter(pc => pc.slots.length && nrm(pieceRes(pc)) > 1e-12);
+      let ok = true, residual = 0, by = null; const conflict = [];
+      for (const pc of need) {
+        const ids = new Set(pc.slots.map(j => S[j].e.id)); for (const g of pc.groups) g.ids.forEach(id => ids.add(id));
+        const refs = d => [d.A?.e, d.B?.e, d.P?.e, d.l, d.la, d.lb, d.e];
+        const sub = { ...sk, ents: sk.ents.filter(e => ids.has(e.id) || (e.t === 'dim' && refs(e).some(id => ids.has(id)))), cons: (sk.cons || []).filter(c => ids.has(c.a)) };
+        const r = solve(sub, { ...opts, _sub: true, coin: { pairs: coin.pairs.filter(([A]) => ids.has(A.e)), origin: coin.origin.filter(A => ids.has(A.e)) }, pins: pins.filter(q => ids.has(q.ref ? q.ref.e : q.slot.e.id)) });
+        ok = ok && r.ok; residual = Math.max(residual, r.residual || 0); by = by || r.by; conflict.push(...lastConflict);
+      }
+      lastConflict = conflict;
+      return { ok, residual, by: by || 'planegcs', pieces: need.length };
+    }
+  }
   if (!opts._locked && gcsReady()) {
     const snap = JSON.stringify(sk.ents), coin = opts.coin || coincidences(sk);
     const g = gcsSolve(sk, { coin, pins: opts.pins || [], heavy: opts.heavy });
@@ -166,26 +217,32 @@ export function solve(sk, opts = {}) {
   }
   const S = slots(sk).filter(s => !(opts.lock && opts.lock.has(s.key)));
   const ctx = { coin: opts.coin || coincidences(sk), pins: opts.pins || [] };
-  const W = S.map(s => (opts.heavy && opts.heavy.has(s.key) ? 1e6 : s.len ? 1 : 100)); // angles: radians are "bigger"
-  let r = residuals(sk, ctx);
+  const G = groups(sk, ctx), wOf = s => (opts.heavy && opts.heavy.has(s.key) ? 1e6 : s.len ? 1 : 100); // angles: radians are "bigger"
   const norm = v => Math.sqrt(v.reduce((s, x) => s + x * x, 0));
-  for (let it = 0; it < 60 && norm(r) > 1e-12; it++) {
-    const J = jacobian(sk, ctx, S, r);
-    const m = r.length, n = S.length;
-    const A = Array.from({ length: m }, () => new Array(m).fill(0));
-    for (let i = 0; i < m; i++) for (let k = i; k < m; k++) { let s = 0; for (let j = 0; j < n; j++) s += J[i][j] * J[k][j] / W[j]; A[i][k] = A[k][i] = s; }
-    for (let i = 0; i < m; i++) A[i][i] += 1e-12 + A[i][i] * 1e-12;
-    const y = solveSPD(A, r);
-    const before = norm(r), x0 = S.map(s => s.get());
-    let step = 1;
-    for (let ls = 0; ls < 12; ls++) {
-      S.forEach((s, j) => { let d = 0; for (let i = 0; i < m; i++) d += J[i][j] * y[i]; s.set(x0[j] - step * d / W[j]); });
-      r = residuals(sk, ctx);
-      if (norm(r) < before) break;
-      step /= 2;
+  // each independent piece is solved on its own; pieces already satisfied are left alone
+  for (const pc of pieces(S, G)) {
+    if (!pc.slots.length) continue;
+    const PS = pc.slots.map(j => S[j]), W = PS.map(wOf);
+    let r = pieceRes(pc);
+    for (let it = 0; it < 60 && norm(r) > 1e-12; it++) {
+      const J = pieceJacobian(pc, S);
+      const m = r.length, n = PS.length;
+      const A = Array.from({ length: m }, () => new Array(m).fill(0));
+      for (let i = 0; i < m; i++) for (let k = i; k < m; k++) { let s = 0; const Ji = J[i], Jk = J[k]; for (let j = 0; j < n; j++) if (Ji[j] && Jk[j]) s += Ji[j] * Jk[j] / W[j]; A[i][k] = A[k][i] = s; }
+      for (let i = 0; i < m; i++) A[i][i] += 1e-12 + A[i][i] * 1e-12;
+      const y = solveSPD(A, r);
+      const before = norm(r), x0 = PS.map(s => s.get());
+      let step = 1;
+      for (let ls = 0; ls < 12; ls++) {
+        PS.forEach((s, j) => { let d = 0; for (let i = 0; i < m; i++) if (J[i][j]) d += J[i][j] * y[i]; s.set(x0[j] - step * d / W[j]); });
+        r = pieceRes(pc);
+        if (norm(r) < before) break;
+        step /= 2;
+      }
+      if (norm(r) >= before) { PS.forEach((s, j) => s.set(x0[j])); r = pieceRes(pc); break; }
     }
-    if (norm(r) >= before) { S.forEach((s, j) => s.set(x0[j])); r = residuals(sk, ctx); break; }
   }
+  const r = residuals(sk, ctx);
   // snap converged values to the nanometre grid when they are already within 1e-11 of it
   if (norm(r) < 1e-9) for (const s of S) { const v = s.get(), q = Math.round(v * 1e9) / 1e9; if (Math.abs(v - q) < 1e-11) s.set(q === 0 ? 0 : q); }
   // keep rect sizes and radii positive
@@ -199,22 +256,21 @@ export function solve(sk, opts = {}) {
 // Degrees of freedom left (0 = fully constrained). Ignores drag pins.
 export function dof(sk) {
   const S = slots(sk); if (!S.length) return 0;
-  const ctx = { coin: coincidences(sk), pins: [] };
-  const r = residuals(sk, ctx);
-  if (!r.length) return S.length;
-  return S.length - rank(jacobian(sk, ctx, S, r), 1e-7);
+  const G = groups(sk, { coin: coincidences(sk), pins: [] });
+  let rk = 0; for (const pc of pieces(S, G)) if (pc.slots.length && pc.groups.length) rk += rank(pieceJacobian(pc, S), 1e-7);
+  return S.length - rk;
 }
 
-// Entities whose every parameter is pinned down by the constraints (null-space test on the Jacobian).
+// Entities whose every parameter is pinned down by the constraints (null-space test on each piece's Jacobian).
 export function constrainedEntities(sk) {
   const S = slots(sk), out = new Set();
   if (!S.length) return out;
-  const ctx = { coin: coincidences(sk), pins: [] };
-  const r = residuals(sk, ctx);
-  const free = new Set(S.map((_, j) => j));
-  if (r.length) {
-    const A = jacobian(sk, ctx, S, r).map(row => row.slice());
-    const m = A.length, n = S.length, piv = [];
+  const G = groups(sk, { coin: coincidences(sk), pins: [] });
+  const free = new Set();
+  for (const pc of pieces(S, G)) {
+    if (!pc.groups.length) { pc.slots.forEach(j => free.add(j)); continue; }
+    const A = pieceJacobian(pc, S);
+    const m = A.length, n = pc.slots.length, piv = [];
     let row = 0;
     for (let c = 0; c < n && row < m; c++) {
       let p = row; for (let i = row + 1; i < m; i++) if (Math.abs(A[i][c]) > Math.abs(A[p][c])) p = i;
@@ -224,12 +280,12 @@ export function constrainedEntities(sk) {
       for (let i = 0; i < m; i++) if (i !== row && A[i][c]) { const f = A[i][c]; for (let k = c; k < n; k++) A[i][k] -= f * A[row][k]; }
       piv.push(c); row++;
     }
-    const pivSet = new Set(piv), freeCols = S.map((_, j) => j).filter(j => !pivSet.has(j));
+    const pivSet = new Set(piv);
     // a variable is determined iff it has zero component in every null-space vector
-    free.clear();
-    for (const fcol of freeCols) {
-      free.add(fcol);
-      piv.forEach((pc, i) => { if (Math.abs(A[i][fcol]) > 1e-7) free.add(pc); });
+    for (let fc = 0; fc < n; fc++) {
+      if (pivSet.has(fc)) continue;
+      free.add(pc.slots[fc]);
+      piv.forEach((pcol, i) => { if (Math.abs(A[i][fc]) > 1e-7) free.add(pc.slots[pcol]); });
     }
   }
   const byEnt = new Map();
@@ -254,7 +310,8 @@ export function editAndSolve(sk, mutate, { pins = [], heavyRefs = [] } = {}) {
   const S1 = slots(sk);
   const heavy = new Set();
   // params changed by the edit are held (heavily weighted) so the rest of the sketch adapts
-  S1.forEach(s => { const i = S0.findIndex(q => q.key === s.key); if (i >= 0 && Math.abs(before[i] - s.get()) > 1e-12) heavy.add(s.key); });
+  const at0 = new Map(S0.map((q, i) => [q.key, i]));
+  S1.forEach(s => { const i = at0.get(s.key); if (i != null && Math.abs(before[i] - s.get()) > 1e-12) heavy.add(s.key); });
   for (const ref of heavyRefs) for (const s of S1) if (s.e.id === ref.e && keyParamOf(s, ref.k)) heavy.add(s.key);
   const res = solve(sk, { coin, pins, heavy });
   if (!res.ok) {

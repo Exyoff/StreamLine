@@ -904,7 +904,7 @@ function showHover(d) {
   if (!hoverGroup) { hoverGroup = new THREE.Group(); view.overlayScene.add(hoverGroup); }
   const key = d ? d.kind + JSON.stringify(d.prev ? [d.prev.pts?.[0], d.prev.e?.id, d.prev.tri, d.prev.k?.id, d.prev.r?.outer?.[0]] : null) : '';
   if (key === hoverKey) return; hoverKey = key;
-  hoverGroup.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); }); hoverGroup.clear();
+  view.disposeLater(hoverGroup);
   if (!d || !d.prev) { view.render(); return; }
   const col = new THREE.Color(view.theme.act || '#8cc4ff').getHex(), p = d.prev;
   if (p.pts) hoverGroup.add(Draw.fatLine(p.pts, col, 3.4, false));
@@ -1073,7 +1073,7 @@ function drawOrigin() {
   originGroup.visible = show; if (!show) return;
   const cur = planeLabel(), key = cur + '|' + view.theme.name;
   if (key !== originKey) {
-    originKey = key; originGroup.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); }); originGroup.clear();
+    originKey = key; view.disposeLater(originGroup);
     const P = { XY: [[1, 0, 0], [0, 1, 0], 0x4f8ff7], XZ: [[1, 0, 0], [0, 0, 1], 0x7cc243], YZ: [[0, 1, 0], [0, 0, 1], 0xf2545b] };
     for (const [k, [u, v, col]] of Object.entries(P)) {
       const on = k === cur, q = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => u.map((c, i) => c * a + v[i] * b));

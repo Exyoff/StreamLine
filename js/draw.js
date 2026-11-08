@@ -12,6 +12,8 @@ import { h, field, toast, openKeypad, $ } from './ui.js';
 import { xfFor } from './scene.js';
 import { Line2 } from '../vendor/lines/Line2.js';
 import { LineGeometry } from '../vendor/lines/LineGeometry.js';
+import { LineSegments2 } from '../vendor/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from '../vendor/lines/LineSegmentsGeometry.js';
 import { editAndSolve, dof as sketchDof, constrainedEntities } from './constraints.js';
 import { defSize } from './operators.js';
 import { I } from './icons.js';
@@ -779,10 +781,13 @@ export function fillTap(x, y) {
   emit('drawcard'); view.render();
 }
 import { fixValues as fixValuesOf } from './constraints.js';
-let dofCache = { k: null, v: 0 };
+// the constraint analysis (DOF left, which curves are fully constrained) re-runs only when the sketch's content changes
+const skKey = s => JSON.stringify(s.ents) + JSON.stringify(s.cons || []);
+let dofCache = { k: null, v: 0 }; const fixedCache = new Map();
+function fixedOf(s) { const k = skKey(s), c = fixedCache.get(s.id); if (c && c.k === k) return c.v; const v = constrainedEntities(s); fixedCache.set(s.id, { k, v }); return v; }
 export function dofText() {
   const s = sk(); if (!s || !s.ents || !s.ents.length) return '';
-  if (dofCache.k !== s.ents || dofCache.c !== s.cons) dofCache = { k: s.ents, c: s.cons, v: sketchDof(s) };
+  const k = skKey(s); if (dofCache.k !== k) dofCache = { k, v: sketchDof(s) };
   return dofCache.v === 0 ? 'fully constrained' : `${dofCache.v} DOF free`;
 }
 
@@ -1042,6 +1047,20 @@ function skCurve(pts3, { color, width = 1.8, dashed = false, halo = view.theme.h
   grp.add(ln);
   return grp;
 }
+// many sketch curves of one look drawn as one object (segment pairs): one draw call per colour and width instead of
+// two per curve — a sketch of hundreds of lines made every frame hundreds of draws
+function skCurves(segs, { color, width = 1.8, dashed = false, halo = view.theme.halo }) {
+  const grp = new THREE.Group(), g = new LineSegmentsGeometry(); g.setPositions(segs);
+  if (halo && !dashed) {
+    const hm = view.fatMat({ color: halo, width: width + 1.6 }); hm.depthWrite = false; hm.transparent = true; hm.polygonOffset = true; hm.polygonOffsetFactor = -3; hm.polygonOffsetUnits = -10;
+    const hl = new LineSegments2(g, hm); hl.renderOrder = 1; grp.add(hl);
+  }
+  const fm = view.fatMat({ color, width, dashed, dashSize: 1, gapSize: 0.6 }); fm.transparent = true; fm.polygonOffset = true; fm.polygonOffsetFactor = -5; fm.polygonOffsetUnits = -16;
+  const ln = new LineSegments2(g, fm); ln.renderOrder = 2;
+  if (dashed) { ln.computeLineDistances(); ln.userData.fatDash = true; }
+  grp.add(ln);
+  return grp;
+}
 function lineObj(pts3, mat, closed) {
   if (mat && mat.isLineBasicMaterial && !mat.isLineDashedMaterial) {
     // crisp screen-space line, same colour / opacity / depth behaviour
@@ -1088,7 +1107,8 @@ function renderSketches() {
         const isAct = !used && (stu ? (S.ed.editingSketch == null || s.id === S.ed.editingSketch) : (ws === 'draw' && s.id === S.ed.sketch)); // other sketches dim while one is edited
         const top = isAct && !stu;
         const mine = s.id === S.ed.sketch;
-        const fixedSet = isAct ? constrainedEntities(s) : null;
+        const fixedSet = isAct ? fixedOf(s) : null;
+        const batches = new Map();
         for (const e of s.ents) {
           if (e.t === 'dim') continue;
           if (e.t === 'text') { sg.add(textMesh(s, e, mine && S.ed.drawSel.has(e.id) ? '#6fb4ff' : isAct ? view.theme.sketch : '#8d93a0')); continue; }
@@ -1106,8 +1126,12 @@ function renderSketches() {
           const col = isAct ? (sel ? C.sel : e.construction ? C.constr : e.proj ? C.proj : fixedSet.has(e.id) ? C.fixed : C.line) : C.other;
           const W3 = pl.pts.map(p => SK.toW(s.plane, p));
           if (top) { sg.add(lineObj(W3, matL(col, top, 1), pl.closed)); continue; } // (2D drafting view)
-          sg.add(skCurve(W3, { color: col, width: sel ? 2.8 : isAct ? 1.8 : 1.2, dashed: !!e.construction, halo: isAct ? view.theme.halo : null, closed: pl.closed }));
+          const o = { color: col, width: sel ? 2.8 : isAct ? 1.8 : 1.2, dashed: !!e.construction, halo: isAct ? view.theme.halo : null };
+          const bk = `${col.getHexString()}|${o.width}|${o.dashed}|${o.halo}`, B = batches.get(bk) || (batches.set(bk, { o, segs: [] }), batches.get(bk));
+          for (let i = 1; i < W3.length; i++) B.segs.push(...W3[i - 1], ...W3[i]);
+          if (pl.closed && W3.length > 2) B.segs.push(...W3[W3.length - 1], ...W3[0]);
         }
+        for (const { o, segs } of batches.values()) if (segs.length) sg.add(skCurves(segs, o));
         // Fusion's sketch points: a small square at every curve end while the sketch is being edited
         if (stu && S.ed.editingSketch === s.id) {
           const pf = [], pc = [];
@@ -1193,8 +1217,14 @@ function spreadLabels(labs) {
   const home = labs.map(L => [L.x, L.y]), pad = 3;
   for (let pass = 0; pass < 24; pass++) {
     let moved = false;
-    for (let i = 0; i < labs.length; i++) for (let j = i + 1; j < labs.length; j++) {
-      const A = labs[i], B = labs[j];
+    // only labels in neighbouring cells can overlap: bucket them (every pair, every pass, was ~9 million checks a
+    // frame on a sketch of 600 constrained lines)
+    const cs = Math.max(48, ...labs.map(L => Math.max(L.w, L.h) + pad)), grid = new Map(), cellOf = L => [Math.floor(L.x / cs), Math.floor(L.y / cs)];
+    labs.forEach((L, i) => { const [cx, cy] = cellOf(L), k = cx + ',' + cy; if (!grid.has(k)) grid.set(k, []); grid.get(k).push(i); });
+    const pairs = [];
+    labs.forEach((L, i) => { const [cx, cy] = cellOf(L); for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const j of grid.get((cx + dx) + ',' + (cy + dy)) || []) if (j > i) pairs.push(i, j); });
+    for (let q = 0; q < pairs.length; q += 2) {
+      const i = pairs[q], j = pairs[q + 1], A = labs[i], B = labs[j];
       const ox = (A.w + B.w) / 2 + pad - Math.abs(A.x - B.x), oy = (A.h + B.h) / 2 + pad - Math.abs(A.y - B.y);
       if (ox <= 0 || oy <= 0 || (A.fixed && B.fixed)) continue;
       moved = true;
@@ -1206,7 +1236,7 @@ function spreadLabels(labs) {
     if (!moved) break;
   }
 }
-function clearGroup(g) { g.traverse(o => { if (o !== g) { o.geometry && o.geometry.dispose(); o.material && o.material.dispose(); } }); g.clear(); }
+const clearGroup = g => view.disposeLater(g);
 function drawAxes(s) {
   const L = view.worldPerPixel(s.plane.o) * 60;
   clearGroup(previewGroup);
