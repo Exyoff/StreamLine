@@ -35,6 +35,13 @@ export function setDrawMode(t, m) { if (!MODES[t] || !MODES[t].some(x => x[0] ==
 const mode = t => drawMode[t] || (MODES[t] && MODES[t][0][0]);
 const modeName = t => (MODES[t] || []).find(x => x[0] === mode(t))?.[1] || '';
 export function resetTool() { result = null; st.p2 = null; st.pressed = false; st.arcMode = false; st.lastDir = null; if (tool() !== 'line') lineOpts.construction = false; Object.assign(st, { onPend: null, cmd: null, last: null, dimLine: null, dimPend: null, start: null, chain: [], preview: null, snap: null, stage: 0, arc: null, dimA: null, typed: {}, press: null, grip: null }); view.render(); emit('drawcard'); }
+// Undo with a shape half drawn (a first corner, a centre, the start of a line chain) takes back only that: it used to
+// cancel the shape finished before it as well, or in a new sketch the whole sketch
+export function dropPending() {
+  if (!(st.start || st.p2 || st.arc || st.dimA || st.dimPend)) return false;
+  Object.assign(st, { start: null, p2: null, arc: null, dimA: null, dimPend: null, chain: [], preview: null, typed: {} });
+  view.render(); emit('drawcard'); return true;
+}
 // In the studio (unified 3D workspace) each stroke draws on the plane under the finger: a body face,
 // or the construction plane (ground). Curves on the same plane share one sketch, created on demand.
 export const studio = () => S.ed.workspace === 'model';

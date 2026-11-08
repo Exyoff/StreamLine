@@ -40,6 +40,8 @@ const standalone = () => !!navigator.standalone || matchMedia('(display-mode: st
 // The page is then always sized from the window itself (innerHeight), never from CSS's 100dvh: on an iPhone that unit
 // has come out short by about the status bar's height even with innerHeight right, leaving an empty band of
 // background under the bottom bar. (While typing the keyboard is not the page getting shorter: keep the height.)
+// Undo, except that a half-drawn shape in a sketch goes first (and alone)
+function undoAct() { if ((S.ed.editingSketch != null || S.ed.workspace !== 'model') && Draw.dropPending()) return; undo(); }
 function fitStandalone() {
   const de = document.documentElement;
   de.classList.toggle('fsapp', standalone());
@@ -1035,7 +1037,7 @@ function cmdSetTool(t, m) {
   setTool(t, m);
 }
 function setTool(t, m) {
-  S.ed.inquiry = null;
+  S.ed.inquiry = null; disarmMate();
   if (SKETCH_TOOLS.has(t) && S.ed.workspace === 'model' && !sketching()) { if (m) Draw.drawMode[t] = m; startCreateSketch(t); return; }
   // (tapping the active tool again just starts it over; its mode is chosen on the tool card)
   if (m) Draw.drawMode[t] = m;
@@ -1362,6 +1364,7 @@ function setToolset(id) {
   if (S.settings[k] === id) return;
   S.settings[k] = id; saveSettings();
   if (S.ed.consTool && id !== 'constrain') S.ed.consTool = null;
+  if (id !== 'assemble') disarmMate();
   $('#tools').scrollTop = 0; refresh();
 }
 function renderToolsets() {
@@ -1374,7 +1377,11 @@ function renderToolsets() {
   bar.hidden = !k;
   if (k) { const t = `${esc(k.name)} <small>· ${k.face ? 'on a face' : esc(planeName(k))}</small>`; if (bar._t !== t) { bar._t = t; bar.querySelector('.sk-nm').innerHTML = t; } }
 }
+// Mate waits for its second face only until another tool is chosen: an armed mate used to take the next face tap
+// (recording a mate nobody asked for), and Hole drilled on the remembered face with nothing shown as picked
+function disarmMate() { if (S.ed.mateFrom) { S.ed.mateFrom = null; S.ed.faces = []; } }
 function runRailItem(it, e) {
+  if (it.id !== 'mate') disarmMate();
   if (it.t) return setTool(it.t);
   if (it.c) return startConstraint(it.c);
   S.ed.consTool = null;
@@ -1446,7 +1453,7 @@ function bindEvents() {
   // (a press on a dimension's value that slides moves the value: the dimension line follows)
   view.handlers.targetDrag = (phase, x, y) => S.ed.mode === 'object' && Draw.dimDragAt(phase, x, y);
   $('#btn-cmd').onclick = () => openPalette();
-  $('#btn-undo').onclick = () => undo();
+  $('#btn-undo').onclick = () => undoAct();
   $('#btn-redo').onclick = () => redo();
   // right-hand slide-over: History · Items (layers, sketches, bodies) · Info · Settings
   const openPanel = tab => { if (sheetOpen && sheetTab === tab) return toggleSheet(false); if (sheetTab !== tab) $('#sheet-body').scrollTop = 0; sheetTab = tab; toggleSheet(true); renderSheet(); };
@@ -1498,10 +1505,10 @@ function bindEvents() {
   on('viewchange', () => renderViewButtons());
   on('drawcard', () => { renderDrawCard(); Cmd.render(); });
   on('cmd', () => refresh());
-  on('undoRequest', () => undo());
+  on('undoRequest', () => undoAct());
   on('selection', () => selectionChanged());
   on('change', ({ reason } = {}) => { if (reason === 'undo' || reason === 'redo') { Draw.resetTool(); if (S.ed.workspace === 'draw') view.cam.lock2D = true; } });
-  on('gestureUndo', () => { undo(); toast('Undo'); });
+  on('gestureUndo', () => { undoAct(); toast('Undo'); });
   on('gestureRedo', () => { redo(); toast('Redo'); });
   window.addEventListener('keydown', onKey);
   window.addEventListener('resize', () => { closePopover(); if (sheetOpen) toggleSheet(true); });
@@ -1812,7 +1819,7 @@ function commands() {
     ...Object.entries(view.THEMES).map(([k, t]) => C(`Theme: ${t.name}`, '', () => setLook('theme', k), 'appearance colours colors dark light')),
     ...Object.entries(view.FINISH).map(([k, f]) => C(`Surface: ${f.name}`, '', () => setLook('finish', k), 'material finish shiny')),
     C('Edges: scale with zoom', '', () => setLook('edgeScale', 'zoom'), 'line width thickness'), C('Edges: same width at any zoom', '', () => setLook('edgeScale', 'screen'), 'line width thickness pixel'),
-    C('Undo', '⌘Z', () => undo()), C('Redo', '⇧⌘Z', () => redo()), C('Save project', '⌘S', () => saveProject()), C('Open / import', '', () => $('#file-input').click(), 'step stl obj'), C('Thread', '', () => (S.ed.faces.length ? runOp(F.threadOp) : (setPick('face'), toast('Tap a shaft or hole face, then Thread'))), 'screw bolt nut helix tap'), C('Hole', '', () => (S.ed.faces.length ? runOp(F.holeOp) : (setPick('face'), toast('Tap a flat face where the hole goes, then Hole'))), 'drill counterbore countersink pattern bolt circle'), C('Recess', '', () => (S.ed.faces.length ? runOp(F.recessOp) : (setPick('face'), toast('Tap a flat face (a screw head), then Recess'))), 'drive socket hex allen phillips cross slot screwdriver'), C('Export STEP (exact)', '', () => exportAs('step'), 'step stp cad'), C('Export STL', '', () => exportAs('stl')), C('Export OBJ', '', () => exportAs('obj')), C('Export DXF', '', () => exportDXF()), C('New project', '', () => PJ.newProject(), 'new scene start fresh blank'), // (the old project stays in the library: a "New scene" here used to empty it in place)
+    C('Undo', '⌘Z', () => undoAct()), C('Redo', '⇧⌘Z', () => redo()), C('Save project', '⌘S', () => saveProject()), C('Open / import', '', () => $('#file-input').click(), 'step stl obj'), C('Thread', '', () => (S.ed.faces.length ? runOp(F.threadOp) : (setPick('face'), toast('Tap a shaft or hole face, then Thread'))), 'screw bolt nut helix tap'), C('Hole', '', () => (S.ed.faces.length ? runOp(F.holeOp) : (setPick('face'), toast('Tap a flat face where the hole goes, then Hole'))), 'drill counterbore countersink pattern bolt circle'), C('Recess', '', () => (S.ed.faces.length ? runOp(F.recessOp) : (setPick('face'), toast('Tap a flat face (a screw head), then Recess'))), 'drive socket hex allen phillips cross slot screwdriver'), C('Export STEP (exact)', '', () => exportAs('step'), 'step stp cad'), C('Export STL', '', () => exportAs('stl')), C('Export OBJ', '', () => exportAs('obj')), C('Export DXF', '', () => exportDXF()), C('New project', '', () => PJ.newProject(), 'new scene start fresh blank'), // (the old project stays in the library: a "New scene" here used to empty it in place)
   ];
 }
 function deleteSelection() {
@@ -2356,7 +2363,7 @@ function onKey(e) {
   // Plasticity's number typing: with a handle up (Extrude, Push/Pull, Fillet…), digits type its value
   if (!e.metaKey && !e.ctrlKey && typeKey(e)) { e.preventDefault(); return; }
   const k = e.key.toLowerCase(), cmd = e.metaKey || e.ctrlKey;
-  if (cmd && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+  if (cmd && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undoAct(); return; }
   if (cmd && k === 'y') { e.preventDefault(); redo(); return; }
   if (cmd && k === 's') { e.preventDefault(); saveProject(); return; }
   if (cmd && k === 'a') { e.preventDefault(); runOp(OPS.applyXf); return; }

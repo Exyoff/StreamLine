@@ -1664,6 +1664,26 @@ try {
     return { zeroAdded, label: h.label, size: h.params.size, err: h.err || '' };
   });
   check(gz.zeroAdded === 0 && /Fillet/.test(gz.label || '') && gz.size > 3 && gz.size < 10, `A fillet ball dragged out and back to where it started adds no step (${gz.zeroAdded}); dragged far past the largest radius it settles on one that fits (R${(+gz.size || 0).toFixed(2)}${gz.err ? ' · ' + gz.err : ''})`);
+  // Undo with a rectangle half drawn takes back only its first corner (it used to remove the rectangle before it too)
+  await st(() => { const L = StreamLine; L.S.ed.selected = new Set(); L.S.ed.faces = []; L.S.ed.edges = []; L.S.ed.profiles = []; L.startCreateSketch(); });
+  await p.waitForTimeout(400); await p.locator('#actions .act', { hasText: 'XY · Top' }).tap(); await p.waitForTimeout(500);
+  const und = await st(() => { const L = StreamLine, D = L.Draw; L.S.ed.tool = 'rect'; D.resetTool(); D.commitPoint([6000, 0]); D.commitPoint([6020, 10]); D.commitPoint([6000, 30]);
+    return { pending: !!D.st.start, n: L.SK.sketchById(L.S.ed.editingSketch).ents.length }; });
+  await p.tap('#btn-undo'); await p.waitForTimeout(300);
+  const und1 = await st(() => ({ editing: StreamLine.S.ed.editingSketch != null, n: StreamLine.SK.sketchById(StreamLine.S.ed.editingSketch)?.ents.length, pending: !!StreamLine.Draw.st.start }));
+  await p.tap('#btn-undo'); await p.waitForTimeout(300);
+  const und2 = await st(() => StreamLine.SK.sketchById(StreamLine.S.ed.editingSketch)?.ents.length ?? -1);
+  await st(() => { const L = StreamLine; L.S.ed.tool = 'select'; L.Draw.resetTool(); L.finishSketchEdit(); });
+  check(und.pending && und.n === 1 && und1.editing && und1.n === 1 && !und1.pending && und2 === 0, `Undo with a rectangle half drawn drops only its corner (${und.n} → ${und1.n} → ${und2} curves; still sketching: ${und1.editing})`);
+  // Mate stops waiting for its second face when another tool is chosen (the next face tap used to finish it)
+  const mt = await st(() => { const L = StreamLine, F = L.F, XY = { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] };
+    for (const x of [6100, 6150]) { L.runOp(F.sketchOpNew('m', XY, null, k => F.addEntity(k, { t: 'rect', x, y: 0, w: 20, h: 20 }))); L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [x + 1, 1] }], distance: 10, mode: 'new', target: null }); L.S.ed.sketch = null; }
+    const a = L.S.doc.objects.at(-2).id; L.clearLast?.(); L.S.ed.selected = new Set(); L.S.ed.pick = 'face'; L.S.ed.faces = [{ obj: a, n: [0, 0, 1], w: 10, p: [6110, 10, 10], planar: true }]; L.refresh(); return a; });
+  await p.waitForTimeout(300); await p.locator('#actions .act', { hasText: 'Mate' }).first().tap(); await p.waitForTimeout(300);
+  const armed = await st(() => !!StreamLine.S.ed.mateFrom);
+  await p.locator('#tools .tool[data-tool=select]').first().tap(); await p.waitForTimeout(300);
+  const mt2 = await st(() => ({ armed: !!StreamLine.S.ed.mateFrom, faces: StreamLine.S.ed.faces.length }));
+  check(armed && !mt2.armed && mt2.faces === 0, `Choosing another tool disarms a waiting Mate (armed ${armed} → ${mt2.armed}, ${mt2.faces} faces left picked)`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
