@@ -1642,6 +1642,28 @@ try {
     return { solveMs, fixedMs, gridMs, gridDof, dof: dofV, flat, len, gone: !L.S.doc.sketches.some(q => q.id === k.id) };
   });
   check(bigSk.solveMs < 150 && bigSk.fixedMs < 400 && bigSk.flat && bigSk.dof === 150 * 4 && bigSk.gone && bigSk.gridMs < 1500 && bigSk.gridDof === 32, `a 600-line sketch stays quick: a drag step solves in ${bigSk.solveMs.toFixed(0)} ms, the constraint colouring in ${bigSk.fixedMs.toFixed(0)} ms (${bigSk.dof} DOF free; the moved line stayed horizontal); a connected 480-line grid is analysed in ${bigSk.gridMs.toFixed(0)} ms (${bigSk.gridDof} DOF)`);
+  // gizmo drags: a fillet ball dragged the wrong way adds no step; a drag past the largest radius settles on one that fits
+  // and its moves never rebuild more than once a frame (they took 0.6–1.1 s each on a plate with 36 holes)
+  const gz = await st(async () => {
+    const L = StreamLine, F = L.F, m = await import('./js/ops.js'), XY = { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] };
+    L.runOp(F.sketchOpNew('gz', XY, null, k => F.addEntity(k, { t: 'rect', x: 5000, y: -15, w: 40, h: 30 }))); L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [5001, 0] }], distance: 10, mode: 'new', target: null }); m.commit(); L.S.ed.sketch = null;
+    const id = L.S.doc.objects.at(-1).id; L.S.ed.selected = new Set(); L.view.setView('iso'); L.view.frame([[5000, -15, 0], [5040, 15, 10]]); L.refresh();
+    await new Promise(r => setTimeout(r, 600));
+    const pickEdge = () => { L.S.ed.pick = 'edge'; L.S.ed.edges = [{ obj: id, a: [5000, -15, 10], b: [5040, -15, 10], pts: [[5000, -15, 10], [5040, -15, 10]] }]; L.refresh(); };
+    const ballAt = () => { const q = L.view.project([5020, -15, 10]); for (let r = 0; r < 140; r += 3) for (let a = 0; a < 360; a += 15) { const x = q.x + r * Math.cos(a * Math.PI / 180), y = q.y + r * Math.sin(a * Math.PI / 180); if (L.gizmoPartAt(x, y)) return { x, y }; } return null; };
+    pickEdge(); await new Promise(r => setTimeout(r, 300)); const b = ballAt(); if (!b) return { err: 'no fillet ball' };
+    const H = L.view.handlers, n0 = L.H.hist().length;
+    H.dragStart(b.x, b.y, {}); for (let i = 1; i <= 5; i++) H.dragMove(b.x + 6 * i, b.y + 8 * i); for (let i = 4; i >= 0; i--) H.dragMove(b.x + 6 * i, b.y + 8 * i); H.dragEnd();
+    const zeroAdded = L.H.hist().length - n0;
+    pickEdge(); await new Promise(r => setTimeout(r, 300)); const b2 = ballAt();
+    H.dragStart(b2.x, b2.y, {});
+    const hd = L.getLast().handle, sz = L.getLast().params.size, P0 = L.view.project(L.M.add(hd.origin, L.M.mul(hd.dir, sz))), P1 = L.view.project(L.M.add(hd.origin, L.M.mul(hd.dir, sz + 1)));
+    const dl = Math.hypot(P1.x - P0.x, P1.y - P0.y) || 1, ux = (P1.x - P0.x) / dl, uy = (P1.y - P0.y) / dl;
+    for (let i = 1; i <= 12; i++) H.dragMove(b2.x + ux * 25 * i, b2.y + uy * 25 * i); H.dragEnd();
+    const h = L.H.hist().at(-1);
+    return { zeroAdded, label: h.label, size: h.params.size, err: h.err || '' };
+  });
+  check(gz.zeroAdded === 0 && /Fillet/.test(gz.label || '') && gz.size > 3 && gz.size < 10, `A fillet ball dragged out and back to where it started adds no step (${gz.zeroAdded}); dragged far past the largest radius it settles on one that fits (R${(+gz.size || 0).toFixed(2)}${gz.err ? ' · ' + gz.err : ''})`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
@@ -1773,7 +1795,7 @@ try {
   await p.evaluate(() => document.querySelector('#scrim')?.click());
   await p.evaluate(() => { const L = StreamLine; Object.assign(L.S.settings, { theme: 'midnight', lighting: 'studio', finish: 'satin', edgeScale: 'screen' }); delete document.documentElement.dataset.theme; L.view.setLook(); L.refresh(); });
   // (the look change recompiles every shader: under the software renderer a few frames take seconds — let them land)
-  await p.evaluate(async () => { const t0 = performance.now(); let t = t0; while (performance.now() - t0 < 20000) { await new Promise(r => requestAnimationFrame(r)); const n = performance.now(); if (n - t < 100) break; t = n; } });
+  await p.evaluate(async () => { const t0 = performance.now(); let t = t0, fast = 0; while (performance.now() - t0 < 25000 && fast < 5) { await new Promise(r => requestAnimationFrame(r)); const n = performance.now(); fast = n - t < 100 ? fast + 1 : 0; t = n; } });
   await shot('5-timeline');
 } catch (e) {
   await p.screenshot({ path: OUT + 'crash.png' }).catch(() => {});
