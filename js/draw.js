@@ -1105,7 +1105,7 @@ function fillObj(s, r, color, opacity) {
 function renderSketches() {
   const ws = S.ed.workspace, act = studio() ? sk() : SK.activeSketch(), stu = studio();
   const key = [ws, S.ed.sketch, S.ed.editingSketch, H.hist().length, H.markerIndex(), (S.doc.sketches || []).map(s => isShown(s)).join(), [...S.ed.drawSel].join(), JSON.stringify(S.ed.profiles), S.settings.showSketches, view.theme.name].join('|');
-  C.line.set(view.theme.sketch); C.fixed.set(view.theme.skFixed || '#9fe39a'); C.sel.set(view.theme.act || '#6fb4ff');
+  C.line.set(view.theme.sketch); C.fixed.set(view.theme.skFixed || '#9fe39a'); C.sel.set(view.theme.skSel || '#ffd23f'); // (picked curves amber: free curves are already blue, so a lighter blue did not show the pick)
   const sketches = S.doc.sketches || [];
   const entsArr = sketches.map(s => s.ents), prevEnts = sketchGroup.userData.ents || [];
   const changed = key !== renderKey || entsArr.length !== prevEnts.length || entsArr.some((e, i) => e !== prevEnts[i]);
@@ -1174,7 +1174,7 @@ function renderSketches() {
         if (ws === 'draw' && isAct || ws === 'cad' || stu) {
           const selRegs = new Set(S.ed.profiles.filter(q => q.sk === s.id).map(q => SK.regionAt(s, q.pt)).filter(Boolean));
           const prof = new THREE.Color(view.theme.profile).getHex();
-          for (const r of SK.regions(s)) if (!usedRegs || !usedRegs.has(r) || selRegs.has(r)) sg.add(fillObj(s, r, selRegs.has(r) ? view.selHex() : prof, selRegs.has(r) ? 0.5 : stu ? view.theme.profA : 0.1));
+          for (const r of SK.regions(s)) if (!usedRegs || !usedRegs.has(r) || selRegs.has(r)) sg.add(fillObj(s, r, selRegs.has(r) ? view.selHex() : prof, selRegs.has(r) ? 0.5 : stu ? view.theme.profA * (S.ed.editingSketch === s.id ? 1 : 0.55) : 0.1)); // (a finished sketch's profiles stay a faint hint)
         }
       }
     }
