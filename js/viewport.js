@@ -49,6 +49,15 @@ export const view = {
 };
 
 view.fatMat = fatMat;
+// Free a group's GPU objects once the frame drawing its replacement is done. three.js drops a shader program when the
+// last material using it is disposed, so throwing away a sketch's lines before their rebuilt twins were drawn made
+// every drag step recompile the line shaders (seconds per step on a big sketch)
+let doomed = [], doomT = 0;
+view.disposeLater = root => {
+  root.traverse(o => { if (o !== root) { if (o.geometry) doomed.push(o.geometry); if (o.material) doomed.push(...[].concat(o.material)); } });
+  root.clear();
+  if (!doomT) doomT = requestAnimationFrame(() => { doomT = requestAnimationFrame(() => { const d = doomed; doomed = []; doomT = 0; for (const x of d) try { x.dispose(); } catch (e) { /* gone */ } }); });
+};
 view.THEMES = THEMES; view.LIGHTING = LIGHTING; view.FINISH = FINISH;
 view.theme = THEMES.midnight;
 // the selection colour as a number (overlays in app.js / draw.js use it)
