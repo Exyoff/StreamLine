@@ -508,7 +508,13 @@ export const edgeBlendOp = {
           }
         }
         const pr = new occ.Message_ProgressRange(); b.Build(pr); pr.delete();
-        if (!b.IsDone()) { b.delete(); throw new Error('size too large'); }
+        if (!b.IsDone()) {
+          b.delete();
+          // (a chamfer that takes a whole face — top face straight to the bottom edge — is cut in as a wedge instead:
+          // the builder refuses it, and the nearest size it takes left a step)
+          if (p.kind === 'chamfer') { const w = K.wedgeChamfer(o.shape, edges, p.size, p.size2, !!p.swap); if (w) return w; }
+          throw new Error('size too large');
+        }
         const s = R.cast(b.Shape()); b.delete();
         return s;
       }, `${p.kind === 'fillet' ? 'Radius' : 'Distance'} ${fmtLen(p.size)} does not fit ${p.edges.length === 1 ? 'this edge' : 'these edges'}`);
