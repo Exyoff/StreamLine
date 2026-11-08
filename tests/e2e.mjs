@@ -1697,6 +1697,8 @@ try {
   const arm1 = await st(() => StreamLine.getLast()?.params?.edges?.length || 0);
   aq = await projW([6340, 0, 20]); await tapV(aq.x, aq.y);
   const arm2 = await st(() => ({ n: StreamLine.getLast()?.params?.edges?.length || 0, label: StreamLine.H.hist().at(-1).label }));
+  const cubeUp = await st(() => { const n = document.querySelector('#nav'), c = document.querySelector('#lastop'), nr = n.getBoundingClientRect(), cr = c.getBoundingClientRect(); return { vis: getComputedStyle(n).visibility !== 'hidden' && !c.hidden, clear: nr.bottom <= cr.top + 1 }; });
+  check(cubeUp.vis && cubeUp.clear, `With a step card docked at the bottom the cube rides above it instead of hiding (${JSON.stringify(cubeUp)})`);
   await p.evaluate(() => document.querySelector('#lastop .ib[aria-label=Done]')?.click()); await p.waitForTimeout(200);
   await p.locator('#toolsets .tset', { hasText: 'Solid' }).first().tap(); await p.waitForTimeout(200);
   check(armLock === 'edge' && arm1 === 1 && arm2.n === 2 && /Fillet · 2 edges/.test(arm2.label), `Fillet before any edge waits armed (${armLock}); the first edge opens it (${arm1}) and the next joins it (${arm2.label})`);
