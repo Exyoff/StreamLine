@@ -98,7 +98,7 @@ async function boot() {
     const t = Math.max(top ? top.bottom - vr.top : 0, tl ? tl.bottom - vr.top : 0, hb);
     const r = zb && zb.left > vr.width / 2 ? vr.right - zb.left : 0; // the zoom bar on the right
     // (the cube and view tools ride up above the command line when it is open: they still keep the model clear)
-    const bottoms = ['#stationbar', '#vtools-c', '#nav', '#lastop', '#cmdbar'].map(q => vis($(q))).filter(Boolean).map(r => r.top - vr.top).filter(y => y > vr.height * 0.3);
+    const bottoms = ['#stationbar', '#vtools-c', '#nav', '#lastop', '#cmdbar'].map(q => $(q)).filter(e => e && !e.style.transform).map(vis).filter(Boolean) /* (lifted over a step card, they are corner widgets, not a floor) */.map(r => r.top - vr.top).filter(y => y > vr.height * 0.3);
     const b = bottoms.length ? vr.bottom - vr.top - Math.min(...bottoms) : 0;
     return { l: Math.max(0, l), r: Math.max(0, r), t: Math.max(0, t), b: Math.max(0, b) };
   };
@@ -1966,7 +1966,7 @@ const moreOps = new WeakSet();
 // drawing) or when a card is over them; Home then rides at the top of the zoom column
 function placeViewTools() {
   const zb = $('#zoombar'), nav = $('#nav'), vt = $('#vtools-c'), h2 = $('#btn-home2'); if (!zb) return;
-  for (const el of [zb, nav, vt]) if (el) el.style.visibility = '';
+  for (const el of [zb, nav, vt]) if (el) { el.style.visibility = ''; el.style.transform = ''; }
   zb.style.top = zb.style.bottom = ''; zb.classList.remove('cramped'); if (h2) h2.hidden = true;
   const cards = ['#lastop', '#draw-card'].map(q => $(q)).filter(c => c && !c.hidden).map(c => c.getBoundingClientRect()).filter(r => r.width > 0 && r.height > 0);
   if (!cards.length) return;
@@ -1975,10 +1975,21 @@ function placeViewTools() {
   // view tools step aside; two fingers still zoom)
   const landDraw = matchMedia('(orientation: landscape) and (max-height: 500px)').matches && !$('#draw-card').hidden && S.ed.tool !== 'select';
   if (landDraw) { for (const el of [zb, nav, vt]) if (el) el.style.visibility = 'hidden'; return; }
-  for (const el of [nav, vt]) if (el && ((phone && !$('#draw-card').hidden) || cards.some(c => over(el.getBoundingClientRect(), c)))) el.style.visibility = 'hidden';
-  if (h2 && vt?.style.visibility === 'hidden') h2.hidden = false;
   const vp = $('#viewport').getBoundingClientRect(), cs = getComputedStyle(zb), zr = zb.getBoundingClientRect();
   let top = vp.top + parseFloat(cs.top), bot = vp.bottom - parseFloat(cs.bottom);
+  // a step card docked over the cube lifts the cube and its view tools above it, room allowing: they are the only way
+  // to turn the view (one finger never does), and a step is often set while looking round the part. The zoom bar
+  // gives way first (two fingers still zoom)
+  for (const el of [nav, vt]) {
+    if (!el) continue;
+    if (phone && !$('#draw-card').hidden) { el.style.visibility = 'hidden'; continue; }
+    const r = el.getBoundingClientRect(), c = cards.find(c => over(r, c)); if (!c) continue;
+    const lift = r.bottom - (c.top - 8);
+    if (c.bottom >= r.bottom - 4 && r.top - lift >= top) el.style.transform = `translateY(${-lift}px)`;
+    else el.style.visibility = 'hidden';
+  }
+  if (h2 && vt?.style.visibility === 'hidden') h2.hidden = false;
+  if (nav && nav.style.transform && nav.style.visibility !== 'hidden') { const nr = nav.getBoundingClientRect(); if (nr.left < zr.right && zr.left < nr.right) bot = Math.min(bot, nr.top - 8); }
   // (with the cube stepped aside the column may run on down to a card docked at the bottom)
   if (nav?.style.visibility === 'hidden') bot = Math.max(bot, nav.getBoundingClientRect().bottom);
   for (const c of cards) {

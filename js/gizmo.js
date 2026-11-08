@@ -356,7 +356,7 @@ function skMoveDrag(x, y, part) {
 function handleDrag(x, y, part, created) {
   {
     const last = getLast(), h = last.handle, k = 'handle';
-    drag = { part, k, created, v0: last.params[h.key], t0: axisParam(x, y, M.add(h.origin, M.mul(h.dir, last.params[h.key])), h.dir) ?? 0, h, x0: x, y0: y };
+    drag = { part, k, created, v0: last.params[h.key], good: last.params[h.key], t0: axisParam(x, y, M.add(h.origin, M.mul(h.dir, last.params[h.key])), h.dir) ?? 0, h, x0: x, y0: y };
     // screen-space gain: how many pixels one mm along the arrow moves on screen (stable at any view angle)
     const O = M.add(h.origin, M.mul(h.dir, drag.v0)), A = view.project(O), B = view.project(M.add(O, h.dir));
     const sx = B.x - A.x, sy = B.y - A.y, ppm = Math.hypot(sx, sy);
@@ -497,7 +497,7 @@ function dragEnd() {
   liveFlush(); liveLast = '';
   if (sized(drag) && drag.want != null && drag.bad != null && drag.good != null) { // overshot: settle on the largest size that fits
     let lo = drag.good, hi = Math.min(drag.bad, drag.want); const step = snapOn() ? fineStep() : 0;
-    for (let i = 0; i < 5 && hi - lo > Math.max(step, 1e-3 * hi); i++) {
+    for (let i = 0; i < 7 && hi - lo > Math.max(step, 1e-3 * hi); i++) {
       let mid = (lo + hi) / 2; if (step) mid = Math.floor(mid / step) * step; if (mid <= lo + 1e-12) break;
       updateOp({ size: mid }); if (Math.abs(getLast().params.size - mid) < 1e-12) lo = mid; else hi = mid;
     }
