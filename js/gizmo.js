@@ -385,6 +385,42 @@ function transformDrag(x, y, part, k) {
   return true;
 }
 
+// Live preview of a drag: the same value twice is not rebuilt, and once a rebuild is slow (a fillet on a plate full
+// of holes took 0.6–2.5 s a move) at most one runs per frame, always with the latest value — queued moves no longer
+// each rebuild the solid in turn while the handle trails the finger by seconds
+let pend = null, pendT = 0, liveCost = 0, liveLast = '';
+function liveUpdate(params) {
+  if (drag) drag.last = { ...(drag.last || {}), ...params };
+  pend = { ...(pend || {}), ...params };
+  if (pendT) return;
+  if (liveCost < 25) return liveFlush();
+  pendT = requestAnimationFrame(liveFlush);
+}
+// (a size that failed bounds the drag: anything at or past it is not rebuilt again — on release the largest size that
+// fits is found between the last one that worked and the one that failed)
+const sized = d => d && d.k === 'handle' && d.h.key === 'size';
+function liveFlush() {
+  if (pendT) cancelAnimationFrame(pendT);
+  pendT = 0; if (!pend) return;
+  const p = pend; pend = null;
+  if (sized(drag) && drag.bad != null && p.size >= drag.bad) { drag.want = p.size; p.size = drag.good ?? getLast().params.size; } else if (drag) drag.want = null;
+  const key = JSON.stringify(p);
+  if (key === liveLast) return;
+  const t = performance.now(); updateOp(p); liveCost = performance.now() - t; liveLast = key;
+  if (sized(drag)) { const got = getLast().params.size; if (Math.abs(got - p.size) > 1e-12) { drag.bad = Math.min(drag.bad ?? Infinity, p.size); drag.want = p.size; } else if (p.size < (drag.bad ?? Infinity)) drag.good = got; }
+  if (drag && drag.k === 'handle') readout = { world: M.add(drag.h.origin, M.mul(drag.h.dir, p[drag.h.key])), text: `${getLast().def.label(getLast().params)} ${fmtLen(p[drag.h.key])}` };
+  view.render();
+}
+// a drag that ends where it began changes nothing: it adds no step (Fillet R0, Rotate 0°, Move 0)
+function netZero(d) {
+  const p = d.last || {}, z = v => Math.abs(v || 0) < 1e-9;
+  if (d.k === 'handle') { const v = p[d.h.key]; return v == null || Math.abs(v - d.v0) < 1e-9 || (d.created && d.h.min != null && v <= d.h.min + 1e-9); }
+  if (d.k === 'skmove') return z(p.dx) && z(p.dy);
+  if (d.k === 'move') return z(p.x) && z(p.y) && z(p.z);
+  if (d.k === 'rotate') return z(((p.angle || 0) % 360 + 360) % 360) || z(((p.angle || 0) % 360 + 360) % 360 - 360);
+  if (d.k === 'scale') return [p.sx, p.sy, p.sz].every(v => v == null || Math.abs(v - 1) < 1e-9);
+  return false;
+}
 function dragMove(x, y) {
   if (!drag) return;
   if (!drag.moved && Math.hypot(x - drag.x0, y - drag.y0) < 4) return;
@@ -397,16 +433,14 @@ function dragMove(x, y) {
     else { const t = axisParam(x, y, M.add(h.origin, M.mul(h.dir, drag.v0)), h.dir); if (t == null) return; v = drag.v0 + (t - drag.t0); }
     if (snapOn()) v = stepSnap(v, fineStep());
     if (h.min != null) v = Math.max(h.min, v);
-    updateOp({ [h.key]: v });
-    readout = { world: M.add(h.origin, M.mul(h.dir, v)), text: `${getLast().def.label(getLast().params)} ${fmtLen(v)}` };
-    view.render(); return;
+    liveUpdate({ [h.key]: v }); return;
   }
   if (drag.k === 'skmove') {
     const pl = drag.pl, sn = v => (snapOn() ? stepSnap(v, S.settings.snapStep) : v);
     let d2;
     if (drag.part.axis) { const t = axisParam(x, y, pv, drag.part.axis.v); if (t == null || drag.t0 == null) return; const a = sn(t - drag.t0); d2 = drag.part.axis.k === 'u' ? [a, 0] : [0, a]; }
     else { const p = planePoint(x, y, pv, pl.n); if (!p || !drag.p0) return; const dw = M.sub(p, drag.p0); d2 = [sn(M.dot(dw, pl.u)), sn(M.dot(dw, pl.v))]; }
-    updateOp({ dx: d2[0], dy: d2[1] });
+    liveUpdate({ dx: d2[0], dy: d2[1] });
     readout = { world: M.add(pv, M.add(M.mul(pl.u, d2[0]), M.mul(pl.v, d2[1]))), text: drag.part.axis ? `${drag.part.axis.k === 'u' ? 'X' : 'Y'} ${fmtLen(drag.part.axis.k === 'u' ? d2[0] : d2[1])}` : `Δ X ${fmtLen(d2[0], false)}  Y ${fmtLen(d2[1], false)}` };
     view.render(); return;
   }
@@ -454,17 +488,27 @@ function dragMove(x, y) {
     else params = { sx: f, sy: f, sz: f };
     readout = { world: pv, text: `× ${fmtNum(f)}` };
   }
-  updateOp(params);
+  liveUpdate(params);
   view.render();
 }
 
 function dragEnd() {
   if (!drag) return;
+  liveFlush(); liveLast = '';
+  if (sized(drag) && drag.want != null && drag.bad != null && drag.good != null) { // overshot: settle on the largest size that fits
+    let lo = drag.good, hi = Math.min(drag.bad, drag.want); const step = snapOn() ? fineStep() : 0;
+    for (let i = 0; i < 5 && hi - lo > Math.max(step, 1e-3 * hi); i++) {
+      let mid = (lo + hi) / 2; if (step) mid = Math.floor(mid / step) * step; if (mid <= lo + 1e-12) break;
+      updateOp({ size: mid }); if (Math.abs(getLast().params.size - mid) < 1e-12) lo = mid; else hi = mid;
+    }
+    if (Math.abs(getLast().params.size - lo) > 1e-12) updateOp({ size: lo });
+  }
   if (!drag.moved) { // a tap on the gizmo: nothing changes, and the tap picks what is under it
     if (drag.k !== 'handle' || drag.created) cancelOp();
     drag = null; readout = null; snapMarker.visible = false; view.render();
     return 'tap';
   }
+  if (drag.k !== 'handle' || drag.created ? netZero(drag) : false) { cancelOp(); drag = null; readout = null; snapMarker.visible = false; emit('lastop', getLast()); view.render(); return; }
   if (drag.k === 'move' && drag.part.axis) getLast()._typeKey = drag.part.axis.k;
   if (drag.k === 'rotate') getLast()._typeKey = 'angle';
   if (drag.k !== 'handle' || drag.created) commit();
@@ -479,6 +523,7 @@ function dragEnd() {
 }
 function dragCancel() {
   if (!drag) return;
+  if (pendT) cancelAnimationFrame(pendT); pendT = 0; pend = null; liveLast = '';
   if (drag.k === 'handle' && !drag.created) updateOp({ [drag.h.key]: drag.v0 }); else cancelOp();
   drag = null; readout = null; snapMarker.visible = false;
   view.render();
