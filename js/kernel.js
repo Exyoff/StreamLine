@@ -602,8 +602,10 @@ export function wedgeChamfer(shape, edges, d1, d2, swap = false) {
     // each distance within its face (a bevel past it would run through the faces beyond)
     const reach = (F, u) => Math.max(...F.edges.flatMap(x => [P3(x.startPoint), P3(x.endPoint)]).map(v => dot(sub(v, mid), u)));
     if (d1 > reach(F1, u1) + 1e-6 || d2 > reach(F2, u2) + 1e-6) return null;
-    const m = 0.05 * Math.max(d1, d2) + 0.01, A = add(P, mul(u1, d1)), B = add(P, mul(u2, d2)), h = norm(sub(B, A));
-    tools.push(polyPrism([add(P, mul(add(u1, u2), -m)), sub(A, mul(h, m)), add(B, mul(h, m))], mul(t, L)));
+    // the cutter: the wedge between the edge and the bevel, grown only outward through the two faces (never past the
+    // bevel's ends: there the body may go on — a boss's chamfer as tall as the boss ends on the base's top face)
+    const m = 0.05 * Math.max(d1, d2) + 0.01, A = add(P, mul(u1, d1)), B = add(P, mul(u2, d2));
+    tools.push(polyPrism([add(P, mul(add(n1, n2), m)), add(A, mul(n1, m)), A, B, add(B, mul(n2, m))], mul(t, L)));
   }
   if (!tools.length) return null;
   const v0 = Math.abs(volume(shape)), r = tools.length === 1 ? boolean('subtract', shape, tools[0]) : cutMany(shape, tools);

@@ -1758,9 +1758,16 @@ try {
       const ok = L.runOp(F.edgeBlendOp, { kind: 'chamfer', size: d1, size2: d2 }); m.commit(); const o = L.S.doc.objects.find(q => q.id === id);
       out.push({ ok: !!ok, v: +L.K.volume(o.shape).toFixed(6), faces: o.shape.faces.length, valid: L.K.isValid(o.shape) });
     }
+    // a smaller block centred on a bigger one: a chamfer as tall as it runs from the big block's top face straight up
+    // (the cutter must not groove the big block where the bevel ends on it)
+    L.runOp(F.sketchOpNew('big', XY, null, k => F.addEntity(k, { t: 'rect', x: 9170, y: -30, w: 60, h: 60 }))); L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [9200, 0] }], distance: 20, mode: 'new', target: null }); m.commit(); L.S.ed.sketch = null;
+    const bid = L.S.doc.objects.at(-1).id;
+    L.runOp(F.sketchOpNew('small', { o: [0, 0, 20], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }, { obj: bid, n: [0, 0, 1], p: [9200, 0, 20] }, k => F.addEntity(k, { t: 'rect', x: 9185, y: -15, w: 30, h: 30 }))); L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [9200, 0] }], distance: 10, mode: 'join', target: bid }); m.commit(); L.S.ed.sketch = null;
+    L.S.ed.edges = [{ obj: bid, a: [9185, -15, 30], b: [9215, -15, 30] }]; const okb = L.runOp(F.edgeBlendOp, { kind: 'chamfer', size: 10 }); m.commit(); const ob = L.S.doc.objects.find(q => q.id === bid);
+    out.push({ ok: !!okb, v: +L.K.volume(ob.shape).toFixed(6), faces: ob.shape.faces.length, valid: L.K.isValid(ob.shape) });
     L.S.ed.edges = []; return out;
   });
-  check(chf.every(r => r.ok && r.valid && r.faces === 6) && chf[0].v === 10000 && chf[1].v === 11000, `A chamfer as deep as its face bevels straight to the far edge with no step (${chf.map(r => r.v + ' mm³, ' + r.faces + ' faces').join(' · ')})`);
+  check(chf.slice(0, 2).every(r => r.ok && r.valid && r.faces === 6) && chf[0].v === 10000 && chf[1].v === 11000 && chf[2].ok && chf[2].valid && chf[2].faces === 11 && chf[2].v === 79500, `A chamfer as deep as its face bevels straight to the far edge with no step (${chf.map(r => r.v + ' mm³, ' + r.faces + ' faces').join(' · ')})`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
