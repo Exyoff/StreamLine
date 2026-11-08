@@ -56,24 +56,23 @@ export function openKeypad({ label, kind = 'len', value = 0, min = null, max = n
     const op = '÷×−+()⌫±'.includes(k);
     grid.append(h('button', { class: op ? 'op' : '', 'data-k': k, html: k === '⌫' ? I.backspace : k }));
   }
-  if (units.length) {
-    for (const u of units) grid.append(h('button', { class: 'u', 'data-k': ' ' + u }, u));
-    for (let i = units.length; i < 5; i++) grid.append(h('span'));
-  }
+  // (units ride as small chips beside the result, not a row of their own: the keypad took two thirds of a phone's
+  // screen and hid the live preview it was editing)
+  const meta = h('div', { class: 'kmeta' }, h('div', { class: 'kunits' }, ...units.map(u => h('button', { class: 'u', 'data-k': ' ' + u }, u))), h('div', { class: 'kprev' }));
   grid.append(h('button', { class: 'cancel', 'data-k': 'esc' }, 'Cancel'));
   grid.append(h('button', { class: 'ok', 'data-k': 'ok' }, 'Done'));
   el.replaceChildren(
     h('div', { class: 'kd' }, h('span', { class: 'kl' }, label || ''),
       ...extra.map(x => h('button', { class: 'kx ' + (x.cls || ''), onclick: e => { e.stopPropagation(); if (performance.now() - openedAt < 450) return; /* (the ghost click of the tap that opened it) */ closeKeypad(false); x.onClick(); } }, x.label)),
       h('div', { class: 'kexpr' })),
-    h('div', { class: 'kprev' }), grid);
+    meta, grid);
   el.hidden = false;
   // keep the field being edited visible: lift its card above the keypad
   if (anchor) {
     const card = anchor.closest('.card'), kt = el.getBoundingClientRect().top, ab = anchor.getBoundingClientRect().bottom;
     if (card && ab > kt - 40) { card.style.transform = `translateY(${-Math.min(ab - kt + 44, card.getBoundingClientRect().top - 8)}px)`; kp.lifted = card; } // +30: keypad slides in
   }
-  grid.addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; e.preventDefault(); if (performance.now() - openedAt < 450) return; /* ghost click from the tap that opened us */ press(b.dataset.k); });
+  for (const box of [grid, meta]) box.addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; e.preventDefault(); if (performance.now() - openedAt < 450) return; /* ghost click from the tap that opened us */ press(b.dataset.k); });
   renderKp();
 }
 function renderKp() {

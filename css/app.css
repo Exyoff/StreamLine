@@ -361,18 +361,22 @@ body.ws-model #lastop .field .seg button { height: 36px; font-size: 13px; }
 /* ---------- keypad: floating glass panel ---------- */
 #keypad {
   position: fixed; left: 8px; right: 8px; bottom: 8px; z-index: 40; border-radius: 34px; background: var(--glass-strong);
-  padding: 10px 12px max(12px, var(--sab)); animation: kpin .25s cubic-bezier(.2,.9,.2,1);
+  padding: 6px 12px max(10px, var(--sab)); animation: kpin .25s cubic-bezier(.2,.9,.2,1);
 }
 @keyframes kpin { from { transform: translateY(30px); opacity: 0; } }
-#keypad .kd { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px 6px; }
+#keypad .kd { display: flex; align-items: baseline; gap: 8px; padding: 4px 8px 2px; }
 #keypad .kl { color: var(--muted); font-size: 13px; font-weight: 600; }
 #keypad .kexpr { flex: 1; text-align: right; font: 600 28px/1.2 var(--font-round); overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
 #keypad .kexpr.fresh { color: var(--accent); }
 #keypad .kexpr.fresh span { background: rgba(var(--accent-rgb),.22); border-radius: 6px; }
-#keypad .kprev { text-align: right; font: 13px var(--mono); color: var(--muted); padding: 0 8px 8px; min-height: 22px; }
+#keypad .kmeta { display: flex; align-items: center; gap: 8px; padding: 0 4px 6px; min-height: 30px; }
+#keypad .kunits { display: flex; gap: 4px; flex: none; }
+#keypad .kunits button { height: 28px; min-width: 34px; padding: 0 8px; border-radius: 999px; background: var(--fill); font: 600 13px var(--font); color: #64b5ff; }
+#keypad .kunits button:active { background: rgba(var(--hl),.3); }
+#keypad .kprev { flex: 1; min-width: 0; text-align: right; font: 13px var(--mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #keypad .kprev.err { color: var(--danger); }
-#keypad .kg { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; max-width: 520px; margin: 0 auto; }
-#keypad .kg button { height: 50px; border-radius: 999px; background: var(--fill-2); font: 500 22px var(--font-round); display: grid; place-items: center; transition: background .1s; }
+#keypad .kg { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; max-width: 520px; margin: 0 auto; }
+#keypad .kg button { height: 42px; border-radius: 999px; background: var(--fill-2); font: 500 22px var(--font-round); display: grid; place-items: center; transition: background .1s; }
 #keypad .kg button:active { background: rgba(var(--hl),.3); }
 #keypad .kg button.op { background: rgba(var(--accent-rgb),.2); color: var(--accent); }
 #keypad .kg button.u { background: var(--fill); font-size: 15px; color: #64b5ff; font-weight: 600; }
@@ -470,7 +474,8 @@ body:has(#popover:not([hidden])) #toast { opacity: 0; }
   #keypad { left: auto; right: calc(var(--sar) + 8px); width: min(430px, 56vw); transform: none; max-height: calc(100dvh - 16px); overflow-y: auto; padding-top: 4px; }
   #keypad .kd { padding: 0 8px 2px; }
   #keypad .kexpr { font-size: 22px; }
-  #keypad .kprev { min-height: 0; padding-bottom: 2px; }
+  #keypad .kmeta { min-height: 0; padding-bottom: 4px; }
+  #keypad .kunits button { height: 26px; }
   #keypad .kg { gap: 5px; max-width: 640px; }
   #keypad .kg button { height: 36px; font-size: 18px; }
 }
