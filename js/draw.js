@@ -14,7 +14,7 @@ import { Line2 } from '../vendor/lines/Line2.js';
 import { LineGeometry } from '../vendor/lines/LineGeometry.js';
 import { LineSegments2 } from '../vendor/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from '../vendor/lines/LineSegmentsGeometry.js';
-import { editAndSolve, dof as sketchDof, constrainedEntities } from './constraints.js';
+import { editAndSolve, dof as sketchDof, analyze as analyzeSketch } from './constraints.js';
 import { defSize } from './operators.js';
 import { I } from './icons.js';
 import * as H from './history.js';
@@ -783,12 +783,22 @@ export function fillTap(x, y) {
 import { fixValues as fixValuesOf } from './constraints.js';
 // the constraint analysis (DOF left, which curves are fully constrained) re-runs only when the sketch's content changes
 const skKey = s => JSON.stringify(s.ents) + JSON.stringify(s.cons || []);
-let dofCache = { k: null, v: 0 }; const fixedCache = new Map();
-function fixedOf(s) { const k = skKey(s), c = fixedCache.get(s.id); if (c && c.k === k) return c.v; const v = constrainedEntities(s); fixedCache.set(s.id, { k, v }); return v; }
+// (while a finger drags, a slow analysis keeps its last answer and runs once the sketch rests)
+const anCache = new Map(); let anT = 0, anForce = false;
+function analysisOf(s) {
+  const k = skKey(s), c = anCache.get(s.id);
+  if (c && c.k === k) return c.v;
+  const dragging = !!st.grip || !!(getLast() && !getLast().committed);
+  if (c && c.ms > 15 && dragging && !anForce) { clearTimeout(anT); anT = setTimeout(() => { anForce = true; view.render(); emit('drawcard'); }, 250); return c.v; }
+  anForce = false;
+  const t = performance.now(), v = analyzeSketch(s); anCache.set(s.id, { k, v, ms: performance.now() - t });
+  return v;
+}
+const fixedOf = s => analysisOf(s).fixed;
 export function dofText() {
   const s = sk(); if (!s || !s.ents || !s.ents.length) return '';
-  const k = skKey(s); if (dofCache.k !== k) dofCache = { k, v: sketchDof(s) };
-  return dofCache.v === 0 ? 'fully constrained' : `${dofCache.v} DOF free`;
+  const v = analysisOf(s).dof;
+  return v === 0 ? 'fully constrained' : `${v} DOF free`;
 }
 
 export function toggleConstruction() {
