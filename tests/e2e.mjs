@@ -1729,6 +1729,26 @@ try {
     m.commit(); L.S.ed.tool = 'select'; D.resetTool(); L.finishSketchEdit(); return out;
   });
   check(sc2.origin && sc2.c[0] === -10650 && sc2.c[1] === 0 && sc2.r === 6, `Sketch Scale has Origin and Scale fields; ×−1.5 about the sketch origin puts a circle at x ${sc2.c[0]} with R ${sc2.r}`);
+  // a sketch Mirror stays tied to its source: a radius, a dimension and a constraint on the source carry over to the copy;
+  // and a constraint may be added twice (a second Vertical on a line already held vertical)
+  await st(() => { const L = StreamLine; L.S.ed.selected = new Set(); L.startCreateSketch(); }); await p.waitForTimeout(400);
+  await p.locator('#actions .act', { hasText: 'XY · Top' }).tap(); await p.waitForTimeout(500);
+  const mir = await st(async () => {
+    const L = StreamLine, D = L.Draw, m = await import('./js/ops.js'), CS = await import('./js/constraints.js'), K = () => L.SK.sketchById(L.S.ed.editingSketch);
+    L.S.ed.tool = 'line'; D.resetTool(); D.commitPoint([8010, 0]); D.commitPoint([8020, 15]); D.resetTool();
+    L.S.ed.tool = 'circle'; D.resetTool(); D.commitPoint([8015, 25]); D.commitPoint([8018, 25]); m.commit(); m.clearLast();
+    const src = K().ents.filter(e => e.t === 'line' || e.t === 'circle').map(e => e.id), dof0 = CS.dof(K());
+    L.S.ed.tool = 'mirror'; D.resetTool(); L.S.ed.drawSel = new Set(src); D.startCommand(); D.commitPoint([8000, -10]); D.commitPoint([8000, 10]); m.commit(); m.clearLast();
+    const dof1 = CS.dof(K()), ln = K().ents.filter(e => e.t === 'line' && !e.construction), ci = K().ents.filter(e => e.t === 'circle');
+    L.runOp(L.F.sketchOp('edit', L.S.ed.editingSketch, kk => CS.editAndSolve(kk, k2 => { L.SK.entById(k2, ci[0].id).r = 5; k2.ents.push({ id: ++k2.nextEnt, t: 'dim', kind: 'lin', A: { e: ln[0].id, k: 'a' }, B: { e: ln[0].id, k: 'b' }, value: 30, at: [8030, 0] }); }) || undefined)); m.commit(); m.clearLast();
+    L.S.ed.drawSel = new Set([ln[0].id]); D.constrain('v');
+    const n0 = K().cons.length; L.S.ed.drawSel = new Set([ln[1].id]); D.constrain('v'); L.S.ed.drawSel = new Set([ln[1].id]); D.constrain('v'); const dup = K().cons.length - n0;
+    const k = K(), s = L.SK.entById(k, ln[0].id), c = L.SK.entById(k, ln[1].id), cc = L.SK.entById(k, ci[1].id);
+    const mirrored = [[s.a, c.a], [s.b, c.b]].every(([q, r]) => Math.abs(q[0] - 8000 + (r[0] - 8000)) < 1e-6 && Math.abs(q[1] - r[1]) < 1e-6);
+    const out = { dof0, dof1, mirrored, copyLen: Math.hypot(c.b[0] - c.a[0], c.b[1] - c.a[1]), copyR: cc.r, copyV: Math.abs(c.a[0] - c.b[0]) < 1e-9, dup };
+    L.S.ed.tool = 'select'; D.resetTool(); L.finishSketchEdit(); return out;
+  });
+  check(mir.dof0 === mir.dof1 && mir.mirrored && Math.abs(mir.copyLen - 30) < 1e-6 && Math.abs(mir.copyR - 5) < 1e-9 && mir.copyV && mir.dup === 2, `A mirrored copy follows its source (a 30 mm dimension, R5, Vertical: ${mir.copyLen.toFixed(3)} mm, R${mir.copyR}, ${mir.copyV ? 'vertical' : 'not vertical'}; DOF ${mir.dof0} → ${mir.dof1}); a Vertical added twice more on the copy is kept (${mir.dup})`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
