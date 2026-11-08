@@ -55,7 +55,7 @@ function groups(sk, ctx) {
   for (const c of sk.cons || []) {
     const a = ent(c.a), b = c.b != null ? ent(c.b) : null;
     if (!a) continue;
-    const ids = [c.a, c.b, c.p && c.p.e];
+    const ids = [c.a, c.b, c.p && c.p.e, c.q && c.q.e];
     switch (c.t) {
       case 'h': add(ids, () => [a.a[1] - a.b[1]]); break;
       case 'v': add(ids, () => [a.a[0] - a.b[0]]); break;
@@ -84,6 +84,11 @@ function groups(sk, ctx) {
       case 'fix': add(ids, () => (PARAMS[a.t] || []).map(k => { const [f, i] = k.split('.'); const v = i == null ? a[f] : a[f][+i]; return v - c.v[k]; })); break;
       case 'on': // point c.p lies on curve a (Fusion's coincident to a curve): on a line, or on a circle / arc's rim
         add(ids, () => { const p = pt(c.p); if (!p) return []; if (a.t === 'line') return [lineDist(a, p)]; if (a.r != null && a.c) return [d2(p, a.c) - a.r]; return []; });
+        break;
+      case 'sym': // points c.p and c.q mirror each other about line a (a sketch Mirror keeps its copy this way)
+        if (a.t !== 'line') break;
+        add(ids, () => { const p = pt(c.p), q = pt(c.q); if (!p || !q) return []; const d = lineDir(a), l = Math.hypot(d[0], d[1]) || 1e-300;
+          return [lineDist(a, [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2]), ((q[0] - p[0]) * d[0] + (q[1] - p[1]) * d[1]) / l]; });
         break;
       case 'mid': // point c.p is the midpoint of line a
         add(ids, () => { const p = pt(c.p); return p ? [p[0] - (a.a[0] + a.b[0]) / 2, p[1] - (a.a[1] + a.b[1]) / 2] : []; });
@@ -337,7 +342,7 @@ export function editAndSolve(sk, mutate, { pins = [], heavyRefs = [] } = {}) {
   const res = solve(sk, { coin, pins, heavy });
   if (!res.ok) {
     // (PlaneGCS names the constraints that fight: say which)
-    const NAME = { h: 'Horizontal', v: 'Vertical', par: 'Parallel', perp: 'Perpendicular', eq: 'Equal', tan: 'Tangent', conc: 'Concentric', fix: 'Fix', mid: 'Midpoint', on: 'On curve' };
+    const NAME = { h: 'Horizontal', v: 'Vertical', par: 'Parallel', perp: 'Perpendicular', eq: 'Equal', tan: 'Tangent', conc: 'Concentric', fix: 'Fix', mid: 'Midpoint', on: 'On curve', sym: 'Symmetric' };
     const names = lastConflict.map(id => { const c = (sk.cons || []).find(q => q.id === id); if (c) return NAME[c.t] || 'a constraint'; const d = sk.ents.find(q => q.id === id && q.t === 'dim'); return d ? 'a dimension' : null; }).filter(Boolean);
     return names.length ? `Conflicting constraints: ${[...new Set(names)].join(', ')} cannot all hold — delete one in Constrain` : `Conflicting constraints (residual ${res.residual.toExponential(1)})`;
   }

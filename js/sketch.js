@@ -536,10 +536,36 @@ export function toDXF(sk) {
 // remove constraints / dims that reference deleted entities
 export function pruneCons(sk) {
   const ids = new Set(sk.ents.map(e => e.id)); ids.add(0); // (0: the origin)
-  sk.cons = (sk.cons || []).filter(c => ids.has(c.a) && (c.b == null || ids.has(c.b)) && (!c.p || ids.has(c.p.e)));
+  sk.cons = (sk.cons || []).filter(c => ids.has(c.a) && (c.b == null || ids.has(c.b)) && (!c.p || ids.has(c.p.e)) && (!c.q || ids.has(c.q.e)));
   sk.ents = sk.ents.filter(d => d.t !== 'dim' || (dimEnts(d).every(id => ids.has(id)) && (d.kind === 'lin' || d.kind === 'hor' || d.kind === 'ver' ? refPoint(sk, d.A) && refPoint(sk, d.B) : d.kind === 'pl' ? refPoint(sk, d.P) && entById(sk, d.l)?.t === 'line' : true)));
 }
-export const CONS_LABEL = { h: 'H', v: 'V', par: '∥', perp: '⊥', eq: '=', tan: 'T', conc: '◎', fix: '⚓', mid: 'M', on: '⊙' };
+export const CONS_LABEL = { h: 'H', v: 'V', par: '∥', perp: '⊥', eq: '=', tan: 'T', conc: '◎', fix: '⚓', mid: 'M', on: '⊙', sym: '⇋' };
+// A sketch Mirror's copy stays tied to what it mirrors: each of its points is held symmetric to its source point about the
+// mirror line (a construction line is added along the axis when no line lies there), and a mirrored circle keeps the
+// same radius — so a later edit, drag or dimension on the source carries over to the copy, as in Fusion
+export function linkMirror(sk, srcIds, copyIds, A, B) {
+  const L = Math.hypot(B[0] - A[0], B[1] - A[1]); if (L < 1e-9) return;
+  const onAx = q => Math.abs((q[0] - A[0]) * (B[1] - A[1]) - (q[1] - A[1]) * (B[0] - A[0])) / L < 1e-6;
+  let ax = sk.ents.find(e => e.t === 'line' && !copyIds.includes(e.id) && onAx(e.a) && onAx(e.b));
+  sk.cons ??= [];
+  // (an axis made from two tapped points stays where it was tapped; mirroring about a sketch line follows that line)
+  if (!ax) { ax = { id: (sk.nextEnt = (sk.nextEnt || 1000) + 1), t: 'line', a: A.slice(), b: B.slice(), construction: true }; sk.ents.push(ax); sk.cons.push({ id: (sk.nextEnt = sk.nextEnt + 1), t: 'fix', a: ax.id, v: { 'a.0': A[0], 'a.1': A[1], 'b.0': B[0], 'b.1': B[1] } }); }
+  const src = srcIds.flatMap(id => { const e = entById(sk, id); return e ? keyPoints(e).filter(k => k.m || k.center).map(k => ({ e, ref: { e: id, k: k.k }, p: k.p })) : []; });
+  sk.cons ??= [];
+  const add = c => sk.cons.push({ id: (sk.nextEnt = (sk.nextEnt || 1000) + 1), ...c });
+  for (const id of copyIds) {
+    const e = entById(sk, id); if (!e || e.t === 'dim') continue;
+    let kps = keyPoints(e).filter(k => k.m || k.center);
+    if (e.t === 'rect') kps = kps.filter(k => k.k === 'p0' || k.k === 'p2'); // (two opposite corners fix a rectangle)
+    let srcE = null;
+    for (const kp of kps) {
+      if (onAx(kp.p)) continue; // (a point on the axis is its own mirror: it stays joined to its source)
+      const img = refl(kp.p, A, B), s = src.find(q => d2(q.p, img) < 1e-6); if (!s) continue;
+      add({ t: 'sym', a: ax.id, p: s.ref, q: { e: id, k: kp.k } }); srcE ??= s.e;
+    }
+    if (e.t === 'circle' && srcE && srcE.t === 'circle') add({ t: 'eq', a: srcE.id, b: id });
+  }
+}
 
 // ---------- 2D corner fillet / chamfer ----------
 // Finds two lines meeting at the corner nearest p (within tol), then rounds (arc radius r) or bevels (distance r).

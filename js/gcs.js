@@ -131,6 +131,7 @@ export function gcsSolve(sk, { coin, pins = [], heavy = null } = {}) {
         break;
       }
       case 'mid': { const p = c.p && P(c.p); if (!p || a.t !== 'line') return null; cons.push({ id, type: 'p2p_symmetric_ppp', p1_id: P({ e: a.id, k: 'a' }), p2_id: P({ e: a.id, k: 'b' }), p_id: p }); break; }
+      case 'sym': { const p = c.p && P(c.p), q = c.q && P(c.q); if (!p || !q || a.t !== 'line' || p === q) return null; cons.push({ id, type: 'p2p_symmetric_ppl', p1_id: p, p2_id: q, l_id: gid(a) }); break; }
       case 'conc': case 'fix': break; // (joined centres / fixed points above)
       default: return null;
     }

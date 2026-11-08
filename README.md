@@ -78,6 +78,8 @@ A mix of Fusion 360 and Plasticity. The 3D view fills the whole screen and every
 - **Bottom bar:** the **Browser** button, then the **tool sets**, then command search. Tapping a tool set fills the **left rail** with its tools.
   - In the part: **Solid** (Sketch, Extrude, Revolve, Loft, Sweep, the primitives, Hole, Thread, Pattern, Mirror, Thicken), **Modify**, **Assemble**, **Construct** and **Inspect**.
   - In a sketch: **Create**, **Modify** (Fillet, Trim, Extend, Offset, Mirror, Move, Copy, Rotate, Scale, Pattern, Fill region, Construction, Delete), **Constrain** (Horizontal, Vertical, Parallel, Perpendicular, Equal, Tangent, Concentric, Fix, On curve, Dimension) and **Inspect**.
+  - Sketch **Mirror** keeps its copy tied to the original: each mirrored point is held symmetric (⇋) to its source about the mirror line — a line of the sketch, or a construction line added (and fixed) where the two axis points were tapped — and a mirrored circle keeps its radius. Editing, dragging or dimensioning the source moves the copy with it.
+  - A constraint can be added more than once (a second Vertical on a line already held vertical): the solver takes redundant constraints in its stride.
   - Sketch **Scale** (curves picked): a live card with **Origin** — the middle of the pick, the sketch origin, or a point tapped on the canvas (marked in gold) — and **Scale**, negative or positive; Done keeps it, Cancel drops it.
 - **Sketch bar:** while a sketch is open it takes the timeline's place: the sketch's name and plane, and **Finish Sketch** at its right end.
 - **Above the bottom bar:** the commands for what is selected (Plasticity-style). Fillet and Chamfer appear for edges; Push/Pull, Shell, Hole and Mate for faces. The row is hidden when nothing is selected.

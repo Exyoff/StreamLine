@@ -1331,7 +1331,7 @@ const TOOLS = {
 // an entry is a modal tool (t: the S.ed.tool it sets), a constraint (c: its kind) or a command (run)
 const CONS_NEED = { h: 1, v: 1, fix: 1, par: 2, perp: 2, eq: 2, tan: 2, conc: 2, on: 2 };
 const CONS_ICON = { h: 'cH', v: 'cV', par: 'cPar', perp: 'cPerp', eq: 'cEq', tan: 'cTan', conc: 'cConc', fix: 'cFix', on: 'point' };
-const CONS_NAME = { h: 'Horizontal', v: 'Vertical', par: 'Parallel', perp: 'Perpendicular', eq: 'Equal', tan: 'Tangent', conc: 'Concentric', fix: 'Fix', on: 'On curve' };
+const CONS_NAME = { h: 'Horizontal', v: 'Vertical', par: 'Parallel', perp: 'Perpendicular', eq: 'Equal', tan: 'Tangent', conc: 'Concentric', fix: 'Fix', on: 'On curve', sym: 'Symmetric' };
 // Fusion's two modes: designing the part (Solid · Modify · Assemble · Construct · Inspect, with Create Sketch first),
 // and a sketch being edited (Create · Modify · Constrain · Inspect, with Finish Sketch) — the drawing tools only exist
 // inside a sketch

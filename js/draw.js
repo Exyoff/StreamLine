@@ -341,7 +341,7 @@ function gripUp() {
 let armed = null;
 // a constraint glyph is picked like anything else: it lights up with the curves it ties, and Delete removes it
 let consSel = null; // { sk, cid, t }
-const CONS_NAMES = { h: 'Horizontal', v: 'Vertical', par: 'Parallel', perp: 'Perpendicular', eq: 'Equal', tan: 'Tangent', conc: 'Concentric', fix: 'Fix', mid: 'Midpoint', on: 'Point on curve' };
+const CONS_NAMES = { h: 'Horizontal', v: 'Vertical', par: 'Parallel', perp: 'Perpendicular', eq: 'Equal', tan: 'Tangent', conc: 'Concentric', fix: 'Fix', mid: 'Midpoint', on: 'Point on curve', sym: 'Symmetric (mirror)' };
 export const consSelected = () => consSel;
 export const consName = t => CONS_NAMES[t] || 'Constraint';
 export function clearConsSel() { if (consSel) { consSel = null; renderKey = ''; } }
@@ -350,7 +350,7 @@ const DIM_NAMES = { lin: 'Distance', hor: 'Horizontal distance', ver: 'Vertical 
 export function consOn(ids) {
   const s = sk(); if (!s || s.pending) return [];
   const set = new Set(ids), out = [];
-  for (const c of s.cons || []) if (set.has(c.a) || (c.b != null && set.has(c.b)) || (c.p && set.has(c.p.e))) out.push({ type: 'cons', id: c.id, name: consName(c.t), tag: SK.CONS_LABEL[c.t] });
+  for (const c of s.cons || []) if (set.has(c.a) || (c.b != null && set.has(c.b)) || (c.p && set.has(c.p.e)) || (c.q && set.has(c.q.e))) out.push({ type: 'cons', id: c.id, name: consName(c.t), tag: SK.CONS_LABEL[c.t] });
   for (const d of s.ents) if (d.t === 'dim' && SK.dimEnts(d).some(id => set.has(id))) out.push({ type: 'dim', id: d.id, name: (d.value == null ? 'Driven ' + (DIM_NAMES[d.kind] || 'dimension').toLowerCase() : DIM_NAMES[d.kind] || 'Dimension'), tag: dimText(s, d) || '' });
   return out;
 }
@@ -1212,6 +1212,7 @@ function renderSketches() {
     // never taken by the glyph
     const seen = new Map();
     for (const c of act.cons || []) {
+      if (c.t === 'sym') { if (seen.has('sym' + c.q.e)) continue; seen.set('sym' + c.q.e, 1); const q0 = SK.refPoint(act, c.q); const q = q0 && view.project(SK.toW(act.plane, q0)); if (q && q.front) labs.push({ c, text: SK.CONS_LABEL.sym, cls: 'cons' + (consSel && consSel.cid === c.id && consSel.sk === act.id ? ' on' : ''), x: q.x + 16, y: q.y - 16, w: 22, h: 20 }); continue; }
       if (c.t === 'on') { const q0 = SK.refPoint(act, c.p); const q = q0 && view.project(SK.toW(act.plane, q0)); if (q && q.front) labs.push({ c, text: SK.CONS_LABEL.on, cls: 'cons' + (consSel && consSel.cid === c.id && consSel.sk === act.id ? ' on' : ''), x: q.x + 16, y: q.y - 18, w: 22, h: 20 }); continue; }
       const e = SK.entById(act, c.a); if (!e) continue;
       const n = seen.get(e.id) || 0; seen.set(e.id, n + 1);
@@ -1475,7 +1476,7 @@ const scaleLive = c => c && c.tool === 'scale' && c.op && getLast() === c.op && 
 function xform(label, op, copy = false) {
   const s = sk(), ids = selIds();
   if (!ids.length) { toast('Nothing selected'); return; }
-  runOp(F.sketchOp(label, s.id, k => { const r = SK.transformEntities(k, ids, op, copy); if (typeof r === 'string') return r; if (!copy) S.ed.drawSel = new Set(r); }));
+  runOp(F.sketchOp(label, s.id, k => { const r = SK.transformEntities(k, ids, op, copy); if (typeof r === 'string') return r; if (!copy) S.ed.drawSel = new Set(r); else if (op.kind === 'mirror') SK.linkMirror(k, ids, r, op.a, op.b); }));
 }
 function runSelectionCommand(t) {
   if (t === 'arrayrect') {
