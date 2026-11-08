@@ -305,7 +305,7 @@ function createSketchOn(params) {
   if (!runOp(F.newSketch, params)) { refresh(); return; }
   activateSketch(S.ed.sketch, true);
   if (tool) setTool(tool);
-  toast('Sketch open — draw with the Create tools, then Finish Sketch');
+  // (no toast: the sketch bar and the HUD under it already say how to draw and finish)
 }
 function sketchOnFace(o, tri) {
   const c = view.cam, plane = F.facePlane(o, tri, [-Math.sin(c.yaw), Math.cos(c.yaw), 0]);
@@ -1704,7 +1704,7 @@ function modifier(kind) {
     if (!S.ed.edges.length) { lockPick('edge', `${kind === 'fillet' ? 'Fillet' : 'Chamfer'}: tap an edge`, () => modifier(kind)); return; }
     return runOp(F.edgeBlendOp, { kind });
   }
-  if (kind === 'pushpull') { if (!S.ed.faces.length) { lockPick('face', 'Push/Pull: tap a face', () => modifier('pushpull')); return; } const ok = runOp(F.pushPullOp); if (ok) toast('Drag the arrow or type a distance'); return ok; }
+  if (kind === 'pushpull') { if (!S.ed.faces.length) { lockPick('face', 'Push/Pull: tap a face', () => modifier('pushpull')); return; } return runOp(F.pushPullOp); } // (no 'drag the arrow' toast: it sat right on the arrow it described)
   if (kind === 'shell') { if (!S.ed.faces.length && !S.ed.selected.size) { setPick('face'); toast('Tap the face(s) to open, then Shell'); return; } return runOp(F.shellOp); }
   if (kind === 'mirror') return runOp(F.mirrorOp);
 }
@@ -2496,7 +2496,6 @@ function addSketchedPrim(type) {
 // Extrude starts at 0 (nothing built yet): drag the arrow or type the distance
 function startExtrude() {
   const ok = runOp(F.extrude);
-  if (ok) toast('Drag the arrow or type a distance');
   return ok;
 }
 
