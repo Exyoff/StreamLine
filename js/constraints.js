@@ -253,46 +253,67 @@ export function solve(sk, opts = {}) {
   return { ok: norm(r) < 1e-7, residual: norm(r) };
 }
 
-// Degrees of freedom left (0 = fully constrained). Ignores drag pins.
-export function dof(sk) {
-  const S = slots(sk); if (!S.length) return 0;
-  const G = groups(sk, { coin: coincidences(sk), pins: [] });
-  let rk = 0; for (const pc of pieces(S, G)) if (pc.slots.length && pc.groups.length) rk += rank(pieceJacobian(pc, S), 1e-7);
-  return S.length - rk;
+// The constraint analysis: degrees of freedom left (0 = fully constrained; drag pins ignored) and the entities whose
+// every parameter is pinned down (null-space test). Each piece's Jacobian is kept sparse (a row reads a few entities)
+// and reduced in place: one big connected sketch (a grid of 480 lines) took 13 s for its DOF count with dense rows.
+function sparseJacobian(pc, S) {
+  const byEnt = new Map(), rows = [];
+  for (const g of pc.groups) { g.off = rows.length; for (let i = g.f().length; i > 0; i--) rows.push(new Map()); for (const id of g.ids) { if (!byEnt.has(id)) byEnt.set(id, []); byEnt.get(id).push(g); } }
+  pc.slots.forEach((j, c) => {
+    const s = S[j], gs = byEnt.get(s.e.id) || []; if (!gs.length) return;
+    const v = s.get(), h = 1e-7 * Math.max(1, Math.abs(v));
+    s.set(v + h); const r1 = gs.map(g => g.f()); s.set(v - h); const r2 = gs.map(g => g.f()); s.set(v);
+    gs.forEach((g, gi) => { for (let i = 0; i < r1[gi].length; i++) { const d = (r1[gi][i] - r2[gi][i]) / (2 * h); if (Math.abs(d) > 1e-12) rows[g.off + i].set(c, d); } });
+  });
+  return rows;
 }
-
-// Entities whose every parameter is pinned down by the constraints (null-space test on each piece's Jacobian).
-export function constrainedEntities(sk) {
-  const S = slots(sk), out = new Set();
-  if (!S.length) return out;
+// Gauss–Jordan on sparse rows with partial pivoting; returns the pivot row of each pivot column
+function reduce(rows, n, tol = 1e-7) {
+  const colRows = Array.from({ length: n }, () => new Set());
+  rows.forEach((r, i) => { for (const k of r.keys()) colRows[k].add(i); });
+  const used = new Set(), pivRow = new Map();
+  for (let c = 0; c < n; c++) {
+    let p = -1, best = tol;
+    for (const i of colRows[c]) if (!used.has(i)) { const v = Math.abs(rows[i].get(c)); if (v > best) { best = v; p = i; } }
+    if (p < 0) continue;
+    used.add(p); pivRow.set(c, p);
+    const R = rows[p], d = R.get(c); for (const [k, v] of R) R.set(k, v / d);
+    for (const i of [...colRows[c]]) {
+      if (i === p) continue;
+      const Ri = rows[i], f = Ri.get(c); if (!f) continue;
+      for (const [k, v] of R) {
+        const nv = (Ri.get(k) || 0) - f * v;
+        if (Math.abs(nv) < 1e-12 || k === c) { if (Ri.delete(k)) colRows[k].delete(i); }
+        else { if (!Ri.has(k)) colRows[k].add(i); Ri.set(k, nv); }
+      }
+    }
+  }
+  return { pivRow, colRows };
+}
+export function analyze(sk) {
+  const S = slots(sk), fixed = new Set();
+  if (!S.length) return { dof: 0, fixed };
   const G = groups(sk, { coin: coincidences(sk), pins: [] });
-  const free = new Set();
+  const free = new Set(); let rk = 0;
   for (const pc of pieces(S, G)) {
     if (!pc.groups.length) { pc.slots.forEach(j => free.add(j)); continue; }
-    const A = pieceJacobian(pc, S);
-    const m = A.length, n = pc.slots.length, piv = [];
-    let row = 0;
-    for (let c = 0; c < n && row < m; c++) {
-      let p = row; for (let i = row + 1; i < m; i++) if (Math.abs(A[i][c]) > Math.abs(A[p][c])) p = i;
-      if (Math.abs(A[p][c]) < 1e-7) continue;
-      [A[row], A[p]] = [A[p], A[row]];
-      const d = A[row][c]; for (let k = c; k < n; k++) A[row][k] /= d;
-      for (let i = 0; i < m; i++) if (i !== row && A[i][c]) { const f = A[i][c]; for (let k = c; k < n; k++) A[i][k] -= f * A[row][k]; }
-      piv.push(c); row++;
-    }
-    const pivSet = new Set(piv);
+    const n = pc.slots.length, rows = sparseJacobian(pc, S), { pivRow, colRows } = reduce(rows, n);
+    rk += pivRow.size;
+    const pivOf = new Map([...pivRow].map(([c, r]) => [r, c]));
     // a variable is determined iff it has zero component in every null-space vector
     for (let fc = 0; fc < n; fc++) {
-      if (pivSet.has(fc)) continue;
+      if (pivRow.has(fc)) continue;
       free.add(pc.slots[fc]);
-      piv.forEach((pcol, i) => { if (Math.abs(A[i][fc]) > 1e-7) free.add(pc.slots[pcol]); });
+      for (const i of colRows[fc]) { const pcol = pivOf.get(i); if (pcol != null && Math.abs(rows[i].get(fc)) > 1e-7) free.add(pc.slots[pcol]); }
     }
   }
   const byEnt = new Map();
   S.forEach((s, j) => { const k = s.e.id; if (!byEnt.has(k)) byEnt.set(k, true); if (free.has(j)) byEnt.set(k, false); });
-  for (const [id, ok] of byEnt) if (ok) out.add(id);
-  return out;
+  for (const [id, ok] of byEnt) if (ok) fixed.add(id);
+  return { dof: S.length - rk, fixed };
 }
+export const dof = sk => analyze(sk).dof;
+export const constrainedEntities = sk => analyze(sk).fixed;
 
 // Snapshot of an entity's params for a 'fix' constraint.
 export function fixValues(e) {

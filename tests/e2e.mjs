@@ -1634,9 +1634,14 @@ try {
     const solveMs = Math.min(...[0, 1, 2].map(() => T(() => CS.editAndSolve(k, () => { l0.b[0] += 0.5; }, {})))), fixedMs = T(() => CS.constrainedEntities(k)), dofV = CS.dof(k);
     const l1 = L.SK.entById(k, l0.id), flat = Math.abs(l1.a[1] - l1.b[1]) < 1e-9, len = l1.b[0] - l1.a[0];
     L.S.ed.sketch = null; L.undo(); L.refresh(); // (the later checks run without it)
-    return { solveMs, fixedMs, dof: dofV, flat, len, gone: !L.S.doc.sketches.some(q => q.id === k.id) };
+    // one connected sketch: a 15 × 15 grid of 480 lines sharing corners (its DOF count took 13 s with dense rows)
+    const g = { ents: [], cons: [], nextEnt: 0 }, ln = (a, b, t) => { const id = ++g.nextEnt; g.ents.push({ id, t: 'line', a, b }); g.cons.push({ id: ++g.nextEnt, t, a: id }); };
+    for (let j = 0; j <= 15; j++) for (let i = 0; i < 15; i++) ln([i * 10 + 1, j * 10 + 1], [i * 10 + 11, j * 10 + 1], 'h');
+    for (let i = 0; i <= 15; i++) for (let j = 0; j < 15; j++) ln([i * 10 + 1, j * 10 + 1], [i * 10 + 1, j * 10 + 11], 'v');
+    let gridDof = 0; const gridMs = T(() => { gridDof = CS.analyze(g).dof; });
+    return { solveMs, fixedMs, gridMs, gridDof, dof: dofV, flat, len, gone: !L.S.doc.sketches.some(q => q.id === k.id) };
   });
-  check(bigSk.solveMs < 150 && bigSk.fixedMs < 400 && bigSk.flat && bigSk.dof === 150 * 4 && bigSk.gone, `a 600-line sketch stays quick: a drag step solves in ${bigSk.solveMs.toFixed(0)} ms, the constraint colouring in ${bigSk.fixedMs.toFixed(0)} ms (${bigSk.dof} DOF free; the moved line stayed horizontal)`);
+  check(bigSk.solveMs < 150 && bigSk.fixedMs < 400 && bigSk.flat && bigSk.dof === 150 * 4 && bigSk.gone && bigSk.gridMs < 1500 && bigSk.gridDof === 32, `a 600-line sketch stays quick: a drag step solves in ${bigSk.solveMs.toFixed(0)} ms, the constraint colouring in ${bigSk.fixedMs.toFixed(0)} ms (${bigSk.dof} DOF free; the moved line stayed horizontal); a connected 480-line grid is analysed in ${bigSk.gridMs.toFixed(0)} ms (${bigSk.gridDof} DOF)`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
