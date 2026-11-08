@@ -484,8 +484,8 @@ function dragMove(x, y) {
     const C = drag.C;
     let f = drag.part.axis ? ((x - C.x) * drag.sd[0] + (y - C.y) * drag.sd[1]) / drag.s0 : Math.hypot(x - C.x, y - C.y) / drag.s0;
     if (snapOn()) f = stepSnap(f, 0.1);
-    if (drag.part.axis) { const k = drag.part.axis.k; params = { sx: k === 'x' ? f : 1, sy: k === 'y' ? f : 1, sz: k === 'z' ? f : 1 }; }
-    else params = { sx: f, sy: f, sz: f };
+    if (drag.part.axis) { const k = drag.part.axis.k; params = { s: null, sx: k === 'x' ? f : 1, sy: k === 'y' ? f : 1, sz: k === 'z' ? f : 1 }; }
+    else params = { s: f, sx: f, sy: f, sz: f };
     readout = { world: pv, text: `× ${fmtNum(f)}` };
   }
   liveUpdate(params);

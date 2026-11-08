@@ -21,7 +21,7 @@ export function h(tag, attrs = {}, ...kids) {
 let toastT = 0;
 let toastAt = 0;
 export function toast(msg, ms = 1800) {
-  const t = $('#toast'); t.textContent = msg; t.classList.add('show'); toastAt = performance.now();
+  const t = $('#toast'); t.replaceChildren(h('span', { class: 'tt' }, String(msg))); t.classList.add('show'); toastAt = performance.now();
   clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), Math.max(ms, Math.min(4500, String(msg).length * 40)));
   // a tap anywhere (after a moment to read) clears it, so it never sits over the model
   if (!t.dataset.dismiss) { t.dataset.dismiss = 1; document.addEventListener('pointerdown', () => { if (performance.now() - toastAt > 700) { clearTimeout(toastT); t.classList.remove('show'); } }, true); }

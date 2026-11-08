@@ -621,7 +621,9 @@ function rectFromCorners(e, pts) {
 export function transformEntities(sk, ids, op, copy = false) {
   const nid = () => (sk.nextEnt = (sk.nextEnt || 1000) + 1);
   let targets = sk.ents.filter(e => ids.includes(e.id) && e.t !== 'dim');
-  if (op.kind === 'scale' && !(op.f > 0)) return 'Scale factor must be > 0';
+  if (op.kind === 'scale' && !(Math.abs(op.f) > 1e-12 && isFinite(op.f))) return 'The scale cannot be 0';
+  // (a negative scale is a positive one turned half a turn about its origin: lengths scale by |f|, directions flip)
+  const neg = op.kind === 'scale' && op.f < 0, af = op.kind === 'scale' ? Math.abs(op.f) : 1;
   if (copy) { targets = targets.map(e => { const c = JSON.parse(JSON.stringify(e)); c.id = nid(); sk.ents.push(c); return c; }); }
   // rectangles that would stop being axis-aligned become lines
   const needLines = e => e.t === 'rect' && ((op.kind === 'rotate' && !isQuarter(op.deg)) || (op.kind === 'mirror' && !isQuarter(Math.atan2(op.b[1] - op.a[1], op.b[0] - op.a[0]) * 180 / Math.PI, 45)));
@@ -634,19 +636,20 @@ export function transformEntities(sk, ids, op, copy = false) {
     if (e.t === 'line') { e.a = cp(P(e.a)); e.b = cp(P(e.b)); }
     else if (e.t === 'rect') rectFromCorners(e, rectCorners(e).map(P));
     else if (e.t === 'spline') e.pts = e.pts.map(q => cp(P(q)));
-    else if (e.t === 'text') { e.p = cp(P(e.p)); if (op.kind === 'scale') e.h = clean(e.h * op.f); if (op.kind === 'rotate') e.rot = (e.rot || 0) + op.deg; }
-    else if (e.t === 'hatch') { e.seed = cp(P(e.seed)); if (op.kind === 'scale') e.scale = clean(e.scale * op.f); if (op.kind === 'rotate') e.angle = (e.angle || 0) + op.deg; if (op.kind === 'mirror') e.angle = 2 * Math.atan2(op.b[1] - op.a[1], op.b[0] - op.a[0]) * 180 / Math.PI - (e.angle || 0); }
+    else if (e.t === 'text') { e.p = cp(P(e.p)); if (op.kind === 'scale') { e.h = clean(e.h * af); if (neg) e.rot = (e.rot || 0) + 180; } if (op.kind === 'rotate') e.rot = (e.rot || 0) + op.deg; }
+    else if (e.t === 'hatch') { e.seed = cp(P(e.seed)); if (op.kind === 'scale') { e.scale = clean(e.scale * af); if (neg) e.angle = (e.angle || 0) + 180; } if (op.kind === 'rotate') e.angle = (e.angle || 0) + op.deg; if (op.kind === 'mirror') e.angle = 2 * Math.atan2(op.b[1] - op.a[1], op.b[0] - op.a[0]) * 180 / Math.PI - (e.angle || 0); }
     else if (e.t === 'ellipse') {
       e.c = cp(P(e.c));
-      if (op.kind === 'scale') { e.rx = clean(e.rx * op.f); e.ry = clean(e.ry * op.f); }
+      if (op.kind === 'scale') { e.rx = clean(e.rx * af); e.ry = clean(e.ry * af); if (neg) e.rot += Math.PI; }
       if (op.kind === 'rotate') e.rot += op.deg * Math.PI / 180;
       if (op.kind === 'mirror') e.rot = 2 * Math.atan2(op.b[1] - op.a[1], op.b[0] - op.a[0]) - e.rot;
     }
     else if (e.t === 'circle' || e.t === 'arc') {
       e.c = cp(P(e.c));
-      if (op.kind === 'scale') e.r = clean(e.r * op.f);
+      if (op.kind === 'scale') e.r = clean(e.r * af);
       if (e.t === 'arc') {
         const sw = sweep(e);
+        if (neg) { e.a0 += Math.PI; e.a1 = e.a0 + sw; }
         if (op.kind === 'rotate') { e.a0 += op.deg * Math.PI / 180; e.a1 = e.a0 + sw; }
         else if (op.kind === 'mirror') { const phi = Math.atan2(op.b[1] - op.a[1], op.b[0] - op.a[0]); const a0 = 2 * phi - (e.a0 + sw); e.a0 = a0; e.a1 = a0 + sw; }
       }

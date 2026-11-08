@@ -389,8 +389,8 @@ body.ws-model #lastop .field .seg button { height: 36px; font-size: 13px; }
   background: var(--glass-strong); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 0.5px solid var(--glass-edge);
   color: var(--text); padding: 11px 18px; border-radius: 999px; font-weight: 600; font-size: 14px;
   transition: opacity .25s, transform .3s cubic-bezier(.2,.9,.3,1.2); max-width: min(calc(100vw - 32px), 340px); text-align: center; box-shadow: var(--glass-shadow);
-  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; /* (two lines at most: longer ones covered the cube) */
 }
+#toast .tt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; } /* (two lines at most: longer ones covered the cube) */
 #toast.show { opacity: 1; transform: translate(-50%, 0) scale(1); }
 body:has(#popover:not([hidden])) #toast { opacity: 0; }
 

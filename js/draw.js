@@ -8,7 +8,7 @@ const esin = d => ecos(d - 90);
 import * as F from './features.js';
 import { runOp, updateOp, commit, cancelOp, getLast } from './ops.js';
 import { fmtLen, fmtAng, fmtArea } from './units.js';
-import { h, field, toast, openKeypad, $ } from './ui.js';
+import { h, field, choice, toast, openKeypad, $ } from './ui.js';
 import { xfFor } from './scene.js';
 import { Line2 } from '../vendor/lines/Line2.js';
 import { LineGeometry } from '../vendor/lines/LineGeometry.js';
@@ -967,6 +967,15 @@ export function cardContent() {
         field({ label: 'Rotation', kind: 'ang', value: acad.polyRot, onCommit: v => { acad.polyRot = v; emit('drawcard'); } }),
         c.stage === 'vertex' ? field({ label: flats ? 'Across flats' : 'Radius to corner', kind: 'len', value: cur, min: 0, cls: 'wide', onCommit: v => { if (v > 0) place(flats ? v : v); } }) : null));
   }
+  // Scale: its two fields — where it scales from, and by how much (negative flips through the origin)
+  if (t === 'scale' && scaleLive(st.cmd)) {
+    const p = st.cmd.op.params, end = ok => { if (ok) commit(); else cancelOp(); st.cmd = null; S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); };
+    return h('div', {}, title('Scale', 'tap the canvas to scale about that point'),
+      h('div', { class: 'fields' },
+        choice({ label: 'Origin', options: SCALE_ORIGINS, value: p.origin, onChange: v => { updateOp({ origin: v }); emit('lastop', getLast()); emit('drawcard'); view.render(); } }),
+        field({ label: 'Scale', kind: 'num', value: p.f, cls: 'wide', onCommit: v => { if (!(Math.abs(v) > 1e-12)) return toast('The scale cannot be 0'); updateOp({ f: v }); emit('lastop', getLast()); emit('drawcard'); view.render(); } })),
+      h('div', { class: 'btnrow' }, btn('Cancel', () => end(false)), btn('Done', () => end(true), 'primary')));
+  }
   // remaining command tools (ellipse, text, hatch, edit commands, inquiry): show the prompt and a way out
   if (EDIT_TOOLS.has(t)) {
     const pr = prompt(), name = { ellipse: 'Ellipse', text: 'Text', hatch: 'Hatch', move: 'Move', copy: 'Copy', rotate: 'Rotate', scale: 'Scale', mirror: 'Mirror', offset: 'Offset', erase: 'Erase', explode: 'Explode', arrayrect: 'Array', arraypolar: 'Polar array', dist: 'Distance', id: 'Point', angle: 'Angle', area: 'Area', radius: 'Radius', list: 'List' }[t] || t;
@@ -1328,6 +1337,7 @@ function drawPreview(s) {
   }
   if (st.dimPend?.kind === 'pt' && tool() === 'dim') { const q = SK.refPoint(s, st.dimPend.A); if (q) previewGroup.add(marker(W(q), 0x4f8ff7)); }
   if (st.onPend) { const q = SK.refPoint(s, st.onPend); if (q) previewGroup.add(marker(W(q), 0x4f8ff7)); } // (Point on curve: the point picked)
+  if (scaleLive(c)) previewGroup.add(marker(W(scaleOrigin(c.op.params)), 0xffd23f)); // (the Scale origin)
   if (p && st.snap && !['select', 'trim', 'dim', 'extend'].includes(t) && (!EDIT_TOOLS.has(t) || pointStage())) {
     crosshair(s, p);
     const k = st.snap.kind || '';
@@ -1388,6 +1398,7 @@ function ensureCmd() {
   const t = tool();
   st.cmd = { tool: t, pts: [], stage: SELECT_FIRST.has(t) ? (S.ed.drawSel.size ? 'base' : 'select') : t === 'offset' ? 'distance' : t === 'polygon' ? 'center' : t === 'area' || t === 'spline' ? 'collect' : t === 'radius' || t === 'hatch' ? 'pick' : t === 'ellipse' ? 'center' : 'base' };
   if ((t === 'erase' || t === 'explode' || t === 'list' || t === 'arrayrect') && S.ed.drawSel.size) { runSelectionCommand(t); }
+  if (t === 'scale' && S.ed.drawSel.size) st.cmd.op = startScale();
   return st.cmd;
 }
 // Outline: selected text becomes closed glyph curves (lines) that Extrude / Cut can emboss or engrave; the
@@ -1444,6 +1455,23 @@ function fromPt() {
 }
 export function lastPoint() { return fromPt() || st.last || [0, 0]; }
 const selIds = () => [...S.ed.drawSel];
+// Scale: the picked curves scale live about an origin — the middle of the pick (as Move goes from it), the sketch origin,
+// or a point tapped on the canvas — by a factor that may be negative (then they also turn half a turn about the
+// origin). Two fields on the card: Origin and Scale; a tap on the canvas sets the origin there.
+const SCALE_ORIGINS = [['centre', 'Middle'], ['zero', 'Origin'], ['point', 'Tapped']]; // (the middle of the pick, the sketch's 0,0, a tapped point)
+export const scaleOrigin = p => (p.origin === 'zero' ? [0, 0] : p.origin === 'point' ? [p.px, p.py] : [p.cx, p.cy]);
+function startScale() {
+  const s = sk(), ids = selIds(); if (!s || !ids.length) return null;
+  const P = ids.flatMap(id => { const e = SK.entById(s, id); return e ? (SK.entPolyline(e)?.pts || SK.keyPoints(e).map(k => k.p)) : []; }); if (!P.length) return null;
+  const xs = P.map(q => q[0]), ys = P.map(q => q[1]), c = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2];
+  const def = F.sketchOp('Scale', s.id, (k, p) => {
+    if (!(Math.abs(p.f) > 1e-12) || !isFinite(p.f)) return 'The scale cannot be 0';
+    const r = SK.transformEntities(k, ids, { kind: 'scale', c: scaleOrigin(p), f: p.f }); if (typeof r === 'string') return r;
+  }, [{ key: 'origin', label: 'Origin', kind: 'choice', options: SCALE_ORIGINS, wide: true }, { key: 'f', label: 'Scale', kind: 'num' }]);
+  if (!runOp(def, { origin: 'centre', f: 1, cx: c[0], cy: c[1], px: c[0], py: c[1] }, { interactive: true })) return null;
+  return getLast();
+}
+const scaleLive = c => c && c.tool === 'scale' && c.op && getLast() === c.op && !c.op.committed;
 function xform(label, op, copy = false) {
   const s = sk(), ids = selIds();
   if (!ids.length) { toast('Nothing selected'); return; }
@@ -1514,6 +1542,10 @@ function cmdPoint(p) {
     { count: 6, angle: 360, cx: p[0], cy: p[1] });
     st.cmd = null; S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('cmd'); return;
   }
+  if (t === 'scale' && c.op) { // (the live Scale: a tap on the canvas puts its origin there)
+    if (!scaleLive(c)) { st.cmd = null; S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); return; }
+    updateOp({ origin: 'point', px: p[0], py: p[1] }); emit('lastop', getLast()); return;
+  }
   if (c.stage === 'base') { c.base = p; c.stage = 'second'; return; }
   if (c.stage === 'second') {
     const b = c.base;
@@ -1559,7 +1591,7 @@ export function enter() {
   if (c && c.stage === 'select') {
     if (!S.ed.drawSel.size) { toast('Select objects first'); return true; }
     if (t === 'erase' || t === 'explode') { runSelectionCommand(t); return true; }
-    c.stage = 'base'; emit('drawcard'); return true;
+    c.stage = 'base'; if (t === 'scale') c.op = startScale(); emit('drawcard'); return true;
   }
   if (c && (t === 'copy' || t === 'offset' || t === 'polygon') && ['second', 'pick', 'center'].includes(c.stage)) { resetTool(); S.ed.tool = 'select'; S.ed.tools.draw = 'select'; emit('selection'); return true; }
   if (st.start || st.arc || st.dimA || st.dimPend || c) { resetTool(); return true; }
@@ -1608,6 +1640,7 @@ export function typed(raw) {
     if (t === 'offset' && c && (c.stage === 'distance' || c.stage === 'pick')) { acad.offsetDist = num(str); c.stage = 'pick'; emit('drawcard'); return true; }
     if (t === 'corner') { corner.size = num(str); emit('drawcard'); return true; }
     if (c && c.stage === 'second' && t === 'rotate') { xform('Rotate', { kind: 'rotate', c: c.base, deg: num(str, 'ang') }); st.cmd = null; S.ed.tool = 'select'; emit('selection'); return true; }
+    if (scaleLive(c)) { const f = num(str, 'num'); if (!(Math.abs(f) > 1e-12)) { toast('The scale cannot be 0'); return true; } updateOp({ f }); emit('lastop', getLast()); return true; }
     if (c && c.stage === 'second' && t === 'scale') { xform('Scale', { kind: 'scale', c: c.base, f: num(str, 'num') }); st.cmd = null; S.ed.tool = 'select'; emit('selection'); return true; }
     if (t === 'circle' && st.start) { const v = num(str); placeCircle(st.start, st.typed.dia ? v / 2 : v); st.typed = {}; emit('drawcard'); view.render(); return true; }
     if (t === 'arc' && st.arc && st.arc.r != null) { placeArc(st.arc.c, st.arc.r, st.arc.a0, num(str, 'ang')); emit('drawcard'); view.render(); return true; }

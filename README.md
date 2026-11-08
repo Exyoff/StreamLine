@@ -78,6 +78,7 @@ A mix of Fusion 360 and Plasticity. The 3D view fills the whole screen and every
 - **Bottom bar:** the **Browser** button, then the **tool sets**, then command search. Tapping a tool set fills the **left rail** with its tools.
   - In the part: **Solid** (Sketch, Extrude, Revolve, Loft, Sweep, the primitives, Hole, Thread, Pattern, Mirror, Thicken), **Modify**, **Assemble**, **Construct** and **Inspect**.
   - In a sketch: **Create**, **Modify** (Fillet, Trim, Extend, Offset, Mirror, Move, Copy, Rotate, Scale, Pattern, Fill region, Construction, Delete), **Constrain** (Horizontal, Vertical, Parallel, Perpendicular, Equal, Tangent, Concentric, Fix, On curve, Dimension) and **Inspect**.
+  - Sketch **Scale** (curves picked): a live card with **Origin** — the middle of the pick, the sketch origin, or a point tapped on the canvas (marked in gold) — and **Scale**, negative or positive; Done keeps it, Cancel drops it.
 - **Sketch bar:** while a sketch is open it takes the timeline's place: the sketch's name and plane, and **Finish Sketch** at its right end.
 - **Above the bottom bar:** the commands for what is selected (Plasticity-style). Fillet and Chamfer appear for edges; Push/Pull, Shell, Hole and Mate for faces. The row is hidden when nothing is selected.
 - **Browser:** opens from the bottom bar as a tree, like Fusion's browser. On a phone it sits beside the tool rail and covers only the lower part of the view, so it can stay open while you work; tap its title bar for full height. Its folders are:
@@ -230,7 +231,8 @@ An extrude from a face sketch targets that body automatically (Join, or Cut into
   - **Shell** (`H`): hollow the body, with the selected faces left open. The wall offsets are solved exactly from the face planes.
   - **Mirror** (`M`): across YZ, XZ, XY or a selected face, optionally fused with the original.
   - **Boolean:** union, subtract or intersect. The volumes are checked, so a result the kernel got wrong is reported instead of silently replacing the part, and no boolean ever changes the bodies it started from.
-  - **Rotate / Scale:** besides the axis and angle (or factors), the card takes the **pivot** — turn a clip about the fan's axis rather than about its own middle.
+  - **Rotate:** besides the axis and angle, the card takes the **pivot** — turn a clip about the fan's axis rather than about its own middle.
+  - **Scale:** two fields. **Origin** — the middle of what is picked, or the world origin — and **Scale**, one factor, negative or positive (a negative one also turns the part through its origin; 0 is refused). Dragging an axis handle scales along that axis only, and X / Y / Z fields then appear.
   - **Slice** (`SL`): cut by a plane through the body, a world plane or a selected face. Both halves are kept.
   - **Pattern** (`3A`): a polar pattern of bodies around X, Y or Z.
   - **Thicken:** turn a surface, such as an added Plane, into a solid.

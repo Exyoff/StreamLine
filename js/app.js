@@ -113,7 +113,7 @@ async function boot() {
     const ios = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     if (ios && !navigator.standalone && !matchMedia('(display-mode: standalone)').matches && !localStorage.getItem('streamline.tip.a2hs')) {
       localStorage.setItem('streamline.tip.a2hs', '1');
-      setTimeout(() => toast('Tip: Share → Add to Home Screen opens StreamLine full screen, without Safari’s bar', 4500), 2500);
+      setTimeout(() => toast('Tip: Share → Add to Home Screen for full screen', 4500), 2500);
     }
   } catch (e) {}
   on('library', () => refreshSoon());
