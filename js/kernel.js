@@ -578,6 +578,38 @@ export function polyPrism(P, v) {
   const es = []; for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length]; if (Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) > 1e-9) es.push(R.makeLine(a, b)); }
   return R.basicFaceExtrusion(R.makeFace(R.assembleWire(es)), vec(v));
 }
+// A chamfer cut straight in: on a straight edge between two flat faces, the wedge between the edge and the bevel is
+// subtracted. OCCT's chamfer builder refuses a bevel that takes a whole face (a 10 mm chamfer on a 10 mm plate, from the
+// top face straight to the bottom edge), and the nearest size it takes leaves a sliver step; this is exact. d1 is
+// measured on the first face (the second with swap). null: not a case it can do (round, concave, or past a face).
+export function wedgeChamfer(shape, edges, d1, d2, swap = false) {
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]], mul = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2], cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const norm = a => { const l = Math.hypot(...a); return l > 1e-12 ? mul(a, 1 / l) : null; }, P3 = v => [v.x, v.y, v.z];
+  const tools = [];
+  for (const e of edges) {
+    if (e.geomType !== 'LINE') return null;
+    const fs = shape.faces.filter(f => f.edges.some(x => x.isSame(e)));
+    if (fs.length !== 2 || fs.some(f => f.geomType !== 'PLANE')) return null;
+    const [F1, F2] = swap ? [fs[1], fs[0]] : fs;
+    const P = P3(e.startPoint), Q = P3(e.endPoint), L = Math.hypot(...sub(Q, P)); if (L < 1e-9) return null;
+    const t = mul(sub(Q, P), 1 / L), mid = mul(add(P, Q), 0.5);
+    const n1 = P3(F1.normalAt(mid)), n2 = P3(F2.normalAt(mid));
+    // into each face, square to the edge: the side its own middle is on
+    const into = (F, n) => { let u = norm(cross(t, n)); if (!u) return null; const c = P3(F.center); return dot(sub(c, mid), u) < 0 ? mul(u, -1) : u; };
+    const u1 = into(F1, n1), u2 = into(F2, n2); if (!u1 || !u2) return null;
+    if (!(dot(u1, n2) < -1e-6 && dot(u2, n1) < -1e-6)) return null; // (a convex edge only: a concave one would need material added)
+    // each distance within its face (a bevel past it would run through the faces beyond)
+    const reach = (F, u) => Math.max(...F.edges.flatMap(x => [P3(x.startPoint), P3(x.endPoint)]).map(v => dot(sub(v, mid), u)));
+    if (d1 > reach(F1, u1) + 1e-6 || d2 > reach(F2, u2) + 1e-6) return null;
+    const m = 0.05 * Math.max(d1, d2) + 0.01, A = add(P, mul(u1, d1)), B = add(P, mul(u2, d2)), h = norm(sub(B, A));
+    tools.push(polyPrism([add(P, mul(add(u1, u2), -m)), sub(A, mul(h, m)), add(B, mul(h, m))], mul(t, L)));
+  }
+  if (!tools.length) return null;
+  const v0 = Math.abs(volume(shape)), r = tools.length === 1 ? boolean('subtract', shape, tools[0]) : cutMany(shape, tools);
+  if (!r || isEmpty(r) || !isValid(r) || !(Math.abs(volume(r)) < v0 - 1e-9)) return null;
+  return r;
+}
 export const compound = shapes => shapes.length === 1 ? shapes[0] : R.makeCompound(shapes);
 // a helix about axis (c, d) as one wire of edges of at most `per` turns, all on one cylinder. OCCT approximates each
 // edge's 3D curve with a bounded number of spans: replicad's single-edge helix drifts past ~30 turns (a 40-turn

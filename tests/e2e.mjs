@@ -231,7 +231,7 @@ try {
   const nObj = await st(() => StreamLine.S.doc.objects.length);
   await st(() => { const i = StreamLine.H.hist().findLastIndex(x => x.op === 'F.extrude'); StreamLine.BR.rollTo(i); });
   check(await st(() => StreamLine.S.doc.objects.length) === nObj - 1, 'rolling the marker back before the extrude removes its body');
-  await p.waitForTimeout(200);
+  await p.waitForSelector('#btn-history.b-rb', { timeout: 3000 }).catch(() => {}); // (the badge comes with the next UI refresh)
   check(await p.locator('#btn-history.b-rb').count() === 1, 'the History button shows a rolled-back badge');
   await p.tap('#btn-history'); await p.waitForTimeout(450);
   check(await p.locator('#sheet-body .hmarker:not(.end)').count() === 1 && await p.locator('#sheet-body .hcard.dim').count() >= 1, 'History shows the rollback marker and greys the steps after it');
@@ -1749,6 +1749,18 @@ try {
     L.S.ed.tool = 'select'; D.resetTool(); L.finishSketchEdit(); return out;
   });
   check(mir.dof0 === mir.dof1 && mir.mirrored && Math.abs(mir.copyLen - 30) < 1e-6 && Math.abs(mir.copyR - 5) < 1e-9 && mir.copyV && mir.dup === 2, `A mirrored copy follows its source (a 30 mm dimension, R5, Vertical: ${mir.copyLen.toFixed(3)} mm, R${mir.copyR}, ${mir.copyV ? 'vertical' : 'not vertical'}; DOF ${mir.dof0} → ${mir.dof1}); a Vertical added twice more on the copy is kept (${mir.dup})`);
+  // a chamfer as deep as its face runs straight from the top face to the bottom edge (it was refused, and 9.99 left a step)
+  const chf = await st(async () => {
+    const L = StreamLine, F = L.F, m = await import('./js/ops.js'), XY = { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] }, out = [];
+    for (const [x, d1, d2] of [[9000, 10, 10], [9100, 10, 5]]) {
+      L.runOp(F.sketchOpNew('ch', XY, null, k => F.addEntity(k, { t: 'rect', x, y: 0, w: 40, h: 30 }))); L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [x + 1, 1] }], distance: 10, mode: 'new', target: null }); m.commit(); L.S.ed.sketch = null;
+      const id = L.S.doc.objects.at(-1).id; L.S.ed.edges = [{ obj: id, a: [x, 0, 10], b: [x + 40, 0, 10] }];
+      const ok = L.runOp(F.edgeBlendOp, { kind: 'chamfer', size: d1, size2: d2 }); m.commit(); const o = L.S.doc.objects.find(q => q.id === id);
+      out.push({ ok: !!ok, v: +L.K.volume(o.shape).toFixed(6), faces: o.shape.faces.length, valid: L.K.isValid(o.shape) });
+    }
+    L.S.ed.edges = []; return out;
+  });
+  check(chf.every(r => r.ok && r.valid && r.faces === 6) && chf[0].v === 10000 && chf[1].v === 11000, `A chamfer as deep as its face bevels straight to the far edge with no step (${chf.map(r => r.v + ' mm³, ' + r.faces + ' faces').join(' · ')})`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
