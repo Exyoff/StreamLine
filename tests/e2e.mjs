@@ -1684,6 +1684,22 @@ try {
   await p.locator('#tools .tool[data-tool=select]').first().tap(); await p.waitForTimeout(300);
   const mt2 = await st(() => ({ armed: !!StreamLine.S.ed.mateFrom, faces: StreamLine.S.ed.faces.length }));
   check(armed && !mt2.armed && mt2.faces === 0, `Choosing another tool disarms a waiting Mate (armed ${armed} → ${mt2.armed}, ${mt2.faces} faces left picked)`);
+  // Fillet first, then the edges (Fusion's order): the command waits armed, the first edge opens its card, and more edges
+  // tapped while the card is shown join it
+  await st(async () => { const L = StreamLine, F = L.F, m = await import('./js/ops.js'), XY = { o: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] };
+    L.runOp(F.sketchOpNew('arm', XY, null, k => F.addEntity(k, { t: 'rect', x: 6300, y: -15, w: 40, h: 30 }))); L.runOp(F.extrude, { pts: [{ sk: L.S.ed.sketch, pt: [6301, 0] }], distance: 20, mode: 'new', target: null }); m.commit(); L.S.ed.sketch = null;
+    m.clearLast(); L.S.ed.selected = new Set(); L.S.ed.faces = []; L.S.ed.edges = []; L.view.setView('iso'); L.view.frame([[6300, -15, 0], [6340, 15, 20]]); L.refresh(); });
+  await p.waitForTimeout(800);
+  await p.locator('#toolsets .tset', { hasText: 'Modify' }).first().tap(); await p.waitForTimeout(300);
+  await p.locator('#tools .tool[data-id=fillet]').first().tap(); await p.waitForTimeout(400);
+  const armLock = await st(() => StreamLine.S.ed.pickLock);
+  let aq = await projW([6320, -15, 20]); await tapV(aq.x, aq.y);
+  const arm1 = await st(() => StreamLine.getLast()?.params?.edges?.length || 0);
+  aq = await projW([6340, 0, 20]); await tapV(aq.x, aq.y);
+  const arm2 = await st(() => ({ n: StreamLine.getLast()?.params?.edges?.length || 0, label: StreamLine.H.hist().at(-1).label }));
+  await p.evaluate(() => document.querySelector('#lastop .ib[aria-label=Done]')?.click()); await p.waitForTimeout(200);
+  await p.locator('#toolsets .tset', { hasText: 'Solid' }).first().tap(); await p.waitForTimeout(200);
+  check(armLock === 'edge' && arm1 === 1 && arm2.n === 2 && /Fillet · 2 edges/.test(arm2.label), `Fillet before any edge waits armed (${armLock}); the first edge opens it (${arm1}) and the next joins it (${arm2.label})`);
   // touch controls: one finger never moves the view; the orientation cube turns it and the zoom bar zooms; a held
   // finger brings up the precision cursor with a magnifier and picks on release; picks get Plasticity gizmos (drag
   // to push / pull, fillet, move, rotate) with a value bubble to type into; constraint glyphs can be picked
