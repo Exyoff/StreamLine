@@ -489,7 +489,17 @@ function edgeCandidate(x, y) {
 function edgeTap(x, y, probe = false) { // probe: only report how close the nearest body edge is (px)
   const best = edgeCandidate(x, y);
   if (probe) return best ? best.d : Infinity;
+  const lop = getLast();
+  if (best && lop && lop.def === F.edgeBlendOp && (!lop.committed || !$('#lastop').hidden)) { // the open Fillet / Chamfer card takes it (a second tap drops it; Done ends it)
+    const keep = S.ed.edges, multi = S.ed.multi; S.ed.edges = (lop.params.edges || []).map(e => ({ ...e })); S.ed.multi = true;
+    edgePick(best); const list = S.ed.edges.map(({ pts, circle, ...r }) => r); S.ed.edges = keep; S.ed.multi = multi;
+    if (!list.length) { toast('Keep at least one edge (or Cancel)'); return; }
+    updateOp({ edges: list, _objs: [...new Set(list.map(e => e.obj))] }); emit('lastop', getLast()); view.render(); return;
+  }
   if (!best) { if (!S.ed.multi) S.ed.edges = []; return selectionChanged(); }
+  edgePick(best); selectionChanged();
+}
+function edgePick(best) {
   if (best.solid) {
     const { e, P } = best.solid;
     const item = solidEdgeItem(best.o, e);
@@ -498,7 +508,7 @@ function edgeTap(x, y, probe = false) { // probe: only report how close the near
     if (i >= 0) { if (S.ed.multi) S.ed.edges.splice(i, 1); } // a second tap keeps the pick (multi-select toggles)
     else if (S.ed.multi) S.ed.edges.push(item); // without Multi a tap replaces the pick
     else S.ed.edges = [item];
-    return selectionChanged();
+    return;
   }
   // a round edge (rim of a hole or boss) is picked as one circular loop
   const circ = edgeLoop(best.W, best.fe, best.e.a, best.e.b);
@@ -509,7 +519,6 @@ function edgeTap(x, y, probe = false) { // probe: only report how close the near
   if (i >= 0) { if (S.ed.multi) S.ed.edges.splice(i, 1); } // a second tap keeps the pick (multi-select toggles)
   else if (S.ed.multi) S.ed.edges.push(item);
   else S.ed.edges = [item];
-  selectionChanged();
 }
 // Plasticity-style face pick: a tap selects the whole planar face (all coplanar connected polygons)
 // faces of solids: every triangle of the B-rep face under a triangle; meshes: the coplanar region
@@ -618,7 +627,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 function selectionChanged() {
   clearLast(); view.markSelDirty(); refresh();
   // a command that was waiting for a face (Hole, Mate…) goes ahead once one is tapped
-  if (S.ed.pendingRun && S.ed.pickLock === 'face' && S.ed.faces.length) { const fn = S.ed.pendingRun; S.ed.pendingRun = null; S.ed.pickLock = null; fn(); }
+  if (S.ed.pendingRun && ((S.ed.pickLock === 'face' && S.ed.faces.length) || (S.ed.pickLock === 'edge' && S.ed.edges.length))) { const fn = S.ed.pendingRun; S.ed.pendingRun = null; S.ed.pickLock = null; fn(); }
 }
 
 let lastViewportTap = 0;
@@ -1690,10 +1699,12 @@ function setPick(m) {
 // Plasticity-style modifiers: if the needed selection is missing, switch to that selection mode
 function modifier(kind) {
   if (kind === 'fillet' || kind === 'chamfer') {
-    if (!S.ed.edges.length) { setPick('edge'); toast(`Tap edges, then ${kind === 'fillet' ? 'Fillet' : 'Chamfer'}`); return; }
+    // (Fusion's order works too: the command waits, armed, for the first edge — then its card is open, and more
+    // edges tapped while it is open join it)
+    if (!S.ed.edges.length) { lockPick('edge', `${kind === 'fillet' ? 'Fillet' : 'Chamfer'}: tap an edge`, () => modifier(kind)); return; }
     return runOp(F.edgeBlendOp, { kind });
   }
-  if (kind === 'pushpull') { if (!S.ed.faces.length) { setPick('face'); toast('Tap a face, then Push/Pull'); return; } const ok = runOp(F.pushPullOp); if (ok) toast('Drag the arrow or type a distance'); return ok; }
+  if (kind === 'pushpull') { if (!S.ed.faces.length) { lockPick('face', 'Push/Pull: tap a face', () => modifier('pushpull')); return; } const ok = runOp(F.pushPullOp); if (ok) toast('Drag the arrow or type a distance'); return ok; }
   if (kind === 'shell') { if (!S.ed.faces.length && !S.ed.selected.size) { setPick('face'); toast('Tap the face(s) to open, then Shell'); return; } return runOp(F.shellOp); }
   if (kind === 'mirror') return runOp(F.mirrorOp);
 }
@@ -1750,6 +1761,7 @@ function renderHud() {
     if (Draw.consSelected()) parts.push(`<b>${Draw.consName(Draw.consSelected().t)} constraint</b>`, 'Delete removes it · the curves it ties are shown picked');
     else if (Draw.dimSelected()) parts.push(`<b>${Draw.dimSelected().driven ? 'Driven dimension' : 'Dimension'}</b>`, Draw.dimSelected().driven ? 'it shows the size · Make driving to set it' : 'tap its value to type a new one · drag it to move it');
     else if (S.ed.consTool) parts.push(`<b>${CONS_NAME[S.ed.consTool]}</b> · tap ${CONS_NEED[S.ed.consTool] === 1 ? 'a curve' : `two curves (${S.ed.drawSel.size}/2)`}`, 'Pick another constraint, or Select to stop');
+    else if (getLast()?.def === F.edgeBlendOp && !$('#lastop').hidden) parts.push(`<b>${getLast().params.kind === 'chamfer' ? 'Chamfer' : 'Fillet'}</b> · tap more edges to add them (again to drop one)`, 'Done when finished');
     else if (S.ed.pickLock && !hasPicks()) parts.push(`<b>Tap ${S.ed.pickLock === 'edge' ? 'edges' : S.ed.pickLock === 'face' ? 'a face' : 'a body'}</b>`, S.ed.pendingRun ? 'The command goes on once you tap it' : 'Then choose the command again');
     else if (drawing) parts.push(`<b>${{ dist: 'Distance', id: 'Point', list: 'List' }[S.ed.tool] || S.ed.tool[0].toUpperCase() + S.ed.tool.slice(1)}</b> · tap points on the model or the grid`);
     else if (S.ed.inquiry) { const [head, ...rest] = S.ed.inquiry.replace(/^[A-Z]+\s+/, '').split(/,\s+/).map(x => esc(x.replace(/\s*=\s*/, ' '))); parts.push(`<b>${head}</b>`, rest.join(' · ')); }
